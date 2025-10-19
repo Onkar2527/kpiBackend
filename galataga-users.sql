@@ -1,0 +1,5 @@
+INSERT INTO users (id, username, name, password_hash, role, branch_id, department_id) VALUES ('229', '229', 'SANJEEV APPASAB EROOLE', '$2a$10$XBnBaUEhHSRqZkt0ZrPdiug7LxGkh3YqJ85eo0nJY66DGaWSmnfdG', 'STAFF', '45', NULL);
+INSERT INTO users (id, username, name, password_hash, role, branch_id, department_id) VALUES ('755', '755', 'SHWETA SADANAND YANAPE', '$2a$10$OObmvaKlTG5eG47BjRgTFO1M/FjSiDXLG6PbYjoCu880l8N62ZOUW', 'STAFF', '45', NULL);
+INSERT INTO users (id, username, name, password_hash, role, branch_id, department_id) VALUES ('1192', '1192', 'SUDHIR DAMODAR POTADAR', '$2a$10$gy6zUrABDxgTvkTuHuxHFufgtGnfqkVDtBvDDFF.FluL5uhzFdLEW', 'STAFF', '45', NULL);
+INSERT INTO users (id, username, name, password_hash, role, branch_id, department_id) VALUES ('1717', '1717', 'RUPALI SANTOSH MANE', '$2a$10$oKHGrFMJ88neDYXrfBjPne5cTEeVoDqEu6N04c9Z51evLDd6kHP.C', 'STAFF', '45', NULL);
+INSERT INTO users (id, username, name, password_hash, role, branch_id, department_id) VALUES ('1921', '1921', 'SAVAKKA VIKAS GURAV', '$2a$10$i1JT7Hg54TtiK.hu3fhklObbEX04qr/NNjfhWMny5bqNl9kboN3F.', 'STAFF', '45', NULL);
