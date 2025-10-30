@@ -4,6 +4,7 @@ import csv from 'csv-parser';
 import { Readable } from 'stream';
 import pool from '../db.js';
 import { autoDistributeTargets } from './allocations.js';
+import { log } from 'console';
 
 // Create the insurance_targets table if it doesn't exist
 pool.query(`
@@ -27,6 +28,51 @@ const upload = multer({ storage: multer.memoryStorage() });
 
 // POST /targets/upload
 // Upload a CSV file with targets for a given period.
+// targetsRouter.post('/upload', upload.single('targetFile'), (req, res) => {
+//   if (!req.file) return res.status(400).json({ error: 'targetFile required' });
+
+//   const results = [];
+//   Readable.from(req.file.buffer)
+//     .pipe(csv())
+//     .on('data', (data) => results.push(data))
+//     .on('end', () => {
+//       const values = results.flatMap(row =>
+//         Object.keys(row)
+//           .filter(key => key !== 'branch_id' && key !== 'period')
+//           .map(key => [row.period, row.branch_id, key, row[key], 'published'])
+//       );
+//       console.log(results);
+      
+//       const hasAudit = results.some(row => row.hasOwnProperty('audit'));
+//       if (!hasAudit && results.length > 0) {
+//         values.push([results[0].period, results[0].branch_id, 'audit', 100, 'published']);
+//       }
+
+//       pool.query('DELETE FROM targets WHERE period = ? AND branch_id = ? AND kpi IN (?, ?, ?)', [results[0].period, results[0].branch_id, 'audit', 'loan_amulya', 'loan_gen'], (error) => {
+//         if (error) return res.status(500).json({ error: 'Internal server error' });
+
+//         pool.query('INSERT INTO periods (period) VALUES (?)', [results[0].period], (error) => {
+//           if (error) console.error('Error inserting period:', error);
+//         });
+//         pool.query('INSERT INTO targets (period, branch_id, kpi, amount, state) VALUES ?', [values], (error) => {
+//           if (error) return res.status(500).json({ error: 'Internal server error' });
+          
+//           const uniqueBranchIds = [...new Set(results.map(row => row.branch_id))];
+//           console.log("gwvfs",uniqueBranchIds);
+          
+//           uniqueBranchIds.forEach(branchId => {
+//             autoDistributeTargets(results[0].period, branchId, (err) => {
+//               if (err) {
+//                 console.error(`Error auto-distributing targets for branch ${branchId}:`, err);
+//               }
+//             });
+//           });
+
+//           res.json({ ok: true });
+//         });
+//       });
+//     });
+// });
 targetsRouter.post('/upload', upload.single('targetFile'), (req, res) => {
   if (!req.file) return res.status(400).json({ error: 'targetFile required' });
 
@@ -35,43 +81,75 @@ targetsRouter.post('/upload', upload.single('targetFile'), (req, res) => {
     .pipe(csv())
     .on('data', (data) => results.push(data))
     .on('end', () => {
-      const values = results.flatMap(row =>
-        Object.keys(row)
-          .filter(key => key !== 'branch_id' && key !== 'period')
-          .map(key => [row.period, row.branch_id, key, row[key], 'published'])
-      );
-      console.log(results);
-      
-      const hasAudit = results.some(row => row.hasOwnProperty('audit'));
-      if (!hasAudit && results.length > 0) {
-        values.push([results[0].period, results[0].branch_id, 'audit', 100, 'published']);
-      }
 
-      pool.query('DELETE FROM targets WHERE period = ? AND branch_id = ? AND kpi IN (?, ?, ?)', [results[0].period, results[0].branch_id, 'audit', 'loan_amulya', 'loan_gen'], (error) => {
-        if (error) return res.status(500).json({ error: 'Internal server error' });
+      let values = [];
 
-        pool.query('INSERT INTO periods (period) VALUES (?)', [results[0].period], (error) => {
-          if (error) console.error('Error inserting period:', error);
-        });
-        pool.query('INSERT INTO targets (period, branch_id, kpi, amount, state) VALUES ?', [values], (error) => {
-          if (error) return res.status(500).json({ error: 'Internal server error' });
-          
-          const uniqueBranchIds = [...new Set(results.map(row => row.branch_id))];
-          console.log("gwvfs",uniqueBranchIds);
-          
-          uniqueBranchIds.forEach(branchId => {
-            autoDistributeTargets(results[0].period, branchId, (err) => {
-              if (err) {
-                console.error(`Error auto-distributing targets for branch ${branchId}:`, err);
-              }
-            });
-          });
-
-          res.json({ ok: true });
+   
+      results.forEach(row => {
+        Object.keys(row).forEach(key => {
+          const cleanKey = key.trim(); 
+          if (cleanKey && cleanKey !== 'branch_id' && cleanKey !== 'period') {
+            const amount = row[key] === '' || row[key] == null ? 0 : row[key]; 
+            values.push([row.period, row.branch_id, cleanKey, amount, 'published']);
+          }
         });
       });
+
+     
+      results.forEach(row => {
+        if (!Object.keys(row).some(k => k.trim() === 'audit')) {
+          values.push([row.period, row.branch_id, 'audit', 100, 'published']);
+        }
+      });
+
+      const branchIds = [...new Set(results.map(r => r.branch_id))];
+      const placeholders = branchIds.map(() => '?').join(',');
+
+        console.log(results);
+      
+      pool.query(
+        `DELETE FROM targets 
+         WHERE period = ? 
+         AND branch_id IN (${placeholders}) 
+         AND kpi IN (?, ?, ?)`,
+        [results[0].period, ...branchIds, 'audit', 'loan_amulya', 'loan_gen'],
+        (error) => {
+          if (error) {
+            console.error('Delete error:', error);
+            return res.status(500).json({ error: 'Internal server error' });
+          }
+
+        
+          pool.query('INSERT IGNORE INTO periods (period) VALUES (?)', [results[0].period], (error) => {
+            if (error) console.error('Error inserting period:', error);
+          });
+
+        
+          pool.query(
+            'INSERT INTO targets (period, branch_id, kpi, amount, state) VALUES ?',
+            [values],
+            (error) => {
+              if (error) {
+                console.error('Insert error:', error);
+                return res.status(500).json({ error: 'Internal server error' });
+              }
+
+             
+              branchIds.forEach(branchId => {
+                autoDistributeTargets(results[0].period, branchId, (err) => {
+                  if (err) console.error(`Error auto-distributing targets for branch ${branchId}:`, err);
+                });
+              });
+
+              res.json({ ok: true });
+            }
+          );
+        }
+      );
     });
 });
+
+
 
 targetsRouter.post('/upload-branch-specific', upload.single('targetFile'), (req, res) => {
   if (!req.file) return res.status(400).json({ error: 'targetFile required' });
@@ -89,12 +167,12 @@ targetsRouter.post('/upload-branch-specific', upload.single('targetFile'), (req,
       console.log(results);
       
 
-      const hasAudit = results.some(row => row.hasOwnProperty('audit'));
-      if (!hasAudit && results.length > 0) {
-        values.push([results[0].period, results[0].branch_id, 'audit', 100, 'published']);
-      }
+      // const hasAudit = results.some(row => row.hasOwnProperty('audit'));
+      // if (!hasAudit && results.length > 0) {
+      //   values.push([results[0].period, results[0].branch_id, 'audit', 100, 'published']);
+      // }
 
-      pool.query('DELETE FROM targets WHERE period = ? AND branch_id = ? AND kpi IN (?, ?)', [results[0].period, results[0].branch_id, 'audit', 'loan_amulya', 'loan_gen'], (error) => {
+      pool.query('DELETE FROM targets WHERE period = ? AND branch_id = ? AND kpi IN (?, ?)', [results[0].period, results[0].branch_id, 'insurance', 'recovery'], (error) => {
         if (error) return res.status(500).json({ error: 'Internal server error' });
 
         pool.query('INSERT INTO periods (period) VALUES (?)', [results[0].period], (error) => {

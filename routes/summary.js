@@ -68,30 +68,79 @@ summaryRouter.get('/scores', (req, res) => {
       const calculateScore = (kpi, achieved, target) => {
         let outOf10;
         const ratio = achieved / target;
-        switch (kpi) {
-          case 'deposit':
-          case 'loan_gen':
-          case 'loan_amulya':
-          case 'insurance':
-            if (ratio < 1) {
-              outOf10 = ratio * 10;
-            } else if (ratio < 1.25) {
-              outOf10 = 10;
-            } else {
-              outOf10 = 12.5;
-            }
-            break;
-          case 'recovery':
-          case 'audit':
-            if (ratio < 1) {
-              outOf10 = ratio * 10;
-            } else {
-              outOf10 = 12.5;
-            }
-            break;
-          default:
-            outOf10 = 0;
-        }
+        const auditRatio = row.kpi === 'audit' ? row.achieved / row.target : 0;
+          const recoveryRatio = row.kpi === 'recovery' ? row.achieved / row.target : 0;
+        // switch (kpi) {
+        //   case 'deposit':
+        //   case 'loan_gen':
+        //   case 'loan_amulya':
+        //   case 'insurance':
+        //     if (ratio < 1) {
+        //       outOf10 = ratio * 10;
+        //     } else if (ratio < 1.25) {
+        //       outOf10 = 10;
+        //     } else {
+        //       outOf10 = 12.5;
+        //     }
+        //     break;
+        //   case 'recovery':
+        //   case 'audit':
+        //     if (ratio < 1) {
+        //       outOf10 = ratio * 10;
+        //     } else {
+        //       outOf10 = 12.5;
+        //     }
+        //     break;
+        //   default:
+        //     outOf10 = 0;
+        // }
+         switch (row.kpi) {
+            
+            case 'deposit':
+            case 'loan_gen':
+              if (ratio < 1) {
+                outOf10 = ratio * 10;
+              } else if (ratio < 1.25) {
+                outOf10 = 10;
+              } else if (auditRatio >= 0.75 && recoveryRatio >= 0.75) {
+                outOf10 = 12.5;
+              } else {
+                outOf10 = 10;
+              }
+              break;
+
+            case 'loan_amulya':
+              if (ratio < 1) {
+                outOf10 = ratio * 10;
+              } else if (ratio < 1.25) {
+                outOf10 = 10;
+              } else {
+                outOf10 = 12.5;
+              }
+              break;
+            case 'insurance':
+              if(ratio===0){
+                outOf10 = -2;
+              }else if (ratio < 1) {
+                outOf10 = ratio * 10;
+              } else if (ratio < 1.25) {
+                outOf10 = 10;
+              } else {
+                outOf10 = 12.5;
+              }
+              break;
+              
+            case 'recovery':
+            case 'audit':
+               if (ratio < 1) {
+                outOf10 = ratio * 10;
+              } else {
+                outOf10 = 12.5;
+              }
+              break;
+            default:
+              outOf10 = 0;
+          }
         return Math.max(0, Math.min(12.5, isNaN(outOf10) ? 0 : outOf10));
       };
 
@@ -142,7 +191,7 @@ summaryRouter.get('/scores', (req, res) => {
         finalScores.total = kpiCount > 0 ? totalScore / kpiCount : 0;
         return finalScores;
       });
-
+      console.log(scores)
       res.json(scores);
     });
   });
@@ -311,7 +360,8 @@ summaryRouter.get('/bm-scores', (req, res) => {
     const preliminaryScores = calculateScores(12.5);
     const cap = (preliminaryScores.total >= 5 && preliminaryScores.total < 10) ? 10 : 12.5;
     const finalScores = calculateScores(cap);
-
+    
+    
     res.json(finalScores);
   });
 });
@@ -319,8 +369,8 @@ summaryRouter.get('/bm-scores', (req, res) => {
 // GET /summary/staff-scores?period=YYYY-MM&employeeId=E01
 // Returns computed KPI scores for a specific staff member.
 summaryRouter.get('/staff-scores', (req, res) => {
-    const { period, employeeId } = req.query;
-    if (!period || !employeeId) return res.status(400).json({ error: 'period and employeeId required' });
+    const { period, employeeId, branchId } = req.query;
+    if (!period || !employeeId || !branchId) return res.status(400).json({ error: 'period, employeeId and branchId are required' });
 
     const userQuery = 'SELECT role, branch_id FROM users WHERE id = ?';
     pool.query(userQuery, [employeeId], (error, userResults) => {
@@ -333,23 +383,55 @@ summaryRouter.get('/staff-scores', (req, res) => {
         const calculateScore = (kpi, achieved, target) => {
             let outOf10;
             const ratio = achieved / target;
-            switch (kpi) {
-                case 'deposit':
-                case 'loan_gen':
-                case 'loan_amulya':
-                case 'insurance':
-                    if (ratio < 1) outOf10 = ratio * 10;
-                    else if (ratio < 1.25) outOf10 = 10;
-                    else outOf10 = 12.5;
-                    break;
-                case 'recovery':
-                case 'audit':
-                    if (ratio < 1) outOf10 = ratio * 10;
-                    else outOf10 = 12.5;
-                    break;
-                default:
-                    outOf10 = 0;
-            }
+            const auditRatio = row.kpi === 'audit' ? row.achieved / row.target : 0;
+          const recoveryRatio = row.kpi === 'recovery' ? row.achieved / row.target : 0;
+         switch (row.kpi) {
+            
+            case 'deposit':
+            case 'loan_gen':
+              if (ratio < 1) {
+                outOf10 = ratio * 10;
+              } else if (ratio < 1.25) {
+                outOf10 = 10;
+              } else if (auditRatio >= 0.75 && recoveryRatio >= 0.75) {
+                outOf10 = 12.5;
+              } else {
+                outOf10 = 10;
+              }
+              break;
+
+            case 'loan_amulya':
+              if (ratio < 1) {
+                outOf10 = ratio * 10;
+              } else if (ratio < 1.25) {
+                outOf10 = 10;
+              } else {
+                outOf10 = 12.5;
+              }
+              break;
+            case 'insurance':
+              if(ratio===0){
+                outOf10 = -2;
+              }else if (ratio < 1) {
+                outOf10 = ratio * 10;
+              } else if (ratio < 1.25) {
+                outOf10 = 10;
+              } else {
+                outOf10 = 12.5;
+              }
+              break;
+              
+            case 'recovery':
+            case 'audit':
+               if (ratio < 1) {
+                outOf10 = ratio * 10;
+              } else {
+                outOf10 = 12.5;
+              }
+              break;
+            default:
+              outOf10 = 0;
+          }
             return Math.max(0, Math.min(12.5, isNaN(outOf10) ? 0 : outOf10));
         };
 
@@ -387,6 +469,8 @@ summaryRouter.get('/staff-scores', (req, res) => {
                                 if (branchInsurance && branchInsurance.target) {
                                     const outOf10 = calculateScore('insurance', branchInsurance.achieved, branchInsurance.target);
                                     const weightageScore = (outOf10 * kpi.weightage) / 100;
+                                    console.log(kpi.kpi_name,weightageScore);
+                                    
                                     scores['Insurance Target'] = {
                                         score: outOf10,
                                         target: branchInsurance.target,
@@ -413,6 +497,7 @@ summaryRouter.get('/staff-scores', (req, res) => {
               LEFT JOIN weightage w ON a.kpi = w.kpi
             `;
             pool.query(query, [period, employeeId, period, employeeId], (error, results) => {
+              console.log("dsdvv")
                 if (error) return res.status(500).json({ error: 'Internal server error' });
 
                 const branchQuery = `
@@ -428,7 +513,7 @@ summaryRouter.get('/staff-scores', (req, res) => {
                     branchResults.forEach(row => {
                         const score = calculateScore(row.kpi, row.achieved, row.target);
                         const weightageScore = (score * (row.weightage || 0)) / 100;
-                        branchScores[row.kpi] = { score, target: row.target || 0, achieved: row.achieved || 0, weightage: row.weightage || 0, weightageScore: isNaN(weightageScore) ? 0 : weightageScore };
+                        branchScores[row.kpi] = { score, target: row.target || 0, achieved: row.achieved || 0, weightage: row.weightage || 0, weightageScore:row.kpi === 'insurance' && outOf10 === 0 ? -2 :  isNaN(weightageScore) ? 0 : weightageScore };
                     });
 
                     const scores = {};
@@ -437,7 +522,7 @@ summaryRouter.get('/staff-scores', (req, res) => {
                         if (row.kpi) {
                             const score = calculateScore(row.kpi, row.achieved, row.target);
                             const weightageScore = (score * row.weightage) / 100;
-                            scores[row.kpi] = { score, target: row.target || 0, achieved: row.achieved || 0, weightage: row.weightage || 0, weightageScore: isNaN(weightageScore) ? 0 : weightageScore };
+                            scores[row.kpi] = { score, target: row.target || 0, achieved: row.achieved || 0, weightage: row.weightage || 0, weightageScore:row.kpi === 'insurance' && outOf10 === 0 ? -2 :  isNaN(weightageScore) ? 0 : weightageScore };
                             totalWeightageScore += scores[row.kpi].weightageScore;
                         }
                     });
@@ -450,8 +535,12 @@ summaryRouter.get('/staff-scores', (req, res) => {
                     if (scores.audit) totalWeightageScore += scores.audit.weightageScore;
                     if (scores.insurance) totalWeightageScore += scores.insurance.weightageScore;
 
+
                     scores['total'] = totalWeightageScore;
+                    console.log(scores);
                     res.json(scores);
+                    
+                    
                 });
             });
         }
@@ -490,23 +579,55 @@ summaryRouter.get('/staff-scores-all', (req, res) => {
     const calculateScore = (kpi, achieved, target) => {
         let outOf10;
         const ratio = achieved / target;
-        switch (kpi) {
-          case 'deposit':
-          case 'loan_gen':
-          case 'loan_amulya':
-          case 'insurance':
-            if (ratio < 1) outOf10 = ratio * 10;
-            else if (ratio < 1.25) outOf10 = 10;
-            else outOf10 = 12.5;
-            break;
-          case 'recovery':
-          case 'audit':
-            if (ratio < 1) outOf10 = ratio * 10;
-            else outOf10 = 12.5;
-            break;
-          default:
-            outOf10 = 0;
-        }
+        const auditRatio = kpi === 'audit' ? achieved / target : 0;
+        const recoveryRatio = kpi === 'recovery' ? achieved / target : 0;
+         switch (kpi) {
+            
+            case 'deposit':
+            case 'loan_gen':
+              if (ratio < 1) {
+                outOf10 = ratio * 10;
+              } else if (ratio < 1.25) {
+                outOf10 = 10;
+              } else if (auditRatio >= 0.75 && recoveryRatio >= 0.75) {
+                outOf10 = 12.5;
+              } else {
+                outOf10 = 10;
+              }
+              break;
+
+            case 'loan_amulya':
+              if (ratio < 1) {
+                outOf10 = ratio * 10;
+              } else if (ratio < 1.25) {
+                outOf10 = 10;
+              } else {
+                outOf10 = 12.5;
+              }
+              break;
+            case 'insurance':
+              if(ratio===0){
+                outOf10 = -2;
+              }else if (ratio < 1) {
+                outOf10 = ratio * 10;
+              } else if (ratio < 1.25) {
+                outOf10 = 10;
+              } else {
+                outOf10 = 12.5;
+              }
+              break;
+              
+            case 'recovery':
+            case 'audit':
+               if (ratio < 1) {
+                outOf10 = ratio * 10;
+              } else {
+                outOf10 = 12.5;
+              }
+              break;
+            default:
+              outOf10 = 0;
+          }
         return Math.max(0, Math.min(12.5, isNaN(outOf10) ? 0 : outOf10));
       };
 
@@ -519,7 +640,7 @@ summaryRouter.get('/staff-scores-all', (req, res) => {
             target: row.target || 0,
             achieved: row.achieved || 0,
             weightage: row.weightage || 0,
-            weightageScore: isNaN(weightageScore) ? 0 : weightageScore
+            weightageScore:row.kpi === 'insurance' && score === 0 ? -2 : isNaN(weightageScore) ? 0 : weightageScore
         };
     });
 
@@ -560,13 +681,30 @@ summaryRouter.get('/staff-scores-all', (req, res) => {
             let outOf10;
             const ratio = row.achieved / row.target;
             switch (row.kpi) {
-                case 'deposit':
-                case 'loan_gen':
-                case 'loan_amulya':
-                if (ratio < 1) outOf10 = ratio * 10;
-                else if (ratio < 1.25) outOf10 = 10;
-                else outOf10 = 12.5;
-                break;
+                 
+            
+            case 'deposit':
+            case 'loan_gen':
+              if (ratio < 1) {
+                outOf10 = ratio * 10;
+              } else if (ratio < 1.25) {
+                outOf10 = 10;
+              } else if (auditRatio >= 0.75 && recoveryRatio >= 0.75) {
+                outOf10 = 12.5;
+              } else {
+                outOf10 = 10;
+              }
+              break;
+
+            case 'loan_amulya':
+              if (ratio < 1) {
+                outOf10 = ratio * 10;
+              } else if (ratio < 1.25) {
+                outOf10 = 10;
+              } else {
+                outOf10 = 12.5;
+              }
+              break;
                 default:
                 outOf10 = 0;
             }
@@ -578,7 +716,7 @@ summaryRouter.get('/staff-scores-all', (req, res) => {
                 target: row.target || 0,
                 achieved: row.achieved || 0,
                 weightage: row.weightage || 0,
-                weightageScore: isNaN(weightageScore) ? 0 : weightageScore
+                weightageScore:row.kpi === 'insurance' && outOf10 === 0 ? -2 :  isNaN(weightageScore) ? 0 : weightageScore
             };
         }
       });
@@ -594,93 +732,26 @@ summaryRouter.get('/staff-scores-all', (req, res) => {
             totalWeightageScore += staff[kpi].weightageScore;
           }
         });
-        staff.total = totalWeightageScore;
-      });
+        const query = `
+        SELECT COALESCE(SUM(kpi_total)/COUNT(*), 0) AS avgKpi 
+        FROM employee_transfer 
+        WHERE staff_id = ?
+      `;
 
+    pool.query(query, [staff.staffId], (error, result) => {
+        if (error) return res.status(500).json({ error: 'Internal server error' });
+        const previousKpi = result[0]?.avgKpi || 0;
+        staff.total = totalWeightageScore + previousKpi;
+       
+      });
+      });
       res.json(Object.values(staffScores));
     });
   });
 });
 // GET /summary/staff-scores-all?period=YYYY-MM&branchId=B01
 // Returns computed KPI scores for all staff in the branch.
-summaryRouter.get('/ho-staff-scores-all', (req, res) => {
-  const { period, hod_id, branch_id } = req.query;
-  
-  if (!period || !hod_id || !branch_id) {
-    return res.status(400).json({ error: 'period, hod_id, and branch_id required' });
-  }
 
-  // 1. Get weightage dynamically
-  const weightageQuery = `SELECT kpi, weightage FROM weightage`;
-
-  pool.query(weightageQuery, (err, weightageResults) => {
-    if (err) return res.status(500).json({ error: 'Failed to fetch weightage' });
-
-    const weightageMap = {};
-    weightageResults.forEach(row => {
-      weightageMap[row.kpi] = row.weightage;
-    });
-
-    // 2. Get HO staff under the specific HOD and branch
-    const query = `
-      SELECT u.id AS staffId, u.name AS staffName,
-             h.allocated_work, h.discipline_time, h.work_performance,
-             h.branch_communication, h.insurance
-      FROM users u
-      LEFT JOIN ho_staff_kpi h 
-        ON u.id = h.ho_staff_id 
-       AND h.period = ? 
-       AND h.hod_id = ?
-      WHERE u.role = 'HO_staff'
-        AND u.branch_id = ? 
-    `;
-
-    pool.query(query, [period, hod_id, branch_id], (error, results) => {
-      if (error) return res.status(500).json({ error: 'Internal server error' });
-      if (!results || results.length === 0) return res.json([]);
-
-      const staffScores = [];
-
-      results.forEach(row => {
-        const staff = {
-          staffId: row.staffId,
-          staffName: row.staffName,
-          total: 0
-        };
-
-        let totalWeightageScore = 0;
-
-        Object.keys(weightageMap).forEach(kpi => {
-          const achieved = row[kpi] || 0;
-          let score;
-
-          if (kpi === 'insurance') {
-            score = achieved / 40000 * 10;
-          } else {
-            score = calculateHoScore(achieved, weightageMap[kpi]);
-          }
-
-          let weightageScore = (score * weightageMap[kpi]) / 100;
-          if (kpi === 'insurance' && achieved === 0) weightageScore = -2;
-
-          staff[kpi] = {
-            score,
-            achieved,
-            weightage: weightageMap[kpi],
-            weightageScore
-          };
-
-          totalWeightageScore += weightageScore;
-        });
-
-        staff.total = totalWeightageScore;
-        staffScores.push(staff);
-      });
-
-      res.json(staffScores);
-    });
-  });
-});
 
 
 // for calculating HO score based on achieved and weightage
@@ -702,10 +773,10 @@ function calculateHoScore(achieved, weightage) {
 //ho specific scores
 summaryRouter.get('/ho-hod-scores', (req, res) => {
 
-  const { period, hod_id, branch_id } = req.query;
+  const { period, hod_id } = req.query;
 
-  if (!period || !hod_id || !branch_id) {
-    return res.status(400).json({ error: 'period, hod_id, and branch_id are required' });
+  if (!period || !hod_id) {
+    return res.status(400).json({ error: 'period and hod_id are required' });
   }
 
   // 1. Get KPI weightages
@@ -728,10 +799,10 @@ summaryRouter.get('/ho-hod-scores', (req, res) => {
     const staffQuery = `
       SELECT DISTINCT ho_staff_id AS staffId
       FROM ho_staff_kpi
-      WHERE hod_id = ? AND period = ? AND branch_id = ?
+      WHERE hod_id = ? AND period = ? 
     `;
 
-    pool.query(staffQuery, [hod_id, period, branch_id], (err, staffResults) => {
+    pool.query(staffQuery, [hod_id, period], (err, staffResults) => {
       if (err) {
         console.error(err);
         return res.status(500).json({ error: 'Failed to fetch HO staff' });
@@ -746,10 +817,10 @@ summaryRouter.get('/ho-hod-scores', (req, res) => {
       const kpiQuery = `
         SELECT ho_staff_id, allocated_work, discipline_time, work_performance, branch_communication, insurance
         FROM ho_staff_kpi
-        WHERE period = ? AND branch_id = ? AND ho_staff_id IN (?)
+        WHERE period = ? AND hod_id = ? AND ho_staff_id IN (?)
       `;
 
-      pool.query(kpiQuery, [period, branch_id, staffIds], (err, kpiResults) => {
+      pool.query(kpiQuery, [period, hod_id, staffIds], (err, kpiResults) => {
         if (err) {
           console.error(err);
           return res.status(500).json({ error: 'Failed to fetch KPI data' });
@@ -799,12 +870,88 @@ summaryRouter.get('/ho-hod-scores', (req, res) => {
 
         scores.total = totalWeightageScore;
 
-        res.json({ hod_id, branch_id, period, scores });
+        res.json({ hod_id,  period, scores });
       });
     });
   });
 });
 
+summaryRouter.get('/ho-staff-scores-all', (req, res) => {
+  const { period, hod_id, branch_id } = req.query;
+  
+  if (!period || !hod_id ) {
+    return res.status(400).json({ error: 'period, hod_id, and branch_id required' });
+  }
+
+  // 1. Get weightage dynamically
+  const weightageQuery = `SELECT kpi, weightage FROM weightage`;
+
+  pool.query(weightageQuery, (err, weightageResults) => {
+    if (err) return res.status(500).json({ error: 'Failed to fetch weightage' });
+
+    const weightageMap = {};
+    weightageResults.forEach(row => {
+      weightageMap[row.kpi] = row.weightage;
+    });
+
+    // 2. Get HO staff under the specific HOD and branch
+    const query = `
+      SELECT u.id AS staffId, u.name AS staffName,
+             h.allocated_work, h.discipline_time, h.work_performance,
+             h.branch_communication, h.insurance
+      FROM users u
+      LEFT JOIN ho_staff_kpi h 
+        ON u.id = h.ho_staff_id 
+      WHERE u.role = 'HO_staff' and u.hod_id=?
+        
+    `;
+
+    pool.query(query, [ hod_id], (error, results) => {
+      if (error) return res.status(500).json({ error: 'Internal server error' });
+      if (!results || results.length === 0) return res.json([]);
+
+      const staffScores = [];
+
+      results.forEach(row => {
+        const staff = {
+          staffId: row.staffId,
+          staffName: row.staffName,
+          total: 0
+        };
+
+        let totalWeightageScore = 0;
+
+        Object.keys(weightageMap).forEach(kpi => {
+          const achieved = row[kpi] || 0;
+          let score;
+
+          if (kpi === 'insurance') {
+            score = achieved / 40000 * 10;
+          } else {
+            score = calculateHoScore(achieved, weightageMap[kpi]);
+          }
+
+          let weightageScore = (score * weightageMap[kpi]) / 100;
+          if (kpi === 'insurance' && achieved === 0) weightageScore = -2;
+
+          staff[kpi] = {
+            score,
+            achieved,
+            weightage: weightageMap[kpi],
+            weightageScore
+          };
+
+          totalWeightageScore += weightageScore;
+        });
+
+        staff.total = totalWeightageScore;
+        staffScores.push(staff);
+      });
+
+      res.json(staffScores);
+    });
+  });
+});
 //get all ho staff scores under a hod
 // summaryRouter.get('/ho-staff-scores-all', (req, res) => {
 //   const { period, hod_id } = req.query;
@@ -883,8 +1030,8 @@ summaryRouter.get('/ho-hod-scores', (req, res) => {
 summaryRouter.post('/save-or-update-ho-staff-kpi', (req, res) => {
   const { branch_id, ho_staff_id, hod_id, period, scores } = req.body;
 
-  if (!branch_id || !ho_staff_id || !hod_id || !period || !scores) {
-    return res.status(400).json({ error: 'branch_id, ho_staff_id, hod_id, period and scores are required' });
+  if ( !ho_staff_id || !hod_id || !period || !scores) {
+    return res.status(400).json({ error: 'ho_staff_id, hod_id, period and scores are required' });
   }
   // Map scores array to object
   const scoreMap = {};
@@ -902,8 +1049,8 @@ summaryRouter.post('/save-or-update-ho-staff-kpi', (req, res) => {
   // Insert new record
   const sql = `
     INSERT INTO ho_staff_kpi 
-    (branch_id, hod_id, ho_staff_id, period, allocated_work, discipline_time, work_performance, branch_communication, insurance)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+    ( hod_id, ho_staff_id, period, allocated_work, discipline_time, work_performance, branch_communication, insurance)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
     ON DUPLICATE KEY UPDATE
       allocated_work = VALUES(allocated_work),
       discipline_time = VALUES(discipline_time),
@@ -914,7 +1061,6 @@ summaryRouter.post('/save-or-update-ho-staff-kpi', (req, res) => {
   `;
 
   const values = [
-    branch_id,
     hod_id,
     ho_staff_id,
     period,
@@ -941,7 +1087,7 @@ summaryRouter.post('/save-or-update-ho-staff-kpi', (req, res) => {
         branch_communication = ?, 
         insurance = ?, 
         updated_at = CURRENT_TIMESTAMP
-    WHERE branch_id = ? AND ho_staff_id = ? AND hod_id = ? AND period = ?
+    WHERE ho_staff_id = ? AND hod_id = ? AND period = ?
   `;
 
   const values = [
@@ -950,7 +1096,6 @@ summaryRouter.post('/save-or-update-ho-staff-kpi', (req, res) => {
     scoreMap['work_performance'] || 0,
     scoreMap['branch_communication'] || 0,
     scoreMap['insurance'] || 0,
-    branch_id,
     ho_staff_id,
     hod_id,
     period
@@ -975,7 +1120,7 @@ summaryRouter.post('/save-or-update-ho-staff-kpi', (req, res) => {
 //ho staff specific scores
 summaryRouter.get('/specfic-hostaff-scores', (req, res) => {
   const { period, ho_staff_id ,branch_id } = req.query;
-  if (!period || !ho_staff_id || !branch_id) 
+  if (!period || !ho_staff_id) 
     return res.status(400).json({ error: 'period, ho_staff_id and branch_id are required' });
 
   // 1. Get KPI weightages
@@ -990,9 +1135,9 @@ summaryRouter.get('/specfic-hostaff-scores', (req, res) => {
     const kpiQuery = `
       SELECT allocated_work, discipline_time, work_performance, branch_communication, insurance
       FROM ho_staff_kpi
-      WHERE period = ? AND ho_staff_id = ? AND branch_id = ?
+      WHERE period = ? AND ho_staff_id = ? 
     `;
-    pool.query(kpiQuery, [period, ho_staff_id, branch_id], (err, results) => {
+    pool.query(kpiQuery, [period, ho_staff_id], (err, results) => {
       if (err) return res.status(500).json({ error: 'Failed to fetch HO staff KPIs' });
       if (!results.length) return res.status(404).json({ error: 'HO staff KPI not found' });
 

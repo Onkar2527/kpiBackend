@@ -9,7 +9,7 @@ export const autoDistributeTargets = (period, branchId, callback) => {
     if (error) return callback(error);
     if (targets.length === 0) return callback(new Error('No branch targets found'));
 
-    pool.query('SELECT * FROM users WHERE branch_id = ? AND role IN (?)', [branchId, ['ATTENDER', 'CLERK']], (error, staff) => {
+    pool.query('SELECT * FROM users WHERE branch_id = ? AND role IN (?)', [branchId, ['CLERK']], (error, staff) => {
       if (error) return callback(error);
       if (staff.length === 0) return callback(new Error('No active staff in branch'));
 
@@ -45,6 +45,9 @@ export const autoDistributeTargets = (period, branchId, callback) => {
   });
 };
 
+
+
+
 export const autoDistributeTargetsInTransfer = (period, branchId, callback) => {
 
 pool.query('DELETE FROM allocations WHERE period = ? AND branch_id = ?', [period, branchId], (error) => {
@@ -55,7 +58,7 @@ pool.query('DELETE FROM allocations WHERE period = ? AND branch_id = ?', [period
     if (error) return callback(error);
     if (targets.length === 0) return callback(new Error('No branch targets found'));
 
-    pool.query('SELECT * FROM users WHERE branch_id = ? AND role IN (?)', [branchId, ['ATTENDER', 'CLERK']], (error, staff) => {
+    pool.query('SELECT * FROM users WHERE branch_id = ? AND role IN (?)', [branchId, ['CLERK']], (error, staff) => {
       if (error) return callback(error);
       if (staff.length === 0) return callback(new Error('No active staff in branch'));
 
@@ -232,3 +235,8 @@ allocationsRouter.get("/", (req, res) => {
     });
   }
 });
+
+
+
+
+
