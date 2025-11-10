@@ -33,7 +33,7 @@ auth.post('/login', (req, res) => {
     // For demo purposes we return a fixed token.  A real system
     // would generate a signed JWT including role and branch scopes.
     const token = 'dev-token-' + user.id;
-    const { id, role, branch_id, name } = user;
-    res.json({ token, user: { id, name, role, branchId: branch_id } });
+    const { id, role, branch_id, name,username } = user;
+    res.json({ token, user: { id, name, role, branchId: branch_id, username:username } });
   });
 });

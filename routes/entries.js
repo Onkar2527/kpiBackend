@@ -19,7 +19,7 @@ entriesRouter.post("/", (req, res) => {
     typeOfDeposit,
     type,
   } = req.body || {};
-  if (!period || !branchId || !kpi)
+  if (!period || !branchId || !kpi || !typeOfDeposit || !type)
     return res.status(400).json({ error: "Missing required fields" });
 
   const entryDate = date || new Date().toISOString().slice(0, 10);
@@ -251,7 +251,12 @@ entriesRouter.post("/", (req, res) => {
 entriesRouter.get("/", (req, res) => {
   const { period, branchId, employeeId, status } = req.query;
   let query =
-    "SELECT e.*, u.name as staffName FROM entries e JOIN users u ON e.employee_id = u.id WHERE 1 = 1";
+    `SELECT e.*, u.name AS staffName 
+    FROM entries e 
+    JOIN users u ON e.employee_id = u.id 
+    WHERE 1 = 1
+      AND MONTH(e.date) = MONTH(CURRENT_DATE())
+      AND YEAR(e.date) = YEAR(CURRENT_DATE())`;
   const params = [];
 
   if (period) {

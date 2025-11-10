@@ -73,6 +73,8 @@ const upload = multer({ storage: multer.memoryStorage() });
 //       });
 //     });
 // });
+
+//upload the loan target file
 targetsRouter.post('/upload', upload.single('targetFile'), (req, res) => {
   if (!req.file) return res.status(400).json({ error: 'targetFile required' });
 
@@ -235,4 +237,247 @@ targetsRouter.get('/', (req, res) => {
     if (error) return res.status(500).json({ error: 'Internal server error' });
     res.json(results);
   });
+});
+
+//dashborad traget upload 
+targetsRouter.post('/previousData', upload.single('prevoiustargetFile'), (req, res) => {
+  if (!req.file) return res.status(400).json({ error: 'prevoiustargetFile required' });
+
+  const results = [];
+
+  Readable.from(req.file.buffer)
+    .pipe(csv())
+    .on('data', (data) => results.push(data))
+    .on('end', () => {
+      if (!results.length) {
+        return res.status(400).json({ error: 'CSV file is empty or invalid.' });
+      }
+
+
+      const values = [];
+      const branchIds = new Set();
+
+      results.forEach(row => {
+        let periodKey = Object.keys(row).find(k => k.trim().toLowerCase() === 'period');
+        const period = (row[periodKey] || '').trim();
+
+        const branch_id = (row.branch_id || '').trim();
+
+        if (!period || !branch_id) return; 
+
+        branchIds.add(branch_id);
+
+        Object.keys(row).forEach(key => {
+          const cleanKey = key.trim();
+          if (cleanKey !== 'branch_id' && cleanKey.toLowerCase() !== 'period') {
+            const amount = row[key] === '' || row[key] == null ? 0 : Number(row[key]);
+            values.push([period, branch_id, cleanKey, amount]);
+          }
+        });
+      });
+     
+      
+      const branchIdArray = Array.from(branchIds);
+      if (!branchIdArray.length) {
+        return res.status(400).json({ error: 'No valid branch_id values found in CSV.' });
+      }
+
+      const branchPlaceholders = branchIdArray.map(() => '?').join(',');
+
+  
+      const deleteQuery = `
+        DELETE FROM dashboard_table
+        WHERE period = ?
+        AND branch_id IN (${branchPlaceholders})
+        AND kpi IN (?, ?)
+      `;
+
+      pool.query(deleteQuery, [results[0].period, ...branchIdArray, 'balance_deposit', 'loan_gen'], (error) => {
+        if (error) {
+          console.error(' Delete error:', error);
+          return res.status(500).json({ error: 'Internal server error (delete)' });
+        }
+
+     
+      
+
+      
+        pool.query(
+          'INSERT INTO dashboard_table (period, branch_id, kpi, amount) VALUES ?',
+          [values],
+          (error) => {
+            if (error) {
+              console.error(' Insert error:', error);
+              return res.status(500).json({ error: 'Internal server error (insert)' });
+            }
+
+            res.json({
+              ok: true,
+              inserted: values.length,
+              deletedBranches: branchIdArray.length
+            });
+          }
+        );
+      });
+    });
+  });
+
+  //dashborad total Achived upload 
+  targetsRouter.post('/totalAchieved', upload.single('totalAchievedFile'), (req, res) => {
+  if (!req.file) return res.status(400).json({ error: 'totalAchievedFile required' });
+
+  const results = [];
+
+  Readable.from(req.file.buffer)
+    .pipe(csv())
+    .on('data', (data) => results.push(data))
+    .on('end', () => {
+      if (!results.length) {
+        return res.status(400).json({ error: 'CSV file is empty or invalid.' });
+      }
+
+
+      const values = [];
+      const branchIds = new Set();
+
+      results.forEach(row => {
+        let periodKey = Object.keys(row).find(k => k.trim().toLowerCase() === 'period');
+        const period = (row[periodKey] || '').trim();
+
+        const branch_id = (row.branch_id || '').trim();
+
+        if (!period || !branch_id) return; 
+
+        branchIds.add(branch_id);
+
+        Object.keys(row).forEach(key => {
+          const cleanKey = key.trim();
+          if (cleanKey !== 'branch_id' && cleanKey.toLowerCase() !== 'period') {
+            const amount = row[key] === '' || row[key] == null ? 0 : Number(row[key]);
+            values.push([period, branch_id, cleanKey, amount]);
+          }
+        });
+      });
+    
+      
+      const branchIdArray = Array.from(branchIds);
+      if (!branchIdArray.length) {
+        return res.status(400).json({ error: 'No valid branch_id values found in CSV.' });
+      }
+
+      const branchPlaceholders = branchIdArray.map(() => '?').join(',');
+
+  
+      const deleteQuery = `
+        DELETE FROM dashboard_total_achiveved
+        WHERE period = ?
+        AND branch_id IN (${branchPlaceholders})
+        AND kpi IN (?, ?)
+      `;
+
+      pool.query(deleteQuery, [results[0].period, ...branchIdArray, 'balance_deposit', 'loan_gen'], (error) => {
+        if (error) {
+          console.error(' Delete error:', error);
+          return res.status(500).json({ error: 'Internal server error (delete)' });
+        }
+
+
+      
+        pool.query(
+          'INSERT INTO dashboard_total_achiveved (period, branch_id, kpi, amount) VALUES ?',
+          [values],
+          (error) => {
+            if (error) {
+              console.error(' Insert error:', error);
+              return res.status(500).json({ error: 'Internal server error (insert)' });
+            }
+
+            res.json({
+              ok: true,
+              inserted: values.length,
+              deletedBranches: branchIdArray.length
+            });
+          }
+        );
+      });
+    });
+  });
+
+  //upload salary
+targetsRouter.post("/uploadSalary", upload.single("salaryFile"), (req, res) => {
+  if (!req.file)
+    return res.status(400).json({ error: "salaryFile required" });
+
+  const results = [];
+
+  Readable.from(req.file.buffer)
+    .pipe(csv())
+    .on("data", (data) => results.push(data))
+    .on("end", () => {
+      if (!results.length)
+        return res.status(400).json({ error: "CSV file is empty or invalid." });
+
+      const values = [];
+      const pfSet = new Set();
+
+      results.forEach((row) => {
+        
+        const periodKey = Object.keys(row).find(k => k.trim().toLowerCase() === "period");
+        const pfKey = Object.keys(row).find(k => k.trim().toLowerCase() === "pf_no");
+        const salaryKey = Object.keys(row).find(k => k.trim().toLowerCase() === "salary");
+        const incrementKey = Object.keys(row).find(k => k.trim().toLowerCase() === "increment");
+
+        const period = (row[periodKey] || "").trim();
+        const PF_NO = (row[pfKey] || "").trim();
+        const salary = Number(row[salaryKey] || 0);
+        const increment = Number(row[incrementKey] || 0);
+
+        if (!period || !PF_NO) return; 
+
+        pfSet.add(PF_NO);
+        values.push([period, PF_NO, salary, increment]);
+      });
+
+      const pfArray = Array.from(pfSet);
+      if (!pfArray.length)
+        return res.status(400).json({ error: "No valid PF_NO values found in CSV." });
+
+      const placeholders = pfArray.map(() => "?").join(",");
+      const periodValue = results[0].period || values[0][0];
+
+      
+      const deleteQuery = `
+        DELETE FROM base_salary
+        WHERE period = ?
+        AND PF_NO IN (${placeholders})
+      `;
+  console.log(deleteQuery);
+  
+      pool.query(deleteQuery, [periodValue, ...pfArray], (deleteErr) => {
+        if (deleteErr) {
+          console.error("Delete error:", deleteErr);
+          return res.status(500).json({ error: "Internal server error (delete)" });
+        }
+
+        // Step 2: Insert new rows
+        const insertQuery = `
+          INSERT INTO base_salary (period, PF_NO, salary, increment)
+          VALUES ?
+        `;
+
+        pool.query(insertQuery, [values], (insertErr) => {
+          if (insertErr) {
+            console.error("Insert error:", insertErr);
+            return res.status(500).json({ error: "Internal server error (insert)" });
+          }
+
+          res.json({
+            ok: true,
+            message: "Salary data uploaded successfully",
+            inserted: values.length,
+            deleted: pfArray.length,
+          });
+        });
+      });
+    });
 });

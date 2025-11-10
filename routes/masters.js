@@ -80,17 +80,17 @@ mastersRouter.delete('/departments/:id', (req, res) => {
 
 // Users
 mastersRouter.get('/users', (req, res) => {
-  pool.query('SELECT id, username, name, role, branch_id, department_id FROM users', (error, results) => {
+  pool.query('SELECT id, username, name, role, branch_id,PF_NO, department_id FROM users', (error, results) => {
     if (error) return res.status(500).json({ error: 'Internal server error' });
     res.json(results);
   });
 });
 
 mastersRouter.post('/users', (req, res) => {
-  const {  username, name, password, role, branch_id, department_id } = req.body;
+  const {  username, name, password, role, branch_id, department_id,PF_NO } = req.body;
   const password_hash = bcrypt.hashSync(password, 10);
   console.log('Adding user:', { username, name, role, branch_id, department_id,password_hash });
-  const user = {  username, name, password_hash, role, branch_id, department_id };
+  const user = {  username, name, password_hash, role, branch_id, department_id ,PF_NO};
   pool.getConnection((err, connection) => {
     if (err) return res.status(500).json({ error: 'Internal server error' });
     connection.beginTransaction(err => {
@@ -121,8 +121,8 @@ mastersRouter.post('/users', (req, res) => {
 });
 
 mastersRouter.put('/users/:id', (req, res) => {
-  const { username, name, role, branch_id, department_id } = req.body;
-  const user = { username, name, role, branch_id, department_id };
+  const { username, name, role, branch_id, department_id,PF_NO } = req.body;
+  const user = { username, name, role, branch_id, department_id,PF_NO };
   pool.query('UPDATE users SET ? WHERE id = ?', [user, req.params.id], (error) => {
     if (error) return res.status(500).json({ error: 'Internal server error' });
     res.json({ ok: true });
@@ -218,37 +218,92 @@ mastersRouter.get('/transfers', (req, res) => {
 });
 
 mastersRouter.post('/transfers', (req, res) => {
-  const { staff_id, old_branch_id, new_branch_id, kpi_total } = req.body;
-  const transfer = { staff_id, old_branch_id, new_branch_id, kpi_total };
+  const {
+    staff_id,
+    old_branch_id,
+    new_branch_id,
+    kpi_total,
+    period,
+    deposit_target,
+    deposit_achieved,
+    loan_gen_target,
+    loan_gen_achieved,
+    loan_amulya_target,
+    loan_amulya_achieved,
+    audit_target,
+    audit_achieved,
+    recovery_target,
+    recovery_achieved,
+    insurance_target,
+    insurance_achieved,
+    old_designation,
+    new_designation
+  } = req.body;
+
+  
+  const transfer = {
+    staff_id,
+    old_branch_id,
+    new_branch_id,
+    kpi_total,
+    period,
+    deposit_target,
+    deposit_achieved,
+    loan_gen_target,
+    loan_gen_achieved,
+    loan_amulya_target,
+    loan_amulya_achieved,
+    audit_target,
+    audit_achieved,
+    recovery_target,
+    recovery_achieved,
+    insurance_target,
+    insurance_achieved,
+    old_designation,
+    new_designation
+  };
+
   console.log('Adding transfer:', transfer);
+
   pool.getConnection((err, connection) => {
     if (err) return res.status(500).json({ error: 'Internal server error' });
+
     connection.beginTransaction(err => {
       if (err) {
         connection.release();
         return res.status(500).json({ error: 'Internal server error' });
       }
-      connection.query('INSERT INTO employee_transfer SET ?', transfer, (error) => {
+
+      const query = 'INSERT INTO employee_transfer SET ?';
+
+      connection.query(query, transfer, (error) => {
         if (error) {
+          console.error('Insert error:', error);
           return connection.rollback(() => {
             connection.release();
-            res.status(500).json({ error: 'Internal server error' });
+            res.status(500).json({ error: 'Database insert failed' });
           });
         }
+
         connection.commit(err => {
           if (err) {
             return connection.rollback(() => {
               connection.release();
-              res.status(500).json({ error: 'Internal server error' });
+              res.status(500).json({ error: 'Transaction commit failed' });
             });
           }
+
           connection.release();
-          res.json(transfer);
+          res.json({
+            message: 'Transfer added successfully',
+            data: transfer
+          });
         });
       });
     });
   });
 });
+
 
 mastersRouter.put('/transfers/:id', (req, res) => {
   const { staff_id, old_branch_id, new_branch_id, kpi_total } = req.body;
@@ -270,8 +325,9 @@ mastersRouter.delete('/transfers/:id', (req, res) => {
 });
 
 mastersRouter.put('/Transfers_user/:id', (req, res) => {
-  const { branch_id } = req.body;
-  const user = { branch_id ,transfered:1};
+  const { branch_id ,role } = req.body;
+  const user = { branch_id,role ,transfered:1};
+  
   pool.query('UPDATE users SET ? WHERE id = ?', [user, req.params.id], (error) => {
     if (error) return res.status(500).json({ error: 'Internal server error' });
     res.json({ ok: true });
@@ -280,6 +336,8 @@ mastersRouter.put('/Transfers_user/:id', (req, res) => {
 mastersRouter.delete('/Transfer_for_delete_allocation', (req, res) => {
   const { user_id } = req.body;
   const user = { user_id};
+  
+  
   pool.query('DELETE FROM allocations WHERE user_id = ?', [user_id], (error) => {
     if (error) return res.status(500).json({ error: 'Internal server error' });
     res.json({ ok: true });
@@ -294,3 +352,169 @@ mastersRouter.delete('/Transfer_for_delete_ho_staff', (req, res) => {
     res.json({ ok: true });
   });
 });
+
+// trasfer-history
+mastersRouter.post('/trasfer-history', (req, res) => {
+  const {period}=req.body;
+  const query=`SELECT e.staff_id, s.name, DATE(MIN(e.transfer_date)) AS transfer_date FROM employee_transfer e JOIN  users s ON s.id = e.staff_id WHERE e.period= ?  GROUP BY e.staff_id, DATE(e.transfer_date) ORDER BY DATE(MIN(e.transfer_date))`;
+  pool.query(query,[period], (error, results) => {
+    if (error) return res.status(500).json({ error: 'Internal server error' });
+    res.json(results);
+  });
+});
+
+mastersRouter.post("/transfer-Kpi-history", (req, res) => {
+  const { period, staff_id } = req.body;
+  console.log(req.body);
+
+  // --- Step 1: Fetch transfer data ---
+  const query = `
+    SELECT 
+      e.*, 
+      u.name,
+      b.name AS branch_name
+    FROM 
+      employee_transfer e
+      JOIN users u ON u.id = e.staff_id
+      JOIN branches b ON b.id = e.old_branch_id
+    WHERE 
+      e.period = ? AND e.staff_id = ?
+    ORDER BY 
+      e.staff_id, e.transfer_date ASC
+  `;
+
+  pool.query(query, [period, staff_id], (err, transfers) => {
+    if (err) return res.status(500).json({ error: "Internal server error" });
+    if (transfers.length === 0) return res.json([]);
+
+    // --- Step 2: Fetch weightage values ---
+    const weightageQuery = `SELECT kpi, weightage FROM weightage`;
+
+    pool.query(weightageQuery, (err, weightages) => {
+      if (err) return res.status(500).json({ error: "Error fetching weightage" });
+
+      // Convert to map for easy lookup
+      const weightageMap = {};
+      weightages.forEach((w) => {
+        weightageMap[w.kpi] = w.weightage;
+      });
+
+      const calculateScore = (kpi, achieved, target) => {
+        let outOf10;
+        const ratio = achieved / target;
+        const auditRatio = kpi === "audit" ? kpi.achieved / kpi.target : 0;
+        const recoveryRatio = kpi === "recovery" ? kpi.achieved / kpi.target : 0;
+
+        switch (kpi) {
+          case "deposit":
+          case "loan_gen":
+            if (ratio < 1) {
+              outOf10 = ratio * 10;
+            } else if (ratio < 1.25) {
+              outOf10 = 10;
+            } else if (auditRatio >= 0.75 && recoveryRatio >= 0.75) {
+              outOf10 = 12.5;
+            } else {
+              outOf10 = 10;
+            }
+            break;
+
+          case "loan_amulya":
+            if (ratio < 1) {
+              outOf10 = ratio * 10;
+            } else if (ratio < 1.25) {
+              outOf10 = 10;
+            } else {
+              outOf10 = 12.5;
+            }
+            break;
+
+          case "insurance":
+            if (ratio === 0) {
+              outOf10 = -2;
+            } else if (ratio < 1) {
+              outOf10 = ratio * 10;
+            } else if (ratio < 1.25) {
+              outOf10 = 10;
+            } else {
+              outOf10 = 12.5;
+            }
+            break;
+
+          case "recovery":
+          case "audit":
+            if (ratio < 1) {
+              outOf10 = ratio * 10;
+            } else {
+              outOf10 = 12.5;
+            }
+            break;
+
+          default:
+            outOf10 = 0;
+        }
+
+        return Math.max(0, Math.min(12.5, isNaN(outOf10) ? 0 : outOf10));
+      };
+
+      const staffResult = {
+        staff_id: transfers[0].staff_id,
+        name: transfers[0].name,
+        period: transfers[0].period,
+        transfers: [],
+      };
+
+      // --- Step 3: Apply SAME SCORE LOGIC per transfer record ---
+      transfers.forEach((t) => {
+        const branchScores = {};
+        let totalWeightageScore = 0;
+
+        const kpis = [
+          { key: "deposit", achieved: t.deposit_achieved, target: t.deposit_target },
+          { key: "loan_gen", achieved: t.loan_gen_achieved, target: t.loan_gen_target },
+          { key: "loan_amulya", achieved: t.loan_amulya_achieved, target: t.loan_amulya_target },
+          { key: "recovery", achieved: t.recovery_achieved, target: t.recovery_target },
+          { key: "audit", achieved: t.audit_achieved, target: t.audit_target },
+          { key: "insurance", achieved: t.insurance_achieved, target: t.insurance_target },
+        ];
+
+        kpis.forEach((row) => {
+          if (row.target == null) return;
+
+          const score = calculateScore(row.key, row.achieved, row.target);
+          const weightage = weightageMap[row.key] || 0;
+          const weightageScore = (score * weightage) / 100;
+
+          branchScores[row.key] = {
+            achieved: row.achieved || 0,
+            target: row.target || 0,
+            score,
+            weightage,
+            weightageScore:
+              row.key === "insurance" && score === 0
+                ? -2
+                : isNaN(weightageScore)
+                ? 0
+                : weightageScore,
+          };
+
+          totalWeightageScore += branchScores[row.key].weightageScore;
+        });
+
+        // --- Step 4: Add all results per transfer ---
+        staffResult.transfers.push({
+          transfer_date: t.transfer_date,
+          old_designation: t.old_designation,
+          new_designation: t.new_designation,
+          branch_name: t.branch_name,
+          total_weightage_score: totalWeightageScore,
+          ...branchScores,
+        });
+      });
+
+      res.json([staffResult]);
+    });
+  });
+});
+
+

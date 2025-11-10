@@ -47,7 +47,6 @@ export const autoDistributeTargets = (period, branchId, callback) => {
 
 
 
-
 export const autoDistributeTargetsInTransfer = (period, branchId, callback) => {
 
 pool.query('DELETE FROM allocations WHERE period = ? AND branch_id = ?', [period, branchId], (error) => {
@@ -81,8 +80,7 @@ pool.query('DELETE FROM allocations WHERE period = ? AND branch_id = ?', [period
           staff.forEach(user => {
             allocations.push([period, branchId, user.id, 'audit', auditTarget.amount, 'published']);
           });
-        }
-
+        } 
         pool.query('INSERT INTO allocations (period, branch_id, user_id, kpi, amount, state) VALUES ?', [allocations], (error) => {
           if (error) return callback(error);
           callback(null);
