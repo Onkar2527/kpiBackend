@@ -984,51 +984,48 @@ summaryRouter.get("/staff-scores-all", (req, res) => {
           weightage: 0,
           weightageScore: 0,
         };
-        Object.values(staffScores).forEach((staff) => {
-          staff.recovery = branchScores.recovery || defaultBranchKpi;
-          staff.audit = branchScores.audit || defaultBranchKpi;
-          staff.insurance = branchScores.insurance || defaultBranchKpi;
-          let totalWeightageScore = 0;
-          [
-            "deposit",
-            "loan_gen",
-            "loan_amulya",
-            "recovery",
-            "audit",
-            "insurance",
-          ].forEach((kpi) => {
-            if (staff[kpi]) {
-              totalWeightageScore += staff[kpi].weightageScore;
-            }
-          });
-          const query = `
-        SELECT COALESCE(SUM(kpi_total)/COUNT(*), 0) AS avgKpi 
-        FROM employee_transfer 
-        WHERE staff_id = ?
-      `;
+          const promises = Object.values(staffScores).map(
+        (staff) =>
+          new Promise((resolve, reject) => {
+            staff.recovery = branchScores.recovery || defaultBranchKpi;
+            staff.audit = branchScores.audit || defaultBranchKpi;
+            staff.insurance = branchScores.insurance || defaultBranchKpi;
 
-          pool.query(query, [staff.staffId], (error, result) => {
-            if (error)
-              return res.status(500).json({ error: "Internal server error" });
-            const previousKpi = result[0]?.avgKpi || 0;
+            let totalWeightageScore = 0;
+            ["deposit", "loan_gen", "loan_amulya", "recovery", "audit", "insurance"].forEach((kpi) => {
+              if (staff[kpi]) totalWeightageScore += staff[kpi].weightageScore;
+            });
 
-            const insuranceRation = staff["insurance"].score;
-            const recoveryRation = staff["recovery"].score;
-            const total = totalWeightageScore + previousKpi;
-            
-            
-            if (insuranceRation < 7.5 && recoveryRation < 7.5 && total > 10) {
-              total = 10;
-            }
-            staff.total = total;
-          });
-        });
-        res.json(Object.values(staffScores));
-      });
-    }
-  );
-});
-// GET /summary/staff-scores-all?period=YYYY-MM&branchId=B01
+            const prevQuery = `
+              SELECT COALESCE(SUM(kpi_total)/COUNT(*), 0) AS avgKpi 
+              FROM employee_transfer 
+              WHERE staff_id = ?
+            `;
+
+            pool.query(prevQuery, [staff.staffId], (err, result) => {
+              if (err) return reject(err);
+
+              const previousKpi = result[0]?.avgKpi || 0;
+              const insuranceRation = staff.insurance.score;
+              const recoveryRation = staff.recovery.score;
+
+              let total = totalWeightageScore + previousKpi;
+              if (insuranceRation < 7.5 && recoveryRation < 7.5 && total > 10) {
+                total = 10;
+              }
+
+              staff.total = total;
+              resolve();
+            });
+          })
+      );
+
+      Promise.all(promises)
+        .then(() => res.json(Object.values(staffScores)))
+        .catch(() => res.status(500).json({ error: "Internal server error" }));
+    });
+  });
+});// GET /summary/staff-scores-all?period=YYYY-MM&branchId=B01
 // Returns computed KPI scores for all staff in the branch.
 
 // for calculating HO score based on achieved and weightage

@@ -5,6 +5,8 @@ import pool from "../db.js";
 export const allocationsRouter = express.Router();
 
 export const autoDistributeTargets = (period, branchId, callback) => {
+  console.log(period, branchId);
+  
   pool.query('SELECT * FROM targets WHERE period = ? AND branch_id = ?', [period, branchId], (error, targets) => {
     if (error) return callback(error);
     if (targets.length === 0) return callback(new Error('No branch targets found'));
@@ -13,30 +15,46 @@ export const autoDistributeTargets = (period, branchId, callback) => {
       if (error) return callback(error);
       if (staff.length === 0) return callback(new Error('No active staff in branch'));
 
-      const kpisToSplit = ['deposit', 'loan_gen', 'loan_amulya'];
+      const kpisToSplit = ['deposit', 'loan_gen', 'loan_amulya', 'audit', 'insurance', 'recovery']; 
       const allocations = [];
 
-      pool.query('DELETE FROM allocations WHERE period = ? AND branch_id = ?', [period, branchId], (error) => {
+      pool.query('DELETE FROM allocations WHERE period = ? AND branch_id = ? AND kpi IN (?)', [period, branchId, kpisToSplit], (error) => {
         if (error) return callback(error);
 
-        kpisToSplit.forEach(kpi => {
-          const target = targets.find(t => t.kpi === kpi);
-          const amount = target ? target.amount : 0;
-          const base = Math.floor(amount / staff.length);
-          const rem = amount % staff.length;
-          staff.forEach((user, idx) => {
-            allocations.push([period, branchId, user.id, kpi, base + (idx < rem ? 1 : 0), 'published']);
-          });
+        kpisToSplit.forEach((kpi) => {
+          const target = targets.find((t) => t.kpi === kpi);
+          if (!target || !target.amount || target.amount <= 0) return;
+
+          if (kpi === 'audit') {
+         
+            staff.forEach(user => {
+              allocations.push([period, branchId, user.id, 'audit', target.amount, 'published']);
+            });
+          }else  if(kpi==='insurance'){
+           
+            staff.forEach(user => {
+              allocations.push([period, branchId, user.id, kpi, target.amount, 'published']);
+            });
+          } else {
+
+            const amount = target.amount;
+            const base = Math.floor(amount / staff.length);
+            const rem = amount % staff.length;
+
+            staff.forEach((user, idx) => {
+              allocations.push([
+                period,
+                branchId,
+                user.id,
+                kpi,
+                base + (idx < rem ? 1 : 0),
+                'published',
+              ]);
+            });
+          }
         });
 
-        const auditTarget = targets.find(t => t.kpi === 'audit');
-        if (auditTarget) {
-          staff.forEach(user => {
-            allocations.push([period, branchId, user.id, 'audit', auditTarget.amount, 'published']);
-          });
-        }
-
-        pool.query('INSERT INTO allocations (period, branch_id, user_id, kpi, amount, state) VALUES ?', [allocations], (error) => {
+        pool.query('INSERT INTO allocations (period, branch_id, user_id, kpi, amount, state) VALUES  ?', [allocations], (error) => {
           if (error) return callback(error);
           callback(null);
         });
@@ -44,7 +62,6 @@ export const autoDistributeTargets = (period, branchId, callback) => {
     });
   });
 };
-
 
 
 export const autoDistributeTargetsInTransfer = (period, branchId, callback) => {

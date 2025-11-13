@@ -255,8 +255,7 @@ entriesRouter.get("/", (req, res) => {
     FROM entries e 
     JOIN users u ON e.employee_id = u.id 
     WHERE 1 = 1
-      AND MONTH(e.date) = MONTH(CURRENT_DATE())
-      AND YEAR(e.date) = YEAR(CURRENT_DATE())`;
+    `;
   const params = [];
 
   if (period) {
@@ -308,4 +307,35 @@ entriesRouter.post("/:id/return", (req, res) => {
       res.json({ ok: true });
     }
   );
+});
+
+//admin route to get entries of a month
+entriesRouter.post("/monthEntries", (req, res) => {
+  const { period } = req.body;
+  if (!period) {
+    return res.status(400).json({ error: "Period is required" });
+  }
+
+  const query = `
+    SELECT * FROM entries
+    WHERE period = ? and status='Verified' AND MONTH(date) = MONTH(CURRENT_DATE())
+      AND YEAR(date) = YEAR(CURRENT_DATE())
+  `;
+  pool.query(query, [period], (error, results) => {
+    if (error) {
+      return res.status(500).json({ error: "Internal server error" });
+    }
+    res.json(results);
+  });
+});
+
+entriesRouter.delete('/entries/:id', (req, res) => {
+  console.log(`Deleting Entries with id: ${req.params.id}`);
+  pool.query('DELETE FROM entries WHERE id = ?', [req.params.id], (error, result) => {
+    if (error) return res.status(500).json({ error: 'Internal server error' });
+    if (result.affectedRows === 0) {
+      return res.status(404).json({ error: 'Entry not found' });
+    }
+    res.json({ ok: true });
+  });
 });

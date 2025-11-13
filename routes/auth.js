@@ -18,7 +18,7 @@ auth.post('/login', (req, res) => {
   if (!username || !password) {
     return res.status(400).json({ error: 'username and password required' });
   }
-  pool.query('SELECT * FROM users WHERE username = ?', [username], (error, results) => {
+  pool.query('SELECT u.* ,b.name as branch_name FROM users u left join branches b on u.branch_id=b.id WHERE username = ?', [username], (error, results) => {
     if (error) {
       console.error(error);
       return res.status(500).json({ error: 'Internal server error' });
@@ -33,7 +33,7 @@ auth.post('/login', (req, res) => {
     // For demo purposes we return a fixed token.  A real system
     // would generate a signed JWT including role and branch scopes.
     const token = 'dev-token-' + user.id;
-    const { id, role, branch_id, name,username } = user;
-    res.json({ token, user: { id, name, role, branchId: branch_id, username:username } });
+    const { id, role, branch_id, name,username ,branch_name} = user;
+    res.json({ token, user: { id, name, role, branchId: branch_id, username:username, branchName: branch_name } });
   });
 });

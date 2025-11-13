@@ -74,7 +74,8 @@ const upload = multer({ storage: multer.memoryStorage() });
 //     });
 // });
 
-//upload the loan target file
+
+//upload the loan_amulya and deposit and loan gen  and audit file
 targetsRouter.post('/upload', upload.single('targetFile'), (req, res) => {
   if (!req.file) return res.status(400).json({ error: 'targetFile required' });
 
@@ -86,73 +87,188 @@ targetsRouter.post('/upload', upload.single('targetFile'), (req, res) => {
 
       let values = [];
 
-   
       results.forEach(row => {
+        let periodKey = Object.keys(row).find(k => k.trim().toLowerCase() === 'period');
+        const period = (row[periodKey] || '').trim();
+
         Object.keys(row).forEach(key => {
           const cleanKey = key.trim(); 
           if (cleanKey && cleanKey !== 'branch_id' && cleanKey !== 'period') {
             const amount = row[key] === '' || row[key] == null ? 0 : row[key]; 
-            values.push([row.period, row.branch_id, cleanKey, amount, 'published']);
+            values.push([period, row.branch_id, cleanKey, amount, 'published']);
           }
         });
       });
 
-     
+      
       results.forEach(row => {
+        let periodKey = Object.keys(row).find(k => k.trim().toLowerCase() === 'period');
+        const period = (row[periodKey] || '').trim();
         if (!Object.keys(row).some(k => k.trim() === 'audit')) {
-          values.push([row.period, row.branch_id, 'audit', 100, 'published']);
+          values.push([period, row.branch_id, 'audit', 100, 'published']);
         }
       });
 
       const branchIds = [...new Set(results.map(r => r.branch_id))];
       const placeholders = branchIds.map(() => '?').join(',');
 
-        console.log(results);
-      
-      pool.query(
-        `DELETE FROM targets 
-         WHERE period = ? 
-         AND branch_id IN (${placeholders}) 
-         AND kpi IN (?, ?, ?)`,
-        [results[0].period, ...branchIds, 'audit', 'loan_amulya', 'loan_gen'],
-        (error) => {
-          if (error) {
-            console.error('Delete error:', error);
-            return res.status(500).json({ error: 'Internal server error' });
-          }
+      console.log('Parsed data preview:', results.slice(0, 3));
 
-        
-          pool.query('INSERT IGNORE INTO periods (period) VALUES (?)', [results[0].period], (error) => {
-            if (error) console.error('Error inserting period:', error);
-          });
+     
+      const allKpis = [...new Set(values.map(v => v[2]))];
+      const kpiPlaceholders = allKpis.map(() => '?').join(',');
 
-        
-          pool.query(
-            'INSERT INTO targets (period, branch_id, kpi, amount, state) VALUES ?',
-            [values],
-            (error) => {
-              if (error) {
-                console.error('Insert error:', error);
-                return res.status(500).json({ error: 'Internal server error' });
-              }
+      console.log('Deleting only KPIs:', allKpis);
 
-             
-              branchIds.forEach(branchId => {
-                autoDistributeTargets(results[0].period, branchId, (err) => {
-                  if (err) console.error(`Error auto-distributing targets for branch ${branchId}:`, err);
-                });
-              });
+     
+      const deleteQuery = `
+        DELETE FROM targets
+        WHERE period = ? 
+        AND branch_id IN (${placeholders}) 
+        AND kpi IN (${kpiPlaceholders})
+      `;
 
-              res.json({ ok: true });
-            }
-          );
+      pool.query(deleteQuery, [results[0].period, ...branchIds, ...allKpis], (error) => {
+        if (error) {
+          console.error('Delete error:', error);
+          return res.status(500).json({ error: 'Internal server error' });
         }
-      );
+
+       
+        pool.query(
+          'INSERT IGNORE INTO periods (period) VALUES (?)',
+          [results[0].period],
+          (error) => {
+            if (error) console.error('Error inserting period:', error);
+          }
+        );
+
+        pool.query(
+          'INSERT INTO targets (period, branch_id, kpi, amount, state) VALUES ?',
+          [values],
+          (error) => {
+            if (error) {
+              console.error('Insert error:', error);
+              return res.status(500).json({ error: 'Internal server error' });
+            }
+
+            branchIds.forEach(branchId => {
+              autoDistributeTargets(results[0].period, branchId, (err) => {
+                if (err) console.error(`Error auto-distributing targets for branch ${branchId}:`, err);
+              });
+            });
+
+            res.json({ ok: true });
+          }
+        );
+      });
+    });
+});
+
+
+//upload the loan_amulya and deposit and loan gen  file
+targetsRouter.post('/upload1', upload.single('targetFile'), (req, res) => {
+  if (!req.file) return res.status(400).json({ error: 'targetFile required' });
+
+  const results = [];
+
+  Readable.from(req.file.buffer)
+    .pipe(csv())
+    .on('data', (data) => results.push(data))
+    .on('end', () => {
+      if (results.length === 0) {
+        return res.status(400).json({ error: 'No data found in CSV' });
+      }
+
+      let values = [];
+
+      results.forEach(row => {
+        const normalized = {};
+        for (const key in row) {
+          if (!key) continue;
+          const cleanKey = key.trim().toLowerCase();
+          normalized[cleanKey] = (row[key] || '').toString().trim();
+        }
+
+        const period = normalized['period'];
+        const branchId = normalized['branch_id'];
+        if (!period || !branchId) return;
+
+        Object.keys(normalized).forEach(kpi => {
+          if (kpi !== 'period' && kpi !== 'branch_id' && kpi !== '') {
+            const raw = normalized[kpi];
+            const amount = raw === '' || raw == null ? 0 : parseFloat(raw) || 0;
+            values.push([period, branchId, kpi, amount, 'published']);
+          }
+        });
+      });
+
+      console.log('Parsed normalized data (first 3 rows):');
+      console.log(results.slice(0, 3));
+
+      const firstPeriod = results[0]['period'] || results[0].period;
+      const branchIds = [...new Set(results.map(r => r['branch_id'] || r.branch_id))];
+      const placeholders = branchIds.map(() => '?').join(',');
+
+    
+      const allKpis = [
+        ...new Set(
+          values.map(v => v[2]) 
+        )
+      ];
+      const kpiPlaceholders = allKpis.map(() => '?').join(',');
+
+      console.log('Deleting only KPIs:', allKpis);
+
+    
+      const deleteQuery = `
+        DELETE FROM targets 
+        WHERE period = ? 
+        AND branch_id IN (${placeholders}) 
+        AND kpi IN (${kpiPlaceholders})
+      `;
+
+      pool.query(deleteQuery, [firstPeriod, ...branchIds, ...allKpis], (error) => {
+        if (error) {
+          console.error('Delete error:', error);
+          return res.status(500).json({ error: 'Internal server error' });
+        }
+
+   
+        pool.query(
+          'INSERT IGNORE INTO periods (period) VALUES (?)',
+          [firstPeriod],
+          (error) => {
+            if (error) console.error('Error inserting period:', error);
+          }
+        );
+
+        pool.query(
+          'INSERT INTO targets (period, branch_id, kpi, amount, state) VALUES ?',
+          [values],
+          (error) => {
+            if (error) {
+              console.error('Insert error:', error);
+              return res.status(500).json({ error: 'Internal server error' });
+            }
+
+            branchIds.forEach(branchId => {
+              autoDistributeTargets(firstPeriod, branchId, (err) => {
+                if (err)
+                  console.error(`Error auto-distributing targets for branch ${branchId}:`, err);
+              });
+            });
+
+            res.json({ ok: true, inserted: values.length, branches: branchIds });
+          }
+        );
+      });
     });
 });
 
 
 
+//upload insurance file
 targetsRouter.post('/upload-branch-specific', upload.single('targetFile'), (req, res) => {
   if (!req.file) return res.status(400).json({ error: 'targetFile required' });
 
@@ -173,11 +289,14 @@ targetsRouter.post('/upload-branch-specific', upload.single('targetFile'), (req,
       // if (!hasAudit && results.length > 0) {
       //   values.push([results[0].period, results[0].branch_id, 'audit', 100, 'published']);
       // }
-
-      pool.query('DELETE FROM targets WHERE period = ? AND branch_id = ? AND kpi IN (?, ?)', [results[0].period, results[0].branch_id, 'insurance', 'recovery'], (error) => {
+      const allKpis = [...new Set(values.map(v => v[2]))];
+      const kpiPlaceholders = allKpis.map(() => '?').join(',');
+      const allBranchIds = [...new Set(values.map(v => v[1]))];
+      const branchPlaceholders = allBranchIds.map(() => '?').join(',');
+      pool.query(`DELETE FROM targets WHERE period = ? AND branch_id IN (${branchPlaceholders}) AND kpi IN (${kpiPlaceholders})`, [results[0].period, ...allBranchIds, ...allKpis], (error) => {
         if (error) return res.status(500).json({ error: 'Internal server error' });
 
-        pool.query('INSERT INTO periods (period) VALUES (?)', [results[0].period], (error) => {
+        pool.query('INSERT IGNORE INTO periods (period) VALUES (?)', [results[0].period], (error) => {
           if (error) console.error('Error inserting period:', error);
         });
         pool.query('INSERT INTO targets (period, branch_id, kpi, amount, state) VALUES ?', [values], (error) => {

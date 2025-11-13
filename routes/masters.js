@@ -80,7 +80,7 @@ mastersRouter.delete('/departments/:id', (req, res) => {
 
 // Users
 mastersRouter.get('/users', (req, res) => {
-  pool.query('SELECT id, username, name, role, branch_id,PF_NO, department_id FROM users', (error, results) => {
+  pool.query('SELECT u.id, u.username, u.name, u.role, b.name as branch_name, u.PF_NO, d.name as department_name FROM users u left join branches b on u.branch_id=b.id left join departments d on d.id=u.department_id', (error, results) => {
     if (error) return res.status(500).json({ error: 'Internal server error' });
     res.json(results);
   });
@@ -211,7 +211,9 @@ mastersRouter.delete('/branches/:id', (req, res) => {
 //staff Transfers
 
 mastersRouter.get('/transfers', (req, res) => {
-  pool.query('SELECT * FROM employee_transfer', (error, results) => {
+  pool.query(`SELECT e.id, u.name,b1.name as old_branch,b2.name as new_branch  FROM employee_transfer e 
+              join users u on e.staff_id=u.id join branches b1 on b1.id=e.old_branch_id 
+              join branches b2 on b2.id=e.new_branch_id`, (error, results) => {
     if (error) return res.status(500).json({ error: 'Internal server error' });
     res.json(results);
   });
