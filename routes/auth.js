@@ -18,7 +18,7 @@ auth.post('/login', (req, res) => {
   if (!username || !password) {
     return res.status(400).json({ error: 'username and password required' });
   }
-  pool.query('SELECT u.* ,b.name as branch_name FROM users u left join branches b on u.branch_id=b.id WHERE username = ?', [username], (error, results) => {
+  pool.query('SELECT u.* ,b.name as branch_name FROM users u left join branches b on u.branch_id=b.code WHERE username = ?', [username], (error, results) => {
     if (error) {
       console.error(error);
       return res.status(500).json({ error: 'Internal server error' });

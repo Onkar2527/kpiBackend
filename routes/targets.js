@@ -543,18 +543,20 @@ targetsRouter.post("/uploadSalary", upload.single("salaryFile"), (req, res) => {
         
         const periodKey = Object.keys(row).find(k => k.trim().toLowerCase() === "period");
         const pfKey = Object.keys(row).find(k => k.trim().toLowerCase() === "pf_no");
+        const branchKey = Object.keys(row).find(k => k.trim().toLowerCase() === "branch_id");
         const salaryKey = Object.keys(row).find(k => k.trim().toLowerCase() === "salary");
         const incrementKey = Object.keys(row).find(k => k.trim().toLowerCase() === "increment");
 
         const period = (row[periodKey] || "").trim();
         const PF_NO = (row[pfKey] || "").trim();
+        const branch_id=(row[branchKey] || "").trim();
         const salary = Number(row[salaryKey] || 0);
         const increment = Number(row[incrementKey] || 0);
 
         if (!period || !PF_NO) return; 
 
         pfSet.add(PF_NO);
-        values.push([period, PF_NO, salary, increment]);
+        values.push([period, PF_NO,branch_id, salary, increment]);
       });
 
       const pfArray = Array.from(pfSet);
@@ -580,7 +582,7 @@ targetsRouter.post("/uploadSalary", upload.single("salaryFile"), (req, res) => {
 
         // Step 2: Insert new rows
         const insertQuery = `
-          INSERT INTO base_salary (period, PF_NO, salary, increment)
+          INSERT INTO base_salary (period, PF_NO, branch_id, salary, increment)
           VALUES ?
         `;
 

@@ -317,9 +317,8 @@ entriesRouter.post("/monthEntries", (req, res) => {
   }
 
   const query = `
-    SELECT * FROM entries
-    WHERE period = ? and status='Verified' AND MONTH(date) = MONTH(CURRENT_DATE())
-      AND YEAR(date) = YEAR(CURRENT_DATE())
+    SELECT e.*,u.PF_NO FROM entries e join users u on e.employee_id=u.id
+    WHERE period = ? 
   `;
   pool.query(query, [period], (error, results) => {
     if (error) {
