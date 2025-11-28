@@ -19,7 +19,7 @@ performanceMasterRouter.post("/getKpiRoleWise", (req, res) => {
     }
 
     const query = `
-      SELECT k.kpi_name FROM role_kpi_mapping r join kpi_master k on r.kpi_id = k.id WHERE role = ?
+      SELECT r.id,k.kpi_name  FROM role_kpi_mapping r join kpi_master k on r.kpi_id = k.id WHERE role = ?
     `;
 
     connection.query(query, [role], (error, results) => {
@@ -69,15 +69,16 @@ performanceMasterRouter.get("/specfic-ALLstaff-scores", (req, res) => {
 
     if (!kpiWeightage.length)
       return res.status(404).json({ error: "No KPI found for this role" });
-    console.log(kpiWeightage);
 
+    // Fetch normal entries
     const userEntryQuery = `
         SELECT 
           role_kpi_mapping_id, 
           value AS achieved 
         FROM user_kpi_entry 
         WHERE period = ? AND user_id = ? AND deleted_at IS NULL
-      `;
+    `;
+
     pool.query(userEntryQuery, [period, ho_staff_id], (err2, userEntries) => {
       if (err2) {
         console.error("Error fetching user KPI entries:", err2);
@@ -85,51 +86,78 @@ performanceMasterRouter.get("/specfic-ALLstaff-scores", (req, res) => {
           .status(500)
           .json({ error: "Failed to fetch user KPI entries" });
       }
-      console.log(userEntries);
 
-      const achievedMap = {};
-      userEntries.forEach(
-        (e) => (achievedMap[e.role_kpi_mapping_id] = e.achieved)
-      );
+      // Fetch INSURANCE value separately
+      const insuranceQuery = `
+        SELECT value AS achieved 
+        FROM entries 
+        WHERE kpi='insurance' AND employee_id = ?
+      `;
 
-      let totalWeightageScore = 0;
-      const scores = {};
-
-      kpiWeightage.forEach((row) => {
-        const { role_kpi_mapping_id, kpi_name, weightage } = row;
-        const achieved = parseFloat(achievedMap[role_kpi_mapping_id]) || 0;
-        const target =
-          kpi_name.toLowerCase() === "insurance" ? 40000 : weightage;
-
-        let score = 0;
-        if (achieved > 0) {
-          const ratio = achieved / target;
-          if (ratio < 1) score = ratio * 10;
-          else if (ratio < 1.25) score = 10;
-          else score = 12.5;
+      pool.query(insuranceQuery, [ho_staff_id], (err3, insuranceRows) => {
+        if (err3) {
+          console.error("Error fetching insurance value:", err3);
+          return res.status(500).json({ error: "Failed to fetch insurance value" });
         }
 
-        let weightageScore = (score * weightage) / 100;
-        if (kpi_name.toLowerCase() === "insurance" && score === 0)
-          weightageScore = -2;
+        const insuranceValue =
+          insuranceRows.length ? Number(insuranceRows[0].achieved) : 0;
 
-        totalWeightageScore += weightageScore;
+       
+        const achievedMap = {};
+        userEntries.forEach(
+          (e) => (achievedMap[e.role_kpi_mapping_id] = e.achieved)
+        );
 
-        scores[kpi_name] = {
-          score: Number(score.toFixed(2)),
-          achieved,
-          weightage,
-          weightageScore: Number(weightageScore.toFixed(2)),
-        };
+        let totalWeightageScore = 0;
+        const scores = {};
+
+        kpiWeightage.forEach((row) => {
+          const { role_kpi_mapping_id, kpi_name, weightage } = row;
+
+          let achieved = 0;
+
+          if (kpi_name.toLowerCase() === "insurance") {
+            achieved = insuranceValue;
+          } else {
+            achieved = parseFloat(achievedMap[role_kpi_mapping_id]) || 0;
+          }
+
+          const target =
+            kpi_name.toLowerCase() === "insurance" ? 40000 : weightage;
+
+          let score = 0;
+          if (achieved > 0) {
+            const ratio = achieved / target;
+            if (ratio < 1) score = ratio * 10;
+            else if (ratio < 1.25) score = 10;
+            else score = 12.5;
+          }
+
+          let weightageScore = (score * weightage) / 100;
+
+          if (kpi_name.toLowerCase() === "insurance" && score === 0) {
+            weightageScore = -2;
+          }
+
+          totalWeightageScore += weightageScore;
+
+          scores[kpi_name] = {
+            score: Number(score.toFixed(2)),
+            achieved,
+            weightage,
+            weightageScore: Number(weightageScore.toFixed(2)),
+          };
+        });
+
+        scores.total = Number(totalWeightageScore.toFixed(2));
+
+        return res.json(scores);
       });
-
-      scores.total = Number(totalWeightageScore.toFixed(2));
-
-      
-      res.json(scores);
     });
   });
 });
+
 
 //Reusable function to calculate KPI score for one ho_staff
 function calculateStaffScores(period, staffId, role) {
@@ -433,9 +461,9 @@ function calculateBranchStaffScore(period, branchId) {
     );
   });
 }
-//agm
+// simple agm
 performanceMasterRouter.get("/ho-Allhod-scores", (req, res) => {
-  const { period, hod_id } = req.query;
+  const { period, hod_id,role } = req.query;
 
   if (!period || !hod_id) {
     return res.status(400).json({ error: "period and hod_id are required" });
@@ -445,10 +473,9 @@ performanceMasterRouter.get("/ho-Allhod-scores", (req, res) => {
     SELECT k.kpi_name, r.id AS role_kpi_mapping_id, r.weightage
     FROM role_kpi_mapping r
     JOIN kpi_master k ON r.kpi_id = k.id
-    WHERE r.role = 'AGM'
-  `;
+    WHERE r.role = ?  `;
 
-  pool.query(hodKpiQuery, (err, hodKpis) => {
+  pool.query(hodKpiQuery, [role],(err, hodKpis) => {
     if (err) return res.status(500).json({ error: "Failed to fetch KPI list" });
     if (!hodKpis.length)
       return res.status(404).json({ error: "No KPIs for AGM role" });
@@ -603,7 +630,7 @@ performanceMasterRouter.get("/ho-Allhod-scores", (req, res) => {
           const avg = insuranceValue;
 
           let result;
-
+          let weightageScore;
           if (avg < target) {
             result = (avg / target) * 10;
           } else if (avg / target < 1.25) {
@@ -611,15 +638,21 @@ performanceMasterRouter.get("/ho-Allhod-scores", (req, res) => {
           } else {
             result = 12.5;
           }
-
-          const weightageScore = (result / 100) * weightage;
-          Total+=weightageScore;
+          if(avg===0){
+            weightageScore=-2;
+          }else{
+          weightageScore=(result / 100) * weightage;
+          }
+          
+          
           finalKpis[kpi.kpi_name] = {
             score: Number(result.toFixed(2)),
             achieved: avg,
             weightage,
-            weightageScore: Number(weightageScore.toFixed(2)),
+            weightageScore:Number(weightageScore.toFixed(2)),
           };
+          Total+=weightageScore;
+          
         }else if (index === 3) {
           const weightage = kpi.weightage;
           const avg = Cleanliness;
@@ -740,7 +773,7 @@ performanceMasterRouter.get("/ho-staff-scores-all", (req, res) => {
      
       for (const staff of staffRows) {
         const staffId = staff.staffId;
-        console.log(staffId);
+       
         
         // Fetch their entries
         const userEntries = await new Promise((resolve) => {
@@ -819,7 +852,7 @@ performanceMasterRouter.get("/ho-staff-scores-all", (req, res) => {
             score: Number(score.toFixed(2)),
             achieved,
             weightage,
-            weightageScore: Number(weightageScore.toFixed(2)),
+            weightageScore: kpi_name.toLowerCase() === "insurance" && weightageScore===0 ?  -2:Number(weightageScore.toFixed(2)),
           };
         }
 
@@ -829,6 +862,117 @@ performanceMasterRouter.get("/ho-staff-scores-all", (req, res) => {
       }
 
       res.json(result);
+    });
+  });
+});
+
+// Save or update HO staff KPI scores
+performanceMasterRouter.post("/save-or-update-ho-staff-kpi", (req, res) => {
+  const { user_id, period, master_user_id, scores } = req.body;
+
+  if (!user_id || !master_user_id || !period || !scores) {
+    return res.status(400).json({
+      error: "user_id, master_user_id, period and scores are required",
+    });
+  }
+
+ 
+  const filteredScores = scores.filter(
+    (s) => s.kpi_name.toLowerCase() !== "insurance"
+  );
+
+  if (filteredScores.length === 0) {
+    return res.json({ message: "No KPI to save (Insurance excluded)" });
+  }
+
+  const insertMessages = [];
+  const updateMessages = [];
+
+  const promises = filteredScores.map((s) => {
+    return new Promise((resolve) => {
+      const checkSql = `
+        SELECT id FROM user_kpi_entry
+        WHERE user_id = ? AND role_kpi_mapping_id = ? AND period = ?
+      `;
+
+      pool.query(
+        checkSql,
+        [user_id, s.role_kpi_mapping_id, period],
+        (err, rows) => {
+          if (err) return resolve({ error: err });
+
+          if (rows.length > 0) {
+            // UPDATE
+            const updateSql = `
+              UPDATE user_kpi_entry
+              SET value = ?, master_user_id = ?, updated_at = CURRENT_TIMESTAMP
+              WHERE user_id = ? AND role_kpi_mapping_id = ? AND period = ?
+            `;
+
+            pool.query(
+              updateSql,
+              [
+                s.value,
+                master_user_id,
+                user_id,
+                s.role_kpi_mapping_id,
+                period,
+              ],
+              (err2) => {
+                if (!err2) {
+                  updateMessages.push(
+                    `${s.kpi_name} updated successfully`
+                  );
+                }
+                resolve({ updated: true, err: err2 });
+              }
+            );
+          } else {
+            // INSERT
+            const insertSql = `
+              INSERT INTO user_kpi_entry 
+                (user_id, role_kpi_mapping_id, period, value, master_user_id)
+              VALUES (?, ?, ?, ?, ?)
+            `;
+
+            pool.query(
+              insertSql,
+              [
+                user_id,
+                s.role_kpi_mapping_id,
+                period,
+                s.value,
+                master_user_id,
+              ],
+              (err3) => {
+                if (!err3) {
+                  insertMessages.push(
+                    `${s.kpi_name} inserted successfully`
+                  );
+                }
+                resolve({ inserted: true, err: err3 });
+              }
+            );
+          }
+        }
+      );
+    });
+  });
+
+  Promise.all(promises).then((results) => {
+    const errors = results.filter((r) => r.err);
+
+    if (errors.length > 0) {
+      return res.status(500).json({
+        error: "Some KPI values failed to save",
+        details: errors,
+      });
+    }
+
+    res.json({
+      message: "KPI save/update completed (Insurance excluded)",
+      inserted: insertMessages,
+      updated: updateMessages
     });
   });
 });
