@@ -1,7 +1,5 @@
 import express from "express";
 import pool from "../db.js";
-import { log } from "console";
-import { resolve } from "path";
 
 export const performanceMasterRouter = express.Router();
 //get kpi role wise
@@ -97,13 +95,15 @@ performanceMasterRouter.get("/specfic-ALLstaff-scores", (req, res) => {
       pool.query(insuranceQuery, [ho_staff_id], (err3, insuranceRows) => {
         if (err3) {
           console.error("Error fetching insurance value:", err3);
-          return res.status(500).json({ error: "Failed to fetch insurance value" });
+          return res
+            .status(500)
+            .json({ error: "Failed to fetch insurance value" });
         }
 
-        const insuranceValue =
-          insuranceRows.length ? Number(insuranceRows[0].achieved) : 0;
+        const insuranceValue = insuranceRows.length
+          ? Number(insuranceRows[0].achieved)
+          : 0;
 
-       
         const achievedMap = {};
         userEntries.forEach(
           (e) => (achievedMap[e.role_kpi_mapping_id] = e.achieved)
@@ -157,7 +157,6 @@ performanceMasterRouter.get("/specfic-ALLstaff-scores", (req, res) => {
     });
   });
 });
-
 
 //Reusable function to calculate KPI score for one ho_staff
 function calculateStaffScores(period, staffId, role) {
@@ -290,7 +289,6 @@ function calculateBranchStaffScore(period, branchId) {
       return Math.max(0, Math.min(12.5, outOf10));
     };
 
-    // 1️⃣ GET BRANCH LEVEL SCORES
     pool.query(
       branchQuery,
       [period, branchId, period, branchId],
@@ -322,7 +320,6 @@ function calculateBranchStaffScore(period, branchId) {
           };
         });
 
-        // 2️⃣ STAFF QUERY
         const staffQuery = `
         SELECT
           u.id AS staffId,
@@ -348,7 +345,6 @@ function calculateBranchStaffScore(period, branchId) {
 
           const staffScores = {};
 
-          // 2️⃣ MAP STAFF KPI DATA
           results.forEach((row) => {
             const staffId = row.staffId;
             if (!staffScores[staffId]) {
@@ -394,7 +390,6 @@ function calculateBranchStaffScore(period, branchId) {
           };
           const staffArray = Object.values(staffScores);
 
-          // 3️⃣ CALCULATE TOTAL FOR EACH STAFF
           const promises = staffArray.map((staff) => {
             return new Promise((resolve2, reject2) => {
               staff.recovery =
@@ -463,7 +458,7 @@ function calculateBranchStaffScore(period, branchId) {
 }
 // simple agm
 performanceMasterRouter.get("/ho-Allhod-scores", (req, res) => {
-  const { period, hod_id,role } = req.query;
+  const { period, hod_id, role } = req.query;
 
   if (!period || !hod_id) {
     return res.status(400).json({ error: "period and hod_id are required" });
@@ -475,7 +470,7 @@ performanceMasterRouter.get("/ho-Allhod-scores", (req, res) => {
     JOIN kpi_master k ON r.kpi_id = k.id
     WHERE r.role = ?  `;
 
-  pool.query(hodKpiQuery, [role],(err, hodKpis) => {
+  pool.query(hodKpiQuery, [role], (err, hodKpis) => {
     if (err) return res.status(500).json({ error: "Failed to fetch KPI list" });
     if (!hodKpis.length)
       return res.status(404).json({ error: "No KPIs for AGM role" });
@@ -549,7 +544,7 @@ performanceMasterRouter.get("/ho-Allhod-scores", (req, res) => {
       const insuranceValue = await new Promise((resolve, reject) => {
         pool.query(
           "SELECT value FROM entries WHERE kpi='insurance' and employee_id = ? and period = ? ",
-          [hod_id,period],
+          [hod_id, period],
           (err, rows) => {
             if (err) return reject(err);
             resolve(rows.reduce((sum, r) => sum + Number(r.value || 0), 0));
@@ -557,10 +552,10 @@ performanceMasterRouter.get("/ho-Allhod-scores", (req, res) => {
         );
       });
       //HO Building Cleanliness
-        const Cleanliness = await new Promise((resolve, reject) => {
+      const Cleanliness = await new Promise((resolve, reject) => {
         pool.query(
           "SELECT value FROM user_kpi_entry WHERE role_kpi_mapping_id=4 and user_id = ? and period = ? ",
-          [hod_id,period],
+          [hod_id, period],
           (err, rows) => {
             if (err) return reject(err);
             resolve(rows.reduce((sum, r) => sum + Number(r.value || 0), 0));
@@ -571,14 +566,14 @@ performanceMasterRouter.get("/ho-Allhod-scores", (req, res) => {
       const Management = await new Promise((resolve, reject) => {
         pool.query(
           "SELECT value FROM user_kpi_entry WHERE role_kpi_mapping_id=5 and user_id = ? and period = ? ",
-          [hod_id,period],
+          [hod_id, period],
           (err, rows) => {
             if (err) return reject(err);
             resolve(rows.reduce((sum, r) => sum + Number(r.value || 0), 0));
           }
         );
       });
-      let Total=0;
+      let Total = 0;
       hodKpis.forEach((kpi, index) => {
         if (index === 0) {
           const weightage = kpi.weightage;
@@ -595,14 +590,14 @@ performanceMasterRouter.get("/ho-Allhod-scores", (req, res) => {
           }
 
           const weightageScore = (result / 100) * weightage;
-          Total+=weightageScore;
+          Total += weightageScore;
           finalKpis[kpi.kpi_name] = {
             score: Number(result.toFixed(2)),
             achieved: avg,
             weightage,
             weightageScore: Number(weightageScore.toFixed(2)),
           };
-        }else if (index === 1) {
+        } else if (index === 1) {
           const weightage = kpi.weightage;
           const avg = branchAvgScore;
 
@@ -617,16 +612,16 @@ performanceMasterRouter.get("/ho-Allhod-scores", (req, res) => {
           }
 
           const weightageScore = (result / 100) * weightage;
-          Total+=weightageScore;
+          Total += weightageScore;
           finalKpis[kpi.kpi_name] = {
             score: Number(result.toFixed(2)),
             achieved: avg,
             weightage,
             weightageScore: Number(weightageScore.toFixed(2)),
           };
-        }else if (index === 2) {
+        } else if (index === 2) {
           const weightage = kpi.weightage;
-          const target=40000;
+          const target = 40000;
           const avg = insuranceValue;
 
           let result;
@@ -638,22 +633,20 @@ performanceMasterRouter.get("/ho-Allhod-scores", (req, res) => {
           } else {
             result = 12.5;
           }
-          if(avg===0){
-            weightageScore=-2;
-          }else{
-          weightageScore=(result / 100) * weightage;
+          if (avg === 0) {
+            weightageScore = -2;
+          } else {
+            weightageScore = (result / 100) * weightage;
           }
-          
-          
+
           finalKpis[kpi.kpi_name] = {
             score: Number(result.toFixed(2)),
             achieved: avg,
             weightage,
-            weightageScore:Number(weightageScore.toFixed(2)),
+            weightageScore: Number(weightageScore.toFixed(2)),
           };
-          Total+=weightageScore;
-          
-        }else if (index === 3) {
+          Total += weightageScore;
+        } else if (index === 3) {
           const weightage = kpi.weightage;
           const avg = Cleanliness;
 
@@ -668,14 +661,14 @@ performanceMasterRouter.get("/ho-Allhod-scores", (req, res) => {
           }
 
           const weightageScore = (result / 100) * weightage;
-          Total+=weightageScore;
+          Total += weightageScore;
           finalKpis[kpi.kpi_name] = {
             score: Number(result.toFixed(2)),
             achieved: avg,
             weightage,
             weightageScore: Number(weightageScore.toFixed(2)),
           };
-        }else if (index === 4) {
+        } else if (index === 4) {
           const weightage = kpi.weightage;
           const avg = Management;
 
@@ -690,15 +683,14 @@ performanceMasterRouter.get("/ho-Allhod-scores", (req, res) => {
           }
 
           const weightageScore = (result / 100) * weightage;
-         Total+=weightageScore;
+          Total += weightageScore;
           finalKpis[kpi.kpi_name] = {
             score: Number(result.toFixed(2)),
             achieved: avg,
             weightage,
             weightageScore: Number(weightageScore.toFixed(2)),
           };
-        }
-        else {
+        } else {
           finalKpis[kpi.kpi_name] = {
             score: 0,
             achieved: 0,
@@ -712,7 +704,7 @@ performanceMasterRouter.get("/ho-Allhod-scores", (req, res) => {
         hod_id,
         period,
         kpis: finalKpis,
-        total:Total,
+        total: Total,
       });
     });
   });
@@ -728,7 +720,6 @@ performanceMasterRouter.get("/ho-staff-scores-all", (req, res) => {
     });
   }
 
- 
   const kpiQuery = `
       SELECT 
         rkm.id AS role_kpi_mapping_id,
@@ -750,7 +741,6 @@ performanceMasterRouter.get("/ho-staff-scores-all", (req, res) => {
       return res.status(404).json({ error: "No KPI found for role" });
     }
 
-  
     const staffQuery = `
         SELECT id AS staffId, name AS staffName
         FROM users
@@ -770,11 +760,9 @@ performanceMasterRouter.get("/ho-staff-scores-all", (req, res) => {
       // Final result array
       const result = [];
 
-     
       for (const staff of staffRows) {
         const staffId = staff.staffId;
-       
-        
+
         // Fetch their entries
         const userEntries = await new Promise((resolve) => {
           pool.query(
@@ -789,21 +777,19 @@ performanceMasterRouter.get("/ho-staff-scores-all", (req, res) => {
         });
 
         const insuranceValue = await new Promise((resolve) => {
-        pool.query(
-          `SELECT value AS achieved FROM entries WHERE kpi='insurance' AND employee_id = ?`,
-          [staffId],
-          (err1, rows) => resolve(rows || [])
-        );
-      });
+          pool.query(
+            `SELECT value AS achieved FROM entries WHERE kpi='insurance' AND employee_id = ?`,
+            [staffId],
+            (err1, rows) => resolve(rows || [])
+          );
+        });
 
-     
         // Create achieved map
         const achievedMap = {};
         userEntries.forEach((e) => {
           achievedMap[e.role_kpi_mapping_id] = Number(e.achieved || 0);
         });
-       
-        
+
         const staffObj = {
           staffId,
           staffName: staff.staffName,
@@ -811,22 +797,22 @@ performanceMasterRouter.get("/ho-staff-scores-all", (req, res) => {
 
         let totalWeightageScore = 0;
 
-      
         for (const kpi of kpiList) {
           const { role_kpi_mapping_id, kpi_name, weightage } = kpi;
-    
-          let achieved=0;
-         
-        if (kpi_name.toLowerCase() === "insurance") {
-          achieved = insuranceValue.length ? Number(insuranceValue[0].achieved) : 0;
-        } else {
-          achieved =
-            achievedMap[role_kpi_mapping_id] !== undefined
-              ? achievedMap[role_kpi_mapping_id]
+
+          let achieved = 0;
+
+          if (kpi_name.toLowerCase() === "insurance") {
+            achieved = insuranceValue.length
+              ? Number(insuranceValue[0].achieved)
               : 0;
-        }
-         
-          
+          } else {
+            achieved =
+              achievedMap[role_kpi_mapping_id] !== undefined
+                ? achievedMap[role_kpi_mapping_id]
+                : 0;
+          }
+
           const target =
             kpi_name.toLowerCase() === "insurance" ? 40000 : weightage;
 
@@ -852,7 +838,10 @@ performanceMasterRouter.get("/ho-staff-scores-all", (req, res) => {
             score: Number(score.toFixed(2)),
             achieved,
             weightage,
-            weightageScore: kpi_name.toLowerCase() === "insurance" && weightageScore===0 ?  -2:Number(weightageScore.toFixed(2)),
+            weightageScore:
+              kpi_name.toLowerCase() === "insurance" && weightageScore === 0
+                ? -2
+                : Number(weightageScore.toFixed(2)),
           };
         }
 
@@ -876,7 +865,6 @@ performanceMasterRouter.post("/save-or-update-ho-staff-kpi", (req, res) => {
     });
   }
 
- 
   const filteredScores = scores.filter(
     (s) => s.kpi_name.toLowerCase() !== "insurance"
   );
@@ -911,18 +899,10 @@ performanceMasterRouter.post("/save-or-update-ho-staff-kpi", (req, res) => {
 
             pool.query(
               updateSql,
-              [
-                s.value,
-                master_user_id,
-                user_id,
-                s.role_kpi_mapping_id,
-                period,
-              ],
+              [s.value, master_user_id, user_id, s.role_kpi_mapping_id, period],
               (err2) => {
                 if (!err2) {
-                  updateMessages.push(
-                    `${s.kpi_name} updated successfully`
-                  );
+                  updateMessages.push(`${s.kpi_name} updated successfully`);
                 }
                 resolve({ updated: true, err: err2 });
               }
@@ -937,18 +917,10 @@ performanceMasterRouter.post("/save-or-update-ho-staff-kpi", (req, res) => {
 
             pool.query(
               insertSql,
-              [
-                user_id,
-                s.role_kpi_mapping_id,
-                period,
-                s.value,
-                master_user_id,
-              ],
+              [user_id, s.role_kpi_mapping_id, period, s.value, master_user_id],
               (err3) => {
                 if (!err3) {
-                  insertMessages.push(
-                    `${s.kpi_name} inserted successfully`
-                  );
+                  insertMessages.push(`${s.kpi_name} inserted successfully`);
                 }
                 resolve({ inserted: true, err: err3 });
               }
@@ -972,7 +944,61 @@ performanceMasterRouter.post("/save-or-update-ho-staff-kpi", (req, res) => {
     res.json({
       message: "KPI save/update completed (Insurance excluded)",
       inserted: insertMessages,
-      updated: updateMessages
+      updated: updateMessages,
+    });
+  });
+});
+//Dashboard Data
+performanceMasterRouter.post("/get-Total-Ho_staff-details", (req, res) => {
+  const { hod_id } = req.body;
+
+  if (!hod_id) {
+    return res.status(400).json({
+      error: "hod_id is required",
+    });
+  }
+
+  const dashboardResult = {};
+
+  const query1 = `SELECT username, name, role FROM users WHERE role='HO_STAFF' AND hod_id = ?`;
+
+  pool.query(query1, [hod_id], (err1, hoStaffResult) => {
+    if (err1) {
+      console.error(err1);
+      return res.status(500).json({ error: "Database error (HO Staff)" });
+    }
+
+    dashboardResult.totalHOStaff = hoStaffResult;
+    dashboardResult.totalHOStaffCount = hoStaffResult.length;
+
+    const query2 = `SELECT code, name FROM branches WHERE incharge_id = ?`;
+
+    pool.query(query2, [hod_id], (err2, branchResult) => {
+      if (err2) {
+        console.error(err2);
+        return res.status(500).json({ error: "Database error (Branches)" });
+      }
+
+      dashboardResult.totalBranches = branchResult;
+      dashboardResult.totalBranchesCount = branchResult.length;
+
+      const query3 = `
+        SELECT username, name, role  
+        FROM users 
+        WHERE role IN ('AGM','DGM','AGM_IT','AGM_INSURANCE','AGM_AUDIT')
+      `;
+
+      pool.query(query3, (err3, agmDgmResult) => {
+        if (err3) {
+          console.error(err3);
+          return res.status(500).json({ error: "Database error (AGM/DGM)" });
+        }
+
+        dashboardResult.totalAGMDGM = agmDgmResult;
+        dashboardResult.totalAGMDGMCount = agmDgmResult.length;
+
+        res.json(dashboardResult);
+      });
     });
   });
 });
