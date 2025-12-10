@@ -728,7 +728,7 @@ async function getActualMonthsWorked(pool, staffId, userTd, fyStart) {
   let dbTd = null;
 
   if (dbDates.length === 2) {
-    dbTd = dbDates[1].transfer_date; // SECOND latest
+    dbTd = dbDates[1].transfer_date; // SECOND latest 2025-12-10 00:00:00
   } else if (dbDates.length === 1) {
     dbTd = dbDates[0].transfer_date;
   }
@@ -839,7 +839,7 @@ export const autoDistributeTargetsOldBranch = (period, branchId, callback) => {
                   const monthsWorked = await getActualMonthsWorked(
                     pool,
                     r.id,
-                    r.transfer_date,
+                    r.user_add_date,
                     fy.start
                   );
 
@@ -1417,12 +1417,18 @@ allocationsRouter.get("/", (req, res) => {
   const { period, branchId, employeeId } = req.query;
   if (!period) return res.status(400).json({ error: "period required" });
 
+
+  const PERSONAL_KPIS = ["deposit", "loan_gen", "loan_amulya"];
+  const BRANCH_KPIS = ["insurance", "recovery", "audit"];
+
+ 
   pool.query("SELECT kpi, weightage FROM weightage", (err, weightRows) => {
     if (err) return res.status(500).json({ error: "Internal server error" });
 
     const weightMap = {};
-    weightRows.forEach((w) => (weightMap[w.kpi] = w.weightage));
+    weightRows.forEach(w => weightMap[w.kpi] = Number(w.weightage) || 0);
 
+ 
     const branchAggQuery = `
       SELECT kpi, SUM(value) AS total_achieved
       FROM entries
@@ -1431,150 +1437,110 @@ allocationsRouter.get("/", (req, res) => {
     `;
 
     pool.query(branchAggQuery, [period, branchId], (errAgg, aggRows) => {
-      if (errAgg)
-        return res.status(500).json({ error: "Internal server error" });
+      if (errAgg) return res.status(500).json({ error: "Internal server error" });
 
       const branchAch = {};
-      aggRows.forEach(
-        (x) => (branchAch[x.kpi] = Number(x.total_achieved || 0))
-      );
+      aggRows.forEach(x => branchAch[x.kpi] = Number(x.total_achieved) || 0);
 
+      
       if (employeeId) {
         const personalQuery = `
-         SELECT 
-              a.kpi,
-              MAX(a.amount) AS amount,
-              MAX(a.state) AS state,
-              COALESCE(w.weightage, 0) AS weightage,
-              COALESCE(e.achieved, 0) AS achieved
+          SELECT 
+            a.kpi,
+            MAX(a.amount) AS amount,
+            MAX(a.state) AS state,
+            COALESCE(w.weightage, 0) AS weightage,
+            COALESCE(e.achieved, 0) AS achieved
           FROM allocations a
-          JOIN users u 
-              ON u.id = a.user_id
-          LEFT JOIN weightage w 
-              ON a.kpi = w.kpi
+          JOIN users u ON u.id = a.user_id
+          LEFT JOIN weightage w ON a.kpi = w.kpi
           LEFT JOIN (
-              SELECT kpi, SUM(value) AS achieved
-              FROM entries
-              WHERE period = ?
-                AND employee_id = ?
-                and branch_id=?
-                AND status = 'Verified'
-              GROUP BY kpi
-          ) e 
-              ON a.kpi = e.kpi
-          WHERE 
-              a.period = ?
-              AND a.user_id = ?
-              AND u.branch_id = ?
-              and a.state= 'published'
-          GROUP BY 
-              a.kpi`;
+            SELECT kpi, SUM(value) AS achieved
+            FROM entries
+            WHERE period = ? AND employee_id = ? AND branch_id = ? AND status='Verified'
+            GROUP BY kpi
+          ) e ON a.kpi = e.kpi
+          WHERE a.period = ? AND a.user_id = ? AND u.branch_id = ? AND a.state='published'
+          GROUP BY a.kpi
+        `;
 
         pool.query(
           personalQuery,
           [period, employeeId, branchId, period, employeeId, branchId],
           (errP, personalTargets) => {
-            if (errP)
-              return res.status(500).json({ error: "Internal server error" });
+            if (errP) return res.status(500).json({ error: "Internal server error" });
 
+           
             const branchTargetsQuery = `
-              SELECT t.kpi,
-                     COALESCE(t.amount,0) AS amount,
-                     COALESCE(w.weightage,0) AS weightage
+              SELECT 
+                t.kpi,
+                COALESCE(t.amount,0) AS amount,
+                COALESCE(w.weightage,0) AS weightage
               FROM targets t
               LEFT JOIN weightage w ON t.kpi = w.kpi
-              WHERE t.period = ? AND t.branch_id = ?
+              WHERE t.period=? AND t.branch_id=?
             `;
 
-            pool.query(
-              branchTargetsQuery,
-              [period, branchId],
-              (errB, branchTargets) => {
-                if (errB)
-                  return res
-                    .status(500)
-                    .json({ error: "Internal server error" });
+            pool.query(branchTargetsQuery, [period, branchId], (errB, branchTargets) => {
+              if (errB) return res.status(500).json({ error: "Internal server error" });
 
-                const personalSet = new Set(personalTargets.map((p) => p.kpi));
-                let finalBranch = [];
+              // Map branch targets
+              const branchMap = {};
+              branchTargets.forEach(bt => {
+                branchMap[bt.kpi] = {
+                  kpi: bt.kpi,
+                  amount: Number(bt.amount) || 0,
+                  weightage: Number(bt.weightage) || 0,
+                };
+              });
 
-                const auditAch = branchAch["audit"] || 0;
-
-                if (auditAch > 0) {
-                  finalBranch.push({
-                    kpi: "audit",
-                    amount: 100,
-                    achieved: auditAch,
-                    weightage: weightMap["audit"] || 0,
-                  });
-                }
-
-                branchTargets.forEach((bt) => {
-                  if (bt.kpi === "audit") return;
-                  if (personalSet.has(bt.kpi)) return;
-
-                  finalBranch.push({
-                    kpi: bt.kpi,
-                    amount: Number(bt.amount || 0),
-                    achieved: Number(branchAch[bt.kpi] || 0),
-                    weightage: Number(bt.weightage || 0),
-                  });
-                });
-
-                finalBranch = finalBranch.map((b) => {
-                  if (b.kpi === "insurance") {
-                    return { ...b, achieved: branchAch["insurance"] || 0 };
-                  }
-                  return b;
-                });
-
-                if (!personalSet.has("audit") && auditAch > 0) {
-                  personalTargets.push({
-                    kpi: "audit",
-                    amount: 100,
-                    achieved: auditAch,
-                    weightage: weightMap["audit"] || 0,
-                    state: "published",
-                  });
-                }
-
-                const recoveryAch = branchAch["recovery"] || 0;
-
-                if (!personalSet.has("recovery") && recoveryAch > 0) {
-                  personalTargets.push({
-                    kpi: "recovery",
-                    amount: 100,
-                    achieved: recoveryAch,
-                    weightage: weightMap["recovery"] || 0,
-                    state: "published",
-                  });
-                }
-
-                personalTargets = personalTargets.map((p) => ({
+              
+              let finalPersonal = personalTargets
+                .filter(p => PERSONAL_KPIS.includes(p.kpi))
+                .map(p => ({
                   kpi: p.kpi,
-                  amount: Number(p.amount || 0),
-                  achieved: Number(p.achieved || 0),
-                  weightage: Number(p.weightage || weightMap[p.kpi] || 0),
+                  amount: Number(p.amount) || 0,
+                  achieved: Number(p.achieved) || 0,
+                  weightage: Number(p.weightage) || weightMap[p.kpi] || 0,
                   state: p.state || "published",
                 }));
 
-                personalTargets = personalTargets.filter((p) => {
-                  if (p.kpi === "audit") return p.achieved > 0;
-                  return true;
-                });
+             
+              PERSONAL_KPIS.forEach(k => {
+                if (!finalPersonal.find(p => p.kpi === k)) {
+                  finalPersonal.push({
+                    kpi: k,
+                    amount: 0,
+                    achieved: Number(branchAch[k]) || 0,
+                    weightage: weightMap[k] || 0,
+                    state: "published",
+                  });
+                }
+              });
 
-                return res.json({
-                  personal: personalTargets,
-                  branch: finalBranch,
-                });
-              }
-            );
+            
+              let finalBranch = BRANCH_KPIS.map(kpi => {
+                const bt = branchMap[kpi];
+
+                return {
+                  kpi,
+                  amount: bt ? Number(bt.amount) : 0,
+                  achieved: Number(branchAch[kpi]) || 0,
+                  weightage: bt ? Number(bt.weightage) : (weightMap[kpi] || 0),
+                };
+              });
+
+              return res.json({
+                personal: finalPersonal,
+                branch: finalBranch,
+              });
+            });
           }
         );
-
         return;
       }
 
+  
       const query = `
         SELECT a.*, u.name AS staffName, COALESCE(w.weightage,0) AS weightage
         FROM (
@@ -1591,13 +1557,12 @@ allocationsRouter.get("/", (req, res) => {
       const params = branchId ? [period, branchId] : [period];
 
       pool.query(query, params, (errAll, rows) => {
-        if (errAll)
-          return res.status(500).json({ error: "Internal server error" });
+        if (errAll) return res.status(500).json({ error: "Internal server error" });
 
-        rows = rows.map((r) => ({
+        rows = rows.map(r => ({
           ...r,
-          amount: Number(r.amount || 0),
-          weightage: Number(r.weightage || 0),
+          amount: Number(r.amount) || 0,
+          weightage: Number(r.weightage) || 0,
         }));
 
         return res.json(rows);
@@ -1760,7 +1725,6 @@ allocationsRouter.post("/update-prorated-targets", (req, res) => {
                     (t.insurance || 0) * bmRatio,
                     period,
                   ];
-                
 
                   conn.query(insertBm, bmValues, (err, result) => {
                     if (err) return rollback(err);
@@ -1864,20 +1828,21 @@ allocationsRouter.post("/update-prorated-targets", (req, res) => {
                     audit_achieved=?, recovery_achieved=?, insurance_achieved=?
                     WHERE staff_id=? AND period=?
                   `;
-                  console.log( updatedEmp.deposit_target,
-                      updatedEmp.loan_gen_target,
-                      updatedEmp.loan_amulya_target,
-                      updatedEmp.audit_target,
-                      updatedEmp.recovery_target,
-                      updatedEmp.insurance_target,
-                      updatedEmp.deposit_achieved,
-                      updatedEmp.loan_gen_achieved,
-                      updatedEmp.loan_amulya_achieved,
-                      updatedEmp.audit_achieved,
-                      updatedEmp.recovery_achieved,
-                      updatedEmp.insurance_achieved,
-                      staff_id,);
-                  
+                  console.log(
+                    updatedEmp.deposit_target,
+                    updatedEmp.loan_gen_target,
+                    updatedEmp.loan_amulya_target,
+                    updatedEmp.audit_target,
+                    updatedEmp.recovery_target,
+                    updatedEmp.insurance_target,
+                    updatedEmp.deposit_achieved,
+                    updatedEmp.loan_gen_achieved,
+                    updatedEmp.loan_amulya_achieved,
+                    updatedEmp.audit_achieved,
+                    updatedEmp.recovery_achieved,
+                    updatedEmp.insurance_achieved,
+                    staff_id
+                  );
 
                   conn.query(
                     updateSql,
@@ -1900,7 +1865,7 @@ allocationsRouter.post("/update-prorated-targets", (req, res) => {
                     (err) => {
                       if (err) return rollback(err);
                       const Months = monthDiffend(bmTd, fy.end);
-                       const Ratio = Months / 12;
+                      const Ratio = Months / 12;
                       // Insert BM transfer
                       const insertBm = `
                         INSERT INTO bm_transfer_target
@@ -1913,7 +1878,7 @@ allocationsRouter.post("/update-prorated-targets", (req, res) => {
                         staff_id,
                         new_branchId,
                         userTd,
-                        updatedEmp.deposit_target|| 0 * Ratio,
+                        updatedEmp.deposit_target || 0 * Ratio,
                         updatedEmp.loan_gen_target || 0 * Ratio,
                         updatedEmp.loan_amulya_target || 0 * Ratio,
                         updatedEmp.audit_target || 0 * Ratio,
@@ -1921,7 +1886,6 @@ allocationsRouter.post("/update-prorated-targets", (req, res) => {
                         updatedEmp.insurance_target || 0 * Ratio,
                         period,
                       ];
-
 
                       conn.query(insertBm, bmVals, (err, result) => {
                         if (err) return rollback(err);
@@ -1964,3 +1928,80 @@ allocationsRouter.post("/update-prorated-targets", (req, res) => {
   });
 });
 
+allocationsRouter.post("/CLEARK-TO-BM-Target", (req, res) => {
+  const { period, branchId, staff_id } = req.body || {};
+
+  if (!period || !branchId)
+    return res.status(400).json({ error: "period and branchId required" });
+
+  function getFY(period) {
+    const [startStr, endStr] = period.split("-");
+    const startYear = parseInt(startStr);
+    const endYear = startYear - (startYear % 100) + parseInt(endStr);
+    return {
+      start: new Date(Date.UTC(startYear, 3, 1)),
+      end: new Date(Date.UTC(endYear, 2, 31)),
+    };
+  }
+  function monthDiffend(d1, d2) {
+    return Math.max(
+      0,
+      (d2.getFullYear() - d1.getFullYear()) * 12 +
+        (d2.getMonth() - d1.getMonth()) +
+        1
+    );
+  }
+  const fy = getFY(period);
+  const totalTarget = `select * from targets where period=? and branch_id=?`;
+  pool.query(totalTarget, [period, branchId], (err, targetRows) => {
+    if (err) return res.status(500).json({ error: "Internal server error" });
+    if (!targetRows.length)
+      return res
+        .status(400)
+        .json({ error: "No targets found for the branch and period" });
+    const t = targetRows.reduce((acc, curr) => {
+      acc[curr.kpi] = curr.amount;
+      return acc;
+    }, {});
+
+    // Get USER transfer date
+    const userTdQuery = `SELECT transfer_date FROM users WHERE id=?`;
+    pool.query(userTdQuery, [staff_id], (err, staffRows) => {
+      if (err) return res.status(500).json({ error: "Internal server error" });
+      if (staffRows.length === 0)
+        return res
+          .status(400)
+          .json({ error: "No staff found with given staff_id" });
+      const userTd = new Date(staffRows[0].transfer_date);
+
+      // BM months = FY START to FY END
+      const bmMonths = monthDiffend(userTd, fy.end);
+      const bmRatio = bmMonths / 12;
+
+      const insertBm = `
+                    INSERT INTO bm_transfer_target
+                    (staff_id, branch_id, transfer_date, deposit_target, loan_gen_target, loan_amulya_target,
+                     audit_target, recovery_target, insurance_target, period)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                  `;
+
+      const bmValues = [
+        staff_id,
+        branchId,
+        userTd,
+        (t.deposit || 0) * bmRatio,
+        (t.loan_gen || 0) * bmRatio,
+        (t.loan_amulya || 0) * bmRatio,
+        (t.audit || 0) * bmRatio,
+        (t.recovery || 0) * bmRatio,
+        (t.insurance || 0) * bmRatio,
+        period,
+      ];
+      pool.query(insertBm, bmValues, (err, result) => {
+        if (err)
+          return res.status(500).json({ error: "Internal server error" });
+        res.json({ ok: true, inserted_id: result.insertId });
+      });
+    });
+  });
+});
