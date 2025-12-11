@@ -899,7 +899,7 @@ mastersRouter.post("/update_employee_transfer_Transfered", (req, res) => {
       if (rows.length === 0) {
         return res
           .status(404)
-          .json({ error: "No resigned allocations found for this user" });
+          .json({ error: "No transfer allocations found for this user" });
       }
 
       // KPI → employee_transfer columns mapping

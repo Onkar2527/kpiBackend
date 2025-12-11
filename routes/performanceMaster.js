@@ -481,13 +481,13 @@ performanceMasterRouter.get("/ho-Allhod-scores", (req, res) => {
       if (err2)
         return res.status(500).json({ error: "Failed to fetch HO staff" });
 
-      if (!staffList.length)
-        return res.json({
-          hod_id,
-          period,
-          kpis: {},
-          message: "No staff found",
-        });
+      // if (!staffList.length)
+      //   return res.json({
+      //     hod_id,
+      //     period,
+      //     kpis: {},
+      //     message: "No staff found",
+      //   });
 
       const staffIds = staffList.map((s) => s.id);
 
@@ -540,8 +540,17 @@ performanceMasterRouter.get("/ho-Allhod-scores", (req, res) => {
       const branchAvgScore = Number(
         (branchTotal / branchValues.length).toFixed(2)
       );
+      const kpiMap = {};
+      hodKpis.forEach((k) => {
+        kpiMap[k.kpi_name] = {
+          id: k.role_kpi_mapping_id,
+          weightage: k.weightage,
+        };
+      });
+
       //insurance kpi calaculation
       const insuranceValue = await new Promise((resolve, reject) => {
+        if (!kpiMap["insurance"]) return resolve(0);
         pool.query(
           "SELECT value FROM entries WHERE kpi='insurance' and employee_id = ? and period = ? ",
           [hod_id, period],
@@ -553,51 +562,104 @@ performanceMasterRouter.get("/ho-Allhod-scores", (req, res) => {
       });
       //HO Building Cleanliness
       const Cleanliness = await new Promise((resolve, reject) => {
+        if (!kpiMap["HO Building Cleanliness"]) return resolve(0);
         pool.query(
-          "SELECT value FROM user_kpi_entry WHERE role_kpi_mapping_id=4 and user_id = ? and period = ? ",
-          [hod_id, period],
+          "SELECT value FROM user_kpi_entry WHERE role_kpi_mapping_id = ? AND user_id = ? AND period = ?",
+          [kpiMap["HO Building Cleanliness"].id, hod_id, period],
           (err, rows) => {
             if (err) return reject(err);
             resolve(rows.reduce((sum, r) => sum + Number(r.value || 0), 0));
           }
         );
       });
+
       //Management  Discretion
       const Management = await new Promise((resolve, reject) => {
+        if (!kpiMap["Management  Discretion"]) return resolve(0);
         pool.query(
-          "SELECT value FROM user_kpi_entry WHERE role_kpi_mapping_id=5 and user_id = ? and period = ? ",
-          [hod_id, period],
+          "SELECT value FROM user_kpi_entry WHERE role_kpi_mapping_id = ? AND user_id = ? AND period = ?",
+          [kpiMap["Management  Discretion"].id, hod_id, period],
           (err, rows) => {
             if (err) return reject(err);
             resolve(rows.reduce((sum, r) => sum + Number(r.value || 0), 0));
           }
         );
       });
+
+      //Internal Audit performance
+      const InternalAudit = await new Promise((resolve, reject) => {
+        if (!kpiMap["Internal Audit performance"]) return resolve(0);
+        pool.query(
+          "SELECT value FROM user_kpi_entry WHERE role_kpi_mapping_id = ? AND user_id = ? AND period = ?",
+          [kpiMap["Internal Audit performance"].id, hod_id, period],
+          (err, rows) => {
+            if (err) return reject(err);
+            resolve(rows.reduce((sum, r) => sum + Number(r.value || 0), 0));
+          }
+        );
+      });
+
+      //IT
+      const IT = await new Promise((resolve, reject) => {
+        if (!kpiMap["IT"]) return resolve(0);
+        pool.query(
+          "SELECT value FROM user_kpi_entry WHERE role_kpi_mapping_id = ? AND user_id = ? AND period = ?",
+          [kpiMap["IT"].id, hod_id, period],
+          (err, rows) => {
+            if (err) return reject(err);
+            resolve(rows.reduce((sum, r) => sum + Number(r.value || 0), 0));
+          }
+        );
+      });
+
+      //Insurance Business Development
+      const InsuranceBusinessDevelopment = await new Promise(
+        (resolve, reject) => {
+          if (!kpiMap["Insurance Business Development"]) return resolve(0);
+          pool.query(
+            "SELECT value FROM user_kpi_entry WHERE role_kpi_mapping_id = ? AND user_id = ? AND period = ?",
+            [kpiMap["Insurance Business Development"].id, hod_id, period],
+            (err, rows) => {
+              if (err) return reject(err);
+              resolve(rows.reduce((sum, r) => sum + Number(r.value || 0), 0));
+            }
+          );
+        }
+      );
+
       let Total = 0;
       hodKpis.forEach((kpi, index) => {
-        if (index === 0) {
+        if (
+          (index === 0 && role === "AGM") ||
+          role === "DGM" ||
+          role === "AGM_AUDIT" ||
+          role === "AGM_IT"
+        ) {
           const weightage = kpi.weightage;
           const avg = fixedAvg;
 
           let result;
-
           if (avg < weightage) {
             result = (avg / weightage) * 10;
           } else if (avg / weightage < 1.25) {
-            result = 10;
-          } else {
             result = 12.5;
+          } else {
+            result = 0;
           }
 
           const weightageScore = (result / 100) * weightage;
           Total += weightageScore;
           finalKpis[kpi.kpi_name] = {
             score: Number(result.toFixed(2)),
-            achieved: avg,
+            achieved: avg || 0,
             weightage,
             weightageScore: Number(weightageScore.toFixed(2)),
           };
-        } else if (index === 1) {
+        } else if (
+          (index === 1 && role === "AGM") ||
+          role === "DGM" ||
+          role === "AGM_AUDIT"
+        ) {
           const weightage = kpi.weightage;
           const avg = branchAvgScore;
 
@@ -606,16 +668,16 @@ performanceMasterRouter.get("/ho-Allhod-scores", (req, res) => {
           if (avg < weightage) {
             result = (avg / weightage) * 10;
           } else if (avg / weightage < 1.25) {
-            result = 10;
-          } else {
             result = 12.5;
+          } else {
+            result = 0;
           }
 
           const weightageScore = (result / 100) * weightage;
           Total += weightageScore;
           finalKpis[kpi.kpi_name] = {
             score: Number(result.toFixed(2)),
-            achieved: avg,
+            achieved: avg || 0,
             weightage,
             weightageScore: Number(weightageScore.toFixed(2)),
           };
@@ -626,6 +688,7 @@ performanceMasterRouter.get("/ho-Allhod-scores", (req, res) => {
 
           let result;
           let weightageScore;
+
           if (avg < target) {
             result = (avg / target) * 10;
           } else if (avg / target < 1.25) {
@@ -641,12 +704,16 @@ performanceMasterRouter.get("/ho-Allhod-scores", (req, res) => {
 
           finalKpis[kpi.kpi_name] = {
             score: Number(result.toFixed(2)),
-            achieved: avg,
+            achieved: avg || 0,
             weightage,
             weightageScore: Number(weightageScore.toFixed(2)),
           };
           Total += weightageScore;
-        } else if (index === 3) {
+        } else if (
+          (index === 3 && role === "AGM") ||
+          role === "DGM" ||
+          role === "AGM_IT"
+        ) {
           const weightage = kpi.weightage;
           const avg = Cleanliness;
 
@@ -655,16 +722,16 @@ performanceMasterRouter.get("/ho-Allhod-scores", (req, res) => {
           if (avg < weightage) {
             result = (avg / weightage) * 10;
           } else if (avg / weightage < 1.25) {
-            result = 10;
-          } else {
             result = 12.5;
+          } else {
+            result = 0;
           }
 
           const weightageScore = (result / 100) * weightage;
           Total += weightageScore;
           finalKpis[kpi.kpi_name] = {
             score: Number(result.toFixed(2)),
-            achieved: avg,
+            achieved: avg || 0,
             weightage,
             weightageScore: Number(weightageScore.toFixed(2)),
           };
@@ -677,6 +744,74 @@ performanceMasterRouter.get("/ho-Allhod-scores", (req, res) => {
           if (avg < weightage) {
             result = (avg / weightage) * 10;
           } else if (avg / weightage < 1.25) {
+            result = 12.5;
+          } else {
+            result = 0;
+          }
+
+          const weightageScore = (result / 100) * weightage;
+          Total += weightageScore;
+          finalKpis[kpi.kpi_name] = {
+            score: Number(result.toFixed(2)),
+            achieved: avg || 0,
+            weightage,
+            weightageScore: Number(weightageScore.toFixed(2)),
+          };
+        } else if (index === 5 && role === "AGM_AUDIT") {
+          const weightage = kpi.weightage;
+          const avg = InternalAudit;
+
+          let result;
+
+          if (avg < weightage) {
+            result = (avg / weightage) * 10;
+          } else if (avg / weightage < 1.25) {
+            result = 12.5;
+          } else {
+            result = 0;
+          }
+
+          const weightageScore = (result / 100) * weightage;
+          Total += weightageScore;
+          finalKpis[kpi.kpi_name] = {
+            score: Number(result.toFixed(2)),
+            achieved: avg || 0,
+            weightage,
+            weightageScore: Number(weightageScore.toFixed(2)),
+          };
+        } else if (index === 6 && role === "AGM_IT") {
+          const weightage = kpi.weightage;
+          const avg = IT;
+
+          let result;
+
+          if (avg < weightage) {
+            result = (avg / weightage) * 10;
+          } else if (avg / weightage < 1.25) {
+            result = 12.5;
+          } else {
+            result = 0;
+          }
+
+          const weightageScore = (result / 100) * weightage;
+          Total += weightageScore;
+          finalKpis[kpi.kpi_name] = {
+            score: Number(result.toFixed(2)),
+            achieved: avg || 0,
+            weightage,
+            weightageScore: Number(weightageScore.toFixed(2)),
+          };
+        } else if (index === 7 && role === "AGM_INSURANCE") {
+          const weightage = kpi.weightage;
+          const avg = InsuranceBusinessDevelopment;
+
+          let result;
+
+          if (avg === 0) {
+            result = 0;
+          } else if (avg < weightage) {
+            result = (avg / weightage) * 10;
+          } else if (avg / weightage < 1.25) {
             result = 10;
           } else {
             result = 12.5;
@@ -686,7 +821,7 @@ performanceMasterRouter.get("/ho-Allhod-scores", (req, res) => {
           Total += weightageScore;
           finalKpis[kpi.kpi_name] = {
             score: Number(result.toFixed(2)),
-            achieved: avg,
+            achieved: avg || 0,
             weightage,
             weightageScore: Number(weightageScore.toFixed(2)),
           };
@@ -1000,5 +1135,443 @@ performanceMasterRouter.post("/get-Total-Ho_staff-details", (req, res) => {
         res.json(dashboardResult);
       });
     });
+  });
+});
+
+const calculateHodAllScores = (
+  pool,
+  period,
+  hod_id,
+  role,
+  calculateStaffScores,
+  calculateBranchStaffScore
+) => {
+  return new Promise((resolve, reject) => {
+    const hodKpiQuery = `
+      SELECT k.kpi_name, r.id AS role_kpi_mapping_id, r.weightage
+      FROM role_kpi_mapping r
+      JOIN kpi_master k ON r.kpi_id = k.id
+      WHERE r.role = ?`;
+
+    pool.query(hodKpiQuery, [role], (err, hodKpis) => {
+      if (err) return reject({ error: "Failed to fetch KPI list" });
+      if (!hodKpis.length) return reject({ error: "No KPIs for AGM role" });
+
+      const staffQuery = `SELECT id FROM users WHERE hod_id = ?`;
+
+      pool.query(staffQuery, [hod_id], async (err2, staffList) => {
+        if (err2) return reject({ error: "Failed to fetch HO staff" });
+
+        const staffIds = staffList.map((s) => s.id);
+
+        let staffScores = [];
+        for (const sid of staffIds) {
+          try {
+            const scoreObj = await calculateStaffScores(
+              period,
+              sid,
+              "HO_STAFF"
+            );
+            staffScores.push(scoreObj);
+          } catch (e) {
+            staffScores.push({ total: 0 });
+          }
+        }
+
+        const totalScores = staffScores.map((s) => s.total || 0);
+
+        const avgStaffScore =
+          totalScores.reduce((sum, val) => sum + val, 0) / totalScores.length;
+
+        const fixedAvg = Number(avgStaffScore.toFixed(2));
+
+        let finalKpis = {};
+
+        const branchCodes = await new Promise((resolve, reject) => {
+          pool.query(
+            "SELECT code FROM branches WHERE incharge_id = ?",
+            [hod_id],
+            (err, rows) => {
+              if (err) return reject(err);
+              resolve(rows.map((r) => r.code));
+            }
+          );
+        });
+
+        let branchWiseAverage = {};
+
+        for (const code of branchCodes) {
+          const staffList = await calculateBranchStaffScore(period, code);
+          const totals = staffList.map((s) => Number(s.total) || 0);
+          const avg =
+            totals.length === 0
+              ? 0
+              : totals.reduce((a, b) => a + b, 0) / totals.length;
+
+          branchWiseAverage[code] = Number(avg.toFixed(2));
+        }
+
+        const branchValues = Object.values(branchWiseAverage);
+        const branchTotal = branchValues.reduce((sum, v) => sum + v, 0);
+        const branchAvgScore = Number(
+          (branchTotal / branchValues.length).toFixed(2)
+        );
+
+        const kpiMap = {};
+        hodKpis.forEach((k) => {
+          kpiMap[k.kpi_name] = {
+            id: k.role_kpi_mapping_id,
+            weightage: k.weightage,
+          };
+        });
+
+        //insurance kpi calaculation
+        const insuranceValue = await new Promise((resolve, reject) => {
+          if (!kpiMap["insurance"]) return resolve(0);
+          pool.query(
+            "SELECT value FROM entries WHERE kpi='insurance' and employee_id = ? and period = ? ",
+            [hod_id, period],
+            (err, rows) => {
+              if (err) return reject(err);
+              resolve(rows.reduce((sum, r) => sum + Number(r.value || 0), 0));
+            }
+          );
+        });
+        //HO Building Cleanliness
+        const Cleanliness = await new Promise((resolve, reject) => {
+          if (!kpiMap["HO Building Cleanliness"]) return resolve(0);
+          pool.query(
+            "SELECT value FROM user_kpi_entry WHERE role_kpi_mapping_id = ? AND user_id = ? AND period = ?",
+            [kpiMap["HO Building Cleanliness"].id, hod_id, period],
+            (err, rows) => {
+              if (err) return reject(err);
+              resolve(rows.reduce((sum, r) => sum + Number(r.value || 0), 0));
+            }
+          );
+        });
+
+        //Management  Discretion
+        const Management = await new Promise((resolve, reject) => {
+          if (!kpiMap["Management  Discretion"]) return resolve(0);
+          pool.query(
+            "SELECT value FROM user_kpi_entry WHERE role_kpi_mapping_id = ? AND user_id = ? AND period = ?",
+            [kpiMap["Management  Discretion"].id, hod_id, period],
+            (err, rows) => {
+              if (err) return reject(err);
+              resolve(rows.reduce((sum, r) => sum + Number(r.value || 0), 0));
+            }
+          );
+        });
+
+        //Internal Audit performance
+        const InternalAudit = await new Promise((resolve, reject) => {
+          if (!kpiMap["Internal Audit performance"]) return resolve(0);
+          pool.query(
+            "SELECT value FROM user_kpi_entry WHERE role_kpi_mapping_id = ? AND user_id = ? AND period = ?",
+            [kpiMap["Internal Audit performance"].id, hod_id, period],
+            (err, rows) => {
+              if (err) return reject(err);
+              resolve(rows.reduce((sum, r) => sum + Number(r.value || 0), 0));
+            }
+          );
+        });
+
+        //IT
+        const IT = await new Promise((resolve, reject) => {
+          if (!kpiMap["IT"]) return resolve(0);
+          pool.query(
+            "SELECT value FROM user_kpi_entry WHERE role_kpi_mapping_id = ? AND user_id = ? AND period = ?",
+            [kpiMap["IT"].id, hod_id, period],
+            (err, rows) => {
+              if (err) return reject(err);
+              resolve(rows.reduce((sum, r) => sum + Number(r.value || 0), 0));
+            }
+          );
+        });
+
+        //Insurance Business Development
+        const InsuranceBusinessDevelopment = await new Promise(
+          (resolve, reject) => {
+            if (!kpiMap["Insurance Business Development"]) return resolve(0);
+            pool.query(
+              "SELECT value FROM user_kpi_entry WHERE role_kpi_mapping_id = ? AND user_id = ? AND period = ?",
+              [kpiMap["Insurance Business Development"].id, hod_id, period],
+              (err, rows) => {
+                if (err) return reject(err);
+                resolve(rows.reduce((sum, r) => sum + Number(r.value || 0), 0));
+              }
+            );
+          }
+        );
+
+        let Total = 0;
+        hodKpis.forEach((kpi, index) => {
+          if (
+            (index === 0 && role === "AGM") ||
+            role === "DGM" ||
+            role === "AGM_AUDIT" ||
+            role === "AGM_IT"
+          ) {
+            const weightage = kpi.weightage;
+            const avg = fixedAvg;
+
+            let result;
+            if (avg < weightage) {
+              result = (avg / weightage) * 10;
+            } else if (avg / weightage < 1.25) {
+              result = 12.5;
+            } else {
+              result = 0;
+            }
+
+            const weightageScore = (result / 100) * weightage;
+            Total += weightageScore;
+            finalKpis[kpi.kpi_name] = {
+              score: Number(result.toFixed(2)),
+              achieved: avg || 0,
+              weightage,
+              weightageScore: Number(weightageScore.toFixed(2)),
+            };
+          } else if (
+            (index === 1 && role === "AGM") ||
+            role === "DGM" ||
+            role === "AGM_AUDIT"
+          ) {
+            const weightage = kpi.weightage;
+            const avg = branchAvgScore;
+
+            let result;
+
+            if (avg < weightage) {
+              result = (avg / weightage) * 10;
+            } else if (avg / weightage < 1.25) {
+              result = 12.5;
+            } else {
+              result = 0;
+            }
+
+            const weightageScore = (result / 100) * weightage;
+            Total += weightageScore;
+            finalKpis[kpi.kpi_name] = {
+              score: Number(result.toFixed(2)),
+              achieved: avg || 0,
+              weightage,
+              weightageScore: Number(weightageScore.toFixed(2)),
+            };
+          } else if (index === 2) {
+            const weightage = kpi.weightage;
+            const target = 40000;
+            const avg = insuranceValue;
+
+            let result;
+            let weightageScore;
+
+            if (avg < target) {
+              result = (avg / target) * 10;
+            } else if (avg / target < 1.25) {
+              result = 10;
+            } else {
+              result = 12.5;
+            }
+            if (avg === 0) {
+              weightageScore = -2;
+            } else {
+              weightageScore = (result / 100) * weightage;
+            }
+
+            finalKpis[kpi.kpi_name] = {
+              score: Number(result.toFixed(2)),
+              achieved: avg || 0,
+              weightage,
+              weightageScore: Number(weightageScore.toFixed(2)),
+            };
+            Total += weightageScore;
+          } else if (
+            (index === 3 && role === "AGM") ||
+            role === "DGM" ||
+            role === "AGM_IT"
+          ) {
+            const weightage = kpi.weightage;
+            const avg = Cleanliness;
+
+            let result;
+
+            if (avg < weightage) {
+              result = (avg / weightage) * 10;
+            } else if (avg / weightage < 1.25) {
+              result = 12.5;
+            } else {
+              result = 0;
+            }
+
+            const weightageScore = (result / 100) * weightage;
+            Total += weightageScore;
+            finalKpis[kpi.kpi_name] = {
+              score: Number(result.toFixed(2)),
+              achieved: avg || 0,
+              weightage,
+              weightageScore: Number(weightageScore.toFixed(2)),
+            };
+          } else if (index === 4) {
+            const weightage = kpi.weightage;
+            const avg = Management;
+
+            let result;
+
+            if (avg < weightage) {
+              result = (avg / weightage) * 10;
+            } else if (avg / weightage < 1.25) {
+              result = 12.5;
+            } else {
+              result = 0;
+            }
+
+            const weightageScore = (result / 100) * weightage;
+            Total += weightageScore;
+            finalKpis[kpi.kpi_name] = {
+              score: Number(result.toFixed(2)),
+              achieved: avg || 0,
+              weightage,
+              weightageScore: Number(weightageScore.toFixed(2)),
+            };
+          } else if (index === 5 && role === "AGM_AUDIT") {
+            const weightage = kpi.weightage;
+            const avg = InternalAudit;
+
+            let result;
+
+            if (avg < weightage) {
+              result = (avg / weightage) * 10;
+            } else if (avg / weightage < 1.25) {
+              result = 12.5;
+            } else {
+              result = 0;
+            }
+
+            const weightageScore = (result / 100) * weightage;
+            Total += weightageScore;
+            finalKpis[kpi.kpi_name] = {
+              score: Number(result.toFixed(2)),
+              achieved: avg || 0,
+              weightage,
+              weightageScore: Number(weightageScore.toFixed(2)),
+            };
+          } else if (index === 6 && role === "AGM_IT") {
+            const weightage = kpi.weightage;
+            const avg = IT;
+
+            let result;
+
+            if (avg < weightage) {
+              result = (avg / weightage) * 10;
+            } else if (avg / weightage < 1.25) {
+              result = 12.5;
+            } else {
+              result = 0;
+            }
+
+            const weightageScore = (result / 100) * weightage;
+            Total += weightageScore;
+            finalKpis[kpi.kpi_name] = {
+              score: Number(result.toFixed(2)),
+              achieved: avg || 0,
+              weightage,
+              weightageScore: Number(weightageScore.toFixed(2)),
+            };
+          } else if (index === 7 && role === "AGM_INSURANCE") {
+            const weightage = kpi.weightage;
+            const avg = InsuranceBusinessDevelopment;
+
+            let result;
+
+            if (avg === 0) {
+              result = 0;
+            } else if (avg < weightage) {
+              result = (avg / weightage) * 10;
+            } else if (avg / weightage < 1.25) {
+              result = 10;
+            } else {
+              result = 12.5;
+            }
+
+            const weightageScore = (result / 100) * weightage;
+            Total += weightageScore;
+            finalKpis[kpi.kpi_name] = {
+              score: Number(result.toFixed(2)),
+              achieved: avg || 0,
+              weightage,
+              weightageScore: Number(weightageScore.toFixed(2)),
+            };
+          } else {
+            finalKpis[kpi.kpi_name] = {
+              score: 0,
+              achieved: 0,
+              weightage: kpi.weightage,
+              weightageScore: 0,
+            };
+          }
+        });
+
+        // SEND RESULT BACK
+        resolve({
+          hod_id,
+          period,
+          kpis: finalKpis,
+          total: Total,
+        });
+      });
+    });
+  });
+};
+
+performanceMasterRouter.get("/AGM-DGM-Scores", async (req, res) => {
+  const { period } = req.query;
+
+  if (!period) {
+    return res.status(400).json({ error: "period required" });
+  }
+
+  const allAGmQuery = `
+    SELECT id AS hod_id, role ,name
+    FROM users 
+    WHERE role IN ('AGM','DGM','AGM_AUDIT','AGM_INSURANCE','AGM_IT')
+  `;
+
+  pool.query(allAGmQuery, async (err, rows) => {
+    if (err) {
+      console.error(err);
+      return res.status(500).json({
+        error: "Database error fetching AGMs/DGMs",
+      });
+    }
+
+    const agmList = rows;
+    const results = [];
+
+    for (const agm of agmList) {
+      try {
+        const scoreData = await calculateHodAllScores(
+          pool,
+          period,
+          agm.hod_id,
+          agm.role,
+          calculateStaffScores,
+          calculateBranchStaffScore
+        );
+
+        results.push({
+          hod_id: agm.hod_id,
+          name: agm.name,
+          role: agm.role,
+          ...scoreData,
+        });
+      } catch (err) {
+        console.error(err);
+        return res.status(500).json(err);
+      }
+    }
+
+    // Return all AGM/DGM results together
+    res.json(results);
   });
 });
