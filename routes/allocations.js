@@ -736,6 +736,8 @@ async function getActualMonthsWorked(pool, staffId, userTd, fyStart) {
   const dDb = dbTd ? new Date(dbTd) : null;
   const dUser = userTd ? new Date(userTd) : null;
   const fy = new Date(fyStart);
+  const effectiveDb = dDb || dUser || new Date();
+
 
   if (dDb && dUser) {
     const earlier = dDb < dUser ? dDb : dUser;
@@ -743,11 +745,12 @@ async function getActualMonthsWorked(pool, staffId, userTd, fyStart) {
     return monthDiff(earlier, later);
   }
 
+
   if (dDb) return monthDiff(fy, dDb);
 
   if (dUser) return monthDiff(fy, dUser);
 
-  return 0;
+  return monthDiff(fy, effectiveDb);
 }
 
 export const autoDistributeTargetsOldBranch = (period, branchId, callback) => {
@@ -782,6 +785,8 @@ export const autoDistributeTargetsOldBranch = (period, branchId, callback) => {
 
             const today = currentDate.toISOString().split("T")[0];
             const transferDay = td ? td.toISOString().split("T")[0] : null;
+           
+            
 
             if (td) {
               if (transferDay === today) {
@@ -801,7 +806,8 @@ export const autoDistributeTargetsOldBranch = (period, branchId, callback) => {
 
             activeStaff.push(s);
           });
-
+          
+          
           const totalStaff =
             activeStaff.length +
             resignedStaff.length +
@@ -842,7 +848,8 @@ export const autoDistributeTargetsOldBranch = (period, branchId, callback) => {
                     r.user_add_date,
                     fy.start
                   );
-
+                 
+                  
                   if (kpi === "audit") {
                     const perMonth = totalTarget / 12;
                     const resignedAuditTarget = perMonth * monthsWorked;

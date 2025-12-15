@@ -129,7 +129,7 @@ performanceMasterRouter.get("/specfic-ALLstaff-scores", (req, res) => {
           let score = 0;
           if (achieved > 0) {
             const ratio = achieved / target;
-            if (ratio < 1) score = ratio * 10;
+            if (ratio <= 1) score = ratio * 10;
             else if (ratio < 1.25) score = 10;
             else score = 12.5;
           }
@@ -198,7 +198,7 @@ function calculateStaffScores(period, staffId, role) {
           let score = 0;
           if (achieved > 0) {
             const ratio = achieved / target;
-            if (ratio < 1) score = ratio * 10;
+            if (ratio <= 1) score = ratio * 10;
             else if (ratio < 1.25) score = 10;
             else score = 12.5;
           }
@@ -224,21 +224,24 @@ function calculateStaffScores(period, staffId, role) {
     });
   });
 }
-//Reusable function to calculate KPI score for many branch staff
-function calculateBranchStaffScore(period, branchId) {
-  return new Promise((resolve, reject) => {
-    if (!period || !branchId) return reject("period and branchId required");
 
-    const branchQuery = `
+function calculateBMScores(period, branchId) {
+  return new Promise((resolve, reject) => {
+    const query = `
       SELECT
           k.kpi,
-          CASE WHEN k.kpi = 'audit' THEN 100 ELSE COALESCE(t.amount, 0) END AS target,
-          COALESCE(w.weightage, 0) AS weightage,
-          COALESCE(e.total_achieved, 0) AS achieved
+          CASE WHEN k.kpi = 'audit' THEN 100 ELSE t.amount END AS target,
+          w.weightage,
+          e.total_achieved AS achieved
       FROM
-          (SELECT 'recovery' as kpi 
-           UNION SELECT 'audit' 
-           UNION SELECT 'insurance') as k
+          (
+              SELECT 'deposit' as kpi UNION 
+              SELECT 'loan_gen' UNION 
+              SELECT 'loan_amulya' UNION 
+              SELECT 'recovery' UNION 
+              SELECT 'audit' UNION 
+              SELECT 'insurance'
+          ) as k
       LEFT JOIN targets t ON k.kpi = t.kpi AND t.period = ? AND t.branch_id = ?
       LEFT JOIN (
           SELECT kpi, SUM(value) AS total_achieved 
@@ -249,213 +252,159 @@ function calculateBranchStaffScore(period, branchId) {
       LEFT JOIN weightage w ON k.kpi = w.kpi
     `;
 
-    // CALCULATE SCORE FUNCTION
-    const calculateScore = (kpi, achieved = 0, target = 0) => {
-      if (!target || target == 0) return 0;
-      const ratio = achieved / target;
+    pool.query(query, [period, branchId, period, branchId], (err, results) => {
+      if (err) return reject(err);
 
-      let outOf10 = 0;
-      switch (kpi) {
-        case "deposit":
-        case "loan_gen":
-          if (ratio < 1) outOf10 = ratio * 10;
-          else if (ratio < 1.25) outOf10 = 10;
-          else outOf10 = 12.5;
-          break;
-
-        case "loan_amulya":
-          if (ratio < 1) outOf10 = ratio * 10;
-          else if (ratio < 1.25) outOf10 = 10;
-          else outOf10 = 12.5;
-          break;
-
-        case "insurance":
-          if (achieved === 0) outOf10 = 0;
-          else if (ratio < 1) outOf10 = ratio * 10;
-          else if (ratio < 1.25) outOf10 = 10;
-          else outOf10 = 12.5;
-          break;
-
-        case "recovery":
-        case "audit":
-          if (ratio < 1) outOf10 = ratio * 10;
-          else outOf10 = 12.5;
-          break;
-
-        default:
-          outOf10 = 0;
-      }
-
-      return Math.max(0, Math.min(12.5, outOf10));
-    };
-
-    pool.query(
-      branchQuery,
-      [period, branchId, period, branchId],
-      (err, branchResults) => {
-        if (err) return reject(err);
-
-        const branchScores = {};
-        branchResults.forEach((row) => {
-          const targetVal = Number(row.target || 0);
-          const achievedVal = Number(row.achieved || 0);
-          const weightageVal = Number(row.weightage || 0);
-
-          const score = calculateScore(row.kpi, achievedVal, targetVal);
-          const computedWeightageScore = (score * weightageVal) / 100;
-
-          const weightageScore =
-            targetVal === 0
-              ? 0
-              : row.kpi === "insurance" && score === 0
-              ? -2
-              : computedWeightageScore;
-
-          branchScores[row.kpi] = {
-            score,
-            target: targetVal,
-            achieved: achievedVal,
-            weightage: weightageVal,
-            weightageScore,
-          };
-        });
-
-        const staffQuery = `
-        SELECT
-          u.id AS staffId,
-          u.name AS staffName,
-          a.kpi,
-          COALESCE(a.amount, 0) AS target,
-          COALESCE(w.weightage, 0) AS weightage,
-          COALESCE(e.total_achieved, 0) AS achieved
-        FROM users u
-        LEFT JOIN allocations a ON u.id = a.user_id AND a.period = ?
-        LEFT JOIN (
-          SELECT employee_id, kpi, SUM(value) AS total_achieved
-          FROM entries
-          WHERE period = ? AND status = 'Verified'
-          GROUP BY employee_id, kpi
-        ) e ON u.id = e.employee_id AND a.kpi = e.kpi
-        LEFT JOIN weightage w ON a.kpi = w.kpi
-        WHERE u.branch_id = ? AND u.role IN ('CLERK')
-      `;
-
-        pool.query(staffQuery, [period, period, branchId], (err2, results) => {
+      pool.query(
+        `SELECT id FROM users WHERE branch_id=? AND role='BM'`,
+        [branchId],
+        (err2, bmRows) => {
           if (err2) return reject(err2);
 
-          const staffScores = {};
+          const BM = bmRows?.[0]?.id || 0;
 
-          results.forEach((row) => {
-            const staffId = row.staffId;
-            if (!staffScores[staffId]) {
-              staffScores[staffId] = {
-                staffId,
-                staffName: row.staffName,
-                total: 0,
-              };
-            }
+          pool.query(
+            `
+            SELECT SUM(value) AS achieved
+            FROM entries
+            WHERE period=? AND employee_id=? AND kpi='insurance'
+          `,
+            [period, BM],
+            (err3, insRows) => {
+              if (err3) return reject(err3);
 
-            if (!row.kpi) return;
+              const insuranceAchieved = insRows?.[0]?.achieved || 0;
 
-            const kpi = row.kpi;
-            const targetVal = Number(row.target || 0);
-            const achievedVal = Number(row.achieved || 0);
-            const weightageVal = Number(row.weightage || 0);
-
-            const score = calculateScore(kpi, achievedVal, targetVal);
-            const computedWeightageScore = (score * weightageVal) / 100;
-
-            const weightageScore =
-              targetVal === 0
-                ? 0
-                : kpi === "insurance" && score === 0
-                ? -2
-                : computedWeightageScore;
-
-            staffScores[staffId][kpi] = {
-              score,
-              target: targetVal,
-              achieved: achievedVal,
-              weightage: weightageVal,
-              weightageScore,
-            };
-          });
-
-          const defaultKpi = {
-            score: 0,
-            target: 0,
-            achieved: 0,
-            weightage: 0,
-            weightageScore: 0,
-          };
-          const staffArray = Object.values(staffScores);
-
-          const promises = staffArray.map((staff) => {
-            return new Promise((resolve2, reject2) => {
-              staff.recovery =
-                staff.recovery || branchScores.recovery || defaultKpi;
-              staff.audit = staff.audit || branchScores.audit || defaultKpi;
-              staff.insurance =
-                staff.insurance || branchScores.insurance || defaultKpi;
-
-              [
-                "deposit",
-                "loan_gen",
-                "loan_amulya",
-                "recovery",
-                "audit",
-                "insurance",
-              ].forEach((kpi) => {
-                if (!staff[kpi]) staff[kpi] = defaultKpi;
-              });
-
-              let totalWeightageScore = 0;
-              [
-                "deposit",
-                "loan_gen",
-                "loan_amulya",
-                "recovery",
-                "audit",
-                "insurance",
-              ].forEach((kpi) => {
-                totalWeightageScore += Number(staff[kpi].weightageScore || 0);
-              });
-
-              // PREVIOUS AVERAGE KPI
-              const prevQuery = `
-              SELECT COALESCE(SUM(kpi_total)/COUNT(*), 0) AS avgKpi 
-              FROM employee_transfer 
-              WHERE staff_id = ?
-            `;
-
-              pool.query(prevQuery, [staff.staffId], (err3, prevResult) => {
-                if (err3) return reject2(err3);
-
-                const previousKpi = Number(prevResult[0]?.avgKpi || 0);
-
-                let total = totalWeightageScore + previousKpi;
-
-                const insuranceScore = Number(staff.insurance.score || 0);
-                const recoveryScore = Number(staff.recovery.score || 0);
-
-                if (insuranceScore < 7.5 && recoveryScore < 7.5 && total > 10) {
-                  total = 10;
+              // SAME mapping logic
+              results = results.map((row) => {
+                if (row.kpi === "insurance") {
+                  row.achieved = insuranceAchieved;
                 }
-
-                staff.total = total;
-                resolve2();
+                return row;
               });
-            });
-          });
 
-          Promise.all(promises)
-            .then(() => resolve(staffArray))
-            .catch(reject);
-        });
-      }
-    );
+              const bmKpis = [
+                "deposit",
+                "loan_gen",
+                "loan_amulya",
+                "recovery",
+                "audit",
+                "insurance",
+              ];
+
+              const calculateScores = (cap) => {
+                const scores = {};
+                bmKpis.forEach((kpi) => {
+                  scores[kpi] = {
+                    score: 0,
+                    target: 0,
+                    achieved: 0,
+                    weightage: 0,
+                    weightageScore: 0,
+                  };
+                });
+
+                let totalWeightageScore = 0;
+
+                results.forEach((row) => {
+                  if (!bmKpis.includes(row.kpi)) return;
+
+                  let outOf10 = 0;
+
+                  if (!row.target || row.target === 0) {
+                    scores[row.kpi] = {
+                      score: 0,
+                      target: 0,
+                      achieved: row.achieved || 0,
+                      weightage: row.weightage || 0,
+                      weightageScore: 0,
+                    };
+                    return;
+                  }
+
+                  const ratio = row.achieved / row.target;
+                  const auditRatio = row.kpi === "audit" ? ratio : 0;
+                  const recoveryRatio = row.kpi === "recovery" ? ratio : 0;
+
+                  switch (row.kpi) {
+                    case "deposit":
+                    case "loan_gen":
+                      if (ratio <= 1) outOf10 = ratio * 10;
+                      else if (ratio < 1.25) outOf10 = 10;
+                      else if (auditRatio >= 0.75 && recoveryRatio >= 0.75)
+                        outOf10 = 12.5;
+                      else outOf10 = 10;
+                      break;
+
+                    case "loan_amulya":
+                      if (ratio <= 1) outOf10 = ratio * 10;
+                      else if (ratio < 1.25) outOf10 = 10;
+                      else outOf10 = 12.5;
+                      break;
+
+                    case "insurance":
+                      if (ratio === 0) outOf10 = -2;
+                      else if (ratio <= 1) outOf10 = ratio * 10;
+                      else if (ratio < 1.25) outOf10 = 10;
+                      else outOf10 = 12.5;
+                      break;
+
+                    case "recovery":
+                    case "audit":
+                      if (ratio <= 1) outOf10 = ratio * 10;
+                      else outOf10 = 12.5;
+                      break;
+                  }
+
+                  outOf10 = Math.max(
+                    0,
+                    Math.min(cap, isNaN(outOf10) ? 0 : outOf10)
+                  );
+
+                  const weightageScore =
+                    row.kpi === "insurance" && ratio === 0
+                      ? -2
+                      : (outOf10 * (row.weightage || 0)) / 100;
+
+                  scores[row.kpi] = {
+                    score: outOf10,
+                    target: row.target,
+                    achieved: row.achieved || 0,
+                    weightage: row.weightage || 0,
+                    weightageScore,
+                  };
+
+                  totalWeightageScore += weightageScore;
+                });
+
+                scores.total = totalWeightageScore;
+                return scores;
+              };
+
+              // SAME cap logic
+              const preliminaryScores = calculateScores(12.5);
+              const insuranceScore = preliminaryScores.insurance?.score || 0;
+              const recoveryScore = preliminaryScores.recovery?.score || 0;
+
+              const cap =
+                preliminaryScores.total > 10 &&
+                insuranceScore < 7.5 &&
+                recoveryScore < 7.5
+                  ? 10
+                  : 12.5;
+
+              const finalScores = calculateScores(cap);
+
+              resolve(finalScores);
+            }
+          );
+        }
+      );
+    });
   });
 }
+
+
 // simple agm
 performanceMasterRouter.get("/ho-Allhod-scores", (req, res) => {
   const { period, hod_id, role } = req.query;
@@ -480,14 +429,6 @@ performanceMasterRouter.get("/ho-Allhod-scores", (req, res) => {
     pool.query(staffQuery, [hod_id], async (err2, staffList) => {
       if (err2)
         return res.status(500).json({ error: "Failed to fetch HO staff" });
-
-      // if (!staffList.length)
-      //   return res.json({
-      //     hod_id,
-      //     period,
-      //     kpis: {},
-      //     message: "No staff found",
-      //   });
 
       const staffIds = staffList.map((s) => s.id);
 
@@ -526,20 +467,20 @@ performanceMasterRouter.get("/ho-Allhod-scores", (req, res) => {
       let branchWiseAverage = {};
 
       for (const code of branchCodes) {
-        const staffList = await calculateBranchStaffScore(period, code);
-        const totals = staffList.map((s) => Number(s.total) || 0);
-        const avg =
-          totals.length === 0
-            ? 0
-            : totals.reduce((a, b) => a + b, 0) / totals.length;
-
-        branchWiseAverage[code] = Number(avg.toFixed(2));
+        const bmScore = await calculateBMScores(period, code);
+        const totals = bmScore.total || 0;
+        branchWiseAverage[code] = Number(totals.toFixed(2));
+        
+        
       }
       const branchValues = Object.values(branchWiseAverage);
+   
       const branchTotal = branchValues.reduce((sum, val) => sum + val, 0);
+
       const branchAvgScore = Number(
         (branchTotal / branchValues.length).toFixed(2)
       );
+    
       const kpiMap = {};
       hodKpis.forEach((k) => {
         kpiMap[k.kpi_name] = {
@@ -547,6 +488,7 @@ performanceMasterRouter.get("/ho-Allhod-scores", (req, res) => {
           weightage: k.weightage,
         };
       });
+    
 
       //insurance kpi calaculation
       const insuranceValue = await new Promise((resolve, reject) => {
@@ -589,6 +531,7 @@ performanceMasterRouter.get("/ho-Allhod-scores", (req, res) => {
       //Internal Audit performance
       const InternalAudit = await new Promise((resolve, reject) => {
         if (!kpiMap["Internal Audit performance"]) return resolve(0);
+
         pool.query(
           "SELECT value FROM user_kpi_entry WHERE role_kpi_mapping_id = ? AND user_id = ? AND period = ?",
           [kpiMap["Internal Audit performance"].id, hod_id, period],
@@ -626,214 +569,76 @@ performanceMasterRouter.get("/ho-Allhod-scores", (req, res) => {
           );
         }
       );
+      
 
       let Total = 0;
-      hodKpis.forEach((kpi, index) => {
-        if (
-          (index === 0 && role === "AGM") ||
-          role === "DGM" ||
-          role === "AGM_AUDIT" ||
-          role === "AGM_IT"
-        ) {
-          const weightage = kpi.weightage;
-          const avg = fixedAvg;
+      
+      for (const kpi of hodKpis) {
+        const name = kpi.kpi_name;
+        const weightage = kpi.weightage;
 
-          let result;
-          if (avg < weightage) {
-            result = (avg / weightage) * 10;
-          } else if (avg / weightage < 1.25) {
-            result = 12.5;
-          } else {
-            result = 0;
-          }
+        let avg = 0;
+        let result = 0;
+        let weightageScore = 0;
 
-          const weightageScore = (result / 100) * weightage;
-          Total += weightageScore;
-          finalKpis[kpi.kpi_name] = {
-            score: Number(result.toFixed(2)),
-            achieved: avg || 0,
-            weightage,
-            weightageScore: Number(weightageScore.toFixed(2)),
-          };
+        if (name.toLowerCase().includes("section")) {
+          avg = fixedAvg;
         } else if (
-          (index === 1 && role === "AGM") ||
-          role === "DGM" ||
-          role === "AGM_AUDIT"
+          name.toLowerCase().includes("branch") ||
+          name.toLowerCase().includes("visits")
         ) {
-          const weightage = kpi.weightage;
-          const avg = branchAvgScore;
-
-          let result;
-
-          if (avg < weightage) {
-            result = (avg / weightage) * 10;
-          } else if (avg / weightage < 1.25) {
-            result = 12.5;
-          } else {
-            result = 0;
-          }
-
-          const weightageScore = (result / 100) * weightage;
-          Total += weightageScore;
-          finalKpis[kpi.kpi_name] = {
-            score: Number(result.toFixed(2)),
-            achieved: avg || 0,
-            weightage,
-            weightageScore: Number(weightageScore.toFixed(2)),
-          };
-        } else if (index === 2) {
-          const weightage = kpi.weightage;
+          avg = branchAvgScore;
+        } else if (name.toLowerCase().includes("clean")) {
+          avg = Cleanliness;
+        } else if (name.toLowerCase().includes("management")) {
+          avg = Management;
+        } else if (
+          name.toLowerCase().includes("audit") &&
+          !name.toLowerCase().includes("internal")
+        ) {
+          avg = InternalAudit;
+        } else if (name.toLowerCase().includes("internal audit")) {
+          avg = InternalAudit;
+        } else if (name.toLowerCase().includes("it")) {
+          avg = IT;
+        } else if (name.toLowerCase().includes("business development")) {
+          avg = InsuranceBusinessDevelopment;
+        } else if (name.toLowerCase().includes("insurance")) {
           const target = 40000;
-          const avg = insuranceValue;
+          avg = insuranceValue;
 
-          let result;
-          let weightageScore;
+          if (avg <= target) result = (avg / target) * 10;
+          else if (avg / target < 1.25) result = 10;
+          else result = 12.5;
 
-          if (avg < target) {
-            result = (avg / target) * 10;
-          } else if (avg / target < 1.25) {
-            result = 10;
-          } else {
-            result = 12.5;
-          }
-          if (avg === 0) {
-            weightageScore = -2;
-          } else {
-            weightageScore = (result / 100) * weightage;
-          }
+          weightageScore = avg === 0 ? -2 : (result / 100) * weightage;
 
-          finalKpis[kpi.kpi_name] = {
+          finalKpis[name] = {
             score: Number(result.toFixed(2)),
             achieved: avg || 0,
             weightage,
             weightageScore: Number(weightageScore.toFixed(2)),
           };
+
           Total += weightageScore;
-        } else if (
-          (index === 3 && role === "AGM") ||
-          role === "DGM" ||
-          role === "AGM_IT"
-        ) {
-          const weightage = kpi.weightage;
-          const avg = Cleanliness;
-
-          let result;
-
-          if (avg < weightage) {
-            result = (avg / weightage) * 10;
-          } else if (avg / weightage < 1.25) {
-            result = 12.5;
-          } else {
-            result = 0;
-          }
-
-          const weightageScore = (result / 100) * weightage;
-          Total += weightageScore;
-          finalKpis[kpi.kpi_name] = {
-            score: Number(result.toFixed(2)),
-            achieved: avg || 0,
-            weightage,
-            weightageScore: Number(weightageScore.toFixed(2)),
-          };
-        } else if (index === 4) {
-          const weightage = kpi.weightage;
-          const avg = Management;
-
-          let result;
-
-          if (avg < weightage) {
-            result = (avg / weightage) * 10;
-          } else if (avg / weightage < 1.25) {
-            result = 12.5;
-          } else {
-            result = 0;
-          }
-
-          const weightageScore = (result / 100) * weightage;
-          Total += weightageScore;
-          finalKpis[kpi.kpi_name] = {
-            score: Number(result.toFixed(2)),
-            achieved: avg || 0,
-            weightage,
-            weightageScore: Number(weightageScore.toFixed(2)),
-          };
-        } else if (index === 5 && role === "AGM_AUDIT") {
-          const weightage = kpi.weightage;
-          const avg = InternalAudit;
-
-          let result;
-
-          if (avg < weightage) {
-            result = (avg / weightage) * 10;
-          } else if (avg / weightage < 1.25) {
-            result = 12.5;
-          } else {
-            result = 0;
-          }
-
-          const weightageScore = (result / 100) * weightage;
-          Total += weightageScore;
-          finalKpis[kpi.kpi_name] = {
-            score: Number(result.toFixed(2)),
-            achieved: avg || 0,
-            weightage,
-            weightageScore: Number(weightageScore.toFixed(2)),
-          };
-        } else if (index === 6 && role === "AGM_IT") {
-          const weightage = kpi.weightage;
-          const avg = IT;
-
-          let result;
-
-          if (avg < weightage) {
-            result = (avg / weightage) * 10;
-          } else if (avg / weightage < 1.25) {
-            result = 12.5;
-          } else {
-            result = 0;
-          }
-
-          const weightageScore = (result / 100) * weightage;
-          Total += weightageScore;
-          finalKpis[kpi.kpi_name] = {
-            score: Number(result.toFixed(2)),
-            achieved: avg || 0,
-            weightage,
-            weightageScore: Number(weightageScore.toFixed(2)),
-          };
-        } else if (index === 7 && role === "AGM_INSURANCE") {
-          const weightage = kpi.weightage;
-          const avg = InsuranceBusinessDevelopment;
-
-          let result;
-
-          if (avg === 0) {
-            result = 0;
-          } else if (avg < weightage) {
-            result = (avg / weightage) * 10;
-          } else if (avg / weightage < 1.25) {
-            result = 10;
-          } else {
-            result = 12.5;
-          }
-
-          const weightageScore = (result / 100) * weightage;
-          Total += weightageScore;
-          finalKpis[kpi.kpi_name] = {
-            score: Number(result.toFixed(2)),
-            achieved: avg || 0,
-            weightage,
-            weightageScore: Number(weightageScore.toFixed(2)),
-          };
-        } else {
-          finalKpis[kpi.kpi_name] = {
-            score: 0,
-            achieved: 0,
-            weightage: kpi.weightage,
-            weightageScore: 0,
-          };
+          continue;
         }
-      });
+
+        if (avg === 0) result = 0;
+        else if (avg <= weightage) result = (avg / weightage) * 10;
+        else if (avg / weightage < 1.25) result = 12.5;
+        else result = 0;
+
+        weightageScore = (result / 100) * weightage;
+        Total += weightageScore;
+
+        finalKpis[name] = {
+          score: Number(result.toFixed(2)),
+          achieved: avg || 0,
+          weightage,
+          weightageScore: Number(weightageScore.toFixed(2)),
+        };
+      }
 
       res.json({
         hod_id,
@@ -955,7 +760,7 @@ performanceMasterRouter.get("/ho-staff-scores-all", (req, res) => {
 
           if (achieved > 0) {
             const ratio = achieved / target;
-            if (ratio < 1) score = ratio * 10;
+            if (ratio <= 1) score = ratio * 10;
             else if (ratio < 1.25) score = 10;
             else score = 12.5;
           }
@@ -1077,7 +882,7 @@ performanceMasterRouter.post("/save-or-update-ho-staff-kpi", (req, res) => {
     }
 
     res.json({
-      message: "KPI save/update completed (Insurance excluded)",
+      message: "KPI save/update completed ",
       inserted: insertMessages,
       updated: updateMessages,
     });
@@ -1085,17 +890,21 @@ performanceMasterRouter.post("/save-or-update-ho-staff-kpi", (req, res) => {
 });
 //Dashboard Data
 performanceMasterRouter.post("/get-Total-Ho_staff-details", (req, res) => {
-  const { hod_id } = req.body;
+  const { hod_id, period } = req.body;
 
-  if (!hod_id) {
+  if (!hod_id || !period) {
     return res.status(400).json({
-      error: "hod_id is required",
+      error: "hod_id and period are required",
     });
   }
 
   const dashboardResult = {};
 
-  const query1 = `SELECT username, name, role FROM users WHERE role='HO_STAFF' AND hod_id = ?`;
+  const query1 = `
+    SELECT username, name, role 
+    FROM users 
+    WHERE role='HO_STAFF' AND hod_id = ?
+  `;
 
   pool.query(query1, [hod_id], (err1, hoStaffResult) => {
     if (err1) {
@@ -1106,16 +915,32 @@ performanceMasterRouter.post("/get-Total-Ho_staff-details", (req, res) => {
     dashboardResult.totalHOStaff = hoStaffResult;
     dashboardResult.totalHOStaffCount = hoStaffResult.length;
 
-    const query2 = `SELECT code, name FROM branches WHERE incharge_id = ?`;
+    const query2 = `
+      SELECT code, name 
+      FROM branches 
+      WHERE incharge_id = ?
+    `;
 
-    pool.query(query2, [hod_id], (err2, branchResult) => {
+    pool.query(query2, [hod_id], async (err2, branches) => {
       if (err2) {
         console.error(err2);
         return res.status(500).json({ error: "Database error (Branches)" });
       }
 
-      dashboardResult.totalBranches = branchResult;
-      dashboardResult.totalBranchesCount = branchResult.length;
+     
+      const branchesWithScore = [];
+
+      for (let branch of branches) {
+        const branchScore = await calculateBMScores(period, branch.code);
+
+        branchesWithScore.push({
+          ...branch,
+          bmTotalScore: branchScore.total,
+        });
+      }
+
+      dashboardResult.totalBranches = branchesWithScore;
+      dashboardResult.totalBranchesCount = branchesWithScore.length;
 
       const query3 = `
         SELECT username, name, role  
@@ -1138,13 +963,14 @@ performanceMasterRouter.post("/get-Total-Ho_staff-details", (req, res) => {
   });
 });
 
+
 const calculateHodAllScores = (
   pool,
   period,
   hod_id,
   role,
   calculateStaffScores,
-  calculateBranchStaffScore
+  calculateBMScores
 ) => {
   return new Promise((resolve, reject) => {
     const hodKpiQuery = `
@@ -1201,14 +1027,9 @@ const calculateHodAllScores = (
         let branchWiseAverage = {};
 
         for (const code of branchCodes) {
-          const staffList = await calculateBranchStaffScore(period, code);
-          const totals = staffList.map((s) => Number(s.total) || 0);
-          const avg =
-            totals.length === 0
-              ? 0
-              : totals.reduce((a, b) => a + b, 0) / totals.length;
-
-          branchWiseAverage[code] = Number(avg.toFixed(2));
+        const bmScore = await calculateBMScores(period, code);
+        const totals = bmScore.total || 0;
+        branchWiseAverage[code] = Number(totals.toFixed(2));
         }
 
         const branchValues = Object.values(branchWiseAverage);
@@ -1224,6 +1045,7 @@ const calculateHodAllScores = (
             weightage: k.weightage,
           };
         });
+        
 
         //insurance kpi calaculation
         const insuranceValue = await new Promise((resolve, reject) => {
@@ -1240,6 +1062,8 @@ const calculateHodAllScores = (
         //HO Building Cleanliness
         const Cleanliness = await new Promise((resolve, reject) => {
           if (!kpiMap["HO Building Cleanliness"]) return resolve(0);
+      
+
           pool.query(
             "SELECT value FROM user_kpi_entry WHERE role_kpi_mapping_id = ? AND user_id = ? AND period = ?",
             [kpiMap["HO Building Cleanliness"].id, hod_id, period],
@@ -1305,214 +1129,77 @@ const calculateHodAllScores = (
         );
 
         let Total = 0;
-        hodKpis.forEach((kpi, index) => {
-          if (
-            (index === 0 && role === "AGM") ||
-            role === "DGM" ||
-            role === "AGM_AUDIT" ||
-            role === "AGM_IT"
-          ) {
-            const weightage = kpi.weightage;
-            const avg = fixedAvg;
+       
+        for (const kpi of hodKpis) {
+          const name = kpi.kpi_name;
+          const weightage = kpi.weightage;
 
-            let result;
-            if (avg < weightage) {
-              result = (avg / weightage) * 10;
-            } else if (avg / weightage < 1.25) {
-              result = 12.5;
-            } else {
-              result = 0;
-            }
+          let avg = 0;
+          let result = 0;
+          let weightageScore = 0;
 
-            const weightageScore = (result / 100) * weightage;
-            Total += weightageScore;
-            finalKpis[kpi.kpi_name] = {
-              score: Number(result.toFixed(2)),
-              achieved: avg || 0,
-              weightage,
-              weightageScore: Number(weightageScore.toFixed(2)),
-            };
+          if (name.toLowerCase().includes("section")) {
+            avg = fixedAvg;
           } else if (
-            (index === 1 && role === "AGM") ||
-            role === "DGM" ||
-            role === "AGM_AUDIT"
+            name.toLowerCase().includes("branch") ||
+            name.toLowerCase().includes("visits")
           ) {
-            const weightage = kpi.weightage;
-            const avg = branchAvgScore;
-
-            let result;
-
-            if (avg < weightage) {
-              result = (avg / weightage) * 10;
-            } else if (avg / weightage < 1.25) {
-              result = 12.5;
-            } else {
-              result = 0;
-            }
-
-            const weightageScore = (result / 100) * weightage;
-            Total += weightageScore;
-            finalKpis[kpi.kpi_name] = {
-              score: Number(result.toFixed(2)),
-              achieved: avg || 0,
-              weightage,
-              weightageScore: Number(weightageScore.toFixed(2)),
-            };
-          } else if (index === 2) {
-            const weightage = kpi.weightage;
-            const target = 40000;
-            const avg = insuranceValue;
-
-            let result;
-            let weightageScore;
-
-            if (avg < target) {
-              result = (avg / target) * 10;
-            } else if (avg / target < 1.25) {
-              result = 10;
-            } else {
-              result = 12.5;
-            }
-            if (avg === 0) {
-              weightageScore = -2;
-            } else {
-              weightageScore = (result / 100) * weightage;
-            }
-
-            finalKpis[kpi.kpi_name] = {
-              score: Number(result.toFixed(2)),
-              achieved: avg || 0,
-              weightage,
-              weightageScore: Number(weightageScore.toFixed(2)),
-            };
-            Total += weightageScore;
+            avg = branchAvgScore;
+          } else if (name.toLowerCase().includes("clean")) {
+            avg = Cleanliness;
+          } else if (name.toLowerCase().includes("management")) {
+            avg = Management;
           } else if (
-            (index === 3 && role === "AGM") ||
-            role === "DGM" ||
-            role === "AGM_IT"
+            name.toLowerCase().includes("audit") &&
+            !name.toLowerCase().includes("internal")
           ) {
-            const weightage = kpi.weightage;
-            const avg = Cleanliness;
-
-            let result;
-
-            if (avg < weightage) {
-              result = (avg / weightage) * 10;
-            } else if (avg / weightage < 1.25) {
-              result = 12.5;
-            } else {
-              result = 0;
-            }
-
-            const weightageScore = (result / 100) * weightage;
-            Total += weightageScore;
-            finalKpis[kpi.kpi_name] = {
-              score: Number(result.toFixed(2)),
-              achieved: avg || 0,
-              weightage,
-              weightageScore: Number(weightageScore.toFixed(2)),
-            };
-          } else if (index === 4) {
-            const weightage = kpi.weightage;
-            const avg = Management;
-
-            let result;
-
-            if (avg < weightage) {
-              result = (avg / weightage) * 10;
-            } else if (avg / weightage < 1.25) {
-              result = 12.5;
-            } else {
-              result = 0;
-            }
-
-            const weightageScore = (result / 100) * weightage;
-            Total += weightageScore;
-            finalKpis[kpi.kpi_name] = {
-              score: Number(result.toFixed(2)),
-              achieved: avg || 0,
-              weightage,
-              weightageScore: Number(weightageScore.toFixed(2)),
-            };
-          } else if (index === 5 && role === "AGM_AUDIT") {
-            const weightage = kpi.weightage;
-            const avg = InternalAudit;
-
-            let result;
-
-            if (avg < weightage) {
-              result = (avg / weightage) * 10;
-            } else if (avg / weightage < 1.25) {
-              result = 12.5;
-            } else {
-              result = 0;
-            }
-
-            const weightageScore = (result / 100) * weightage;
-            Total += weightageScore;
-            finalKpis[kpi.kpi_name] = {
-              score: Number(result.toFixed(2)),
-              achieved: avg || 0,
-              weightage,
-              weightageScore: Number(weightageScore.toFixed(2)),
-            };
-          } else if (index === 6 && role === "AGM_IT") {
-            const weightage = kpi.weightage;
-            const avg = IT;
-
-            let result;
-
-            if (avg < weightage) {
-              result = (avg / weightage) * 10;
-            } else if (avg / weightage < 1.25) {
-              result = 12.5;
-            } else {
-              result = 0;
-            }
-
-            const weightageScore = (result / 100) * weightage;
-            Total += weightageScore;
-            finalKpis[kpi.kpi_name] = {
-              score: Number(result.toFixed(2)),
-              achieved: avg || 0,
-              weightage,
-              weightageScore: Number(weightageScore.toFixed(2)),
-            };
-          } else if (index === 7 && role === "AGM_INSURANCE") {
-            const weightage = kpi.weightage;
-            const avg = InsuranceBusinessDevelopment;
-
-            let result;
-
-            if (avg === 0) {
-              result = 0;
-            } else if (avg < weightage) {
-              result = (avg / weightage) * 10;
-            } else if (avg / weightage < 1.25) {
-              result = 10;
-            } else {
-              result = 12.5;
-            }
-
-            const weightageScore = (result / 100) * weightage;
-            Total += weightageScore;
-            finalKpis[kpi.kpi_name] = {
-              score: Number(result.toFixed(2)),
-              achieved: avg || 0,
-              weightage,
-              weightageScore: Number(weightageScore.toFixed(2)),
-            };
-          } else {
-            finalKpis[kpi.kpi_name] = {
-              score: 0,
-              achieved: 0,
-              weightage: kpi.weightage,
-              weightageScore: 0,
-            };
+            avg = InternalAudit;
+          } else if (name.toLowerCase().includes("internal audit")) {
+            avg = InternalAudit;
+          } else if (name.toLowerCase().includes("it")) {
+            avg = IT;
+          } else if (name.toLowerCase().includes("business development")) {
+            avg = InsuranceBusinessDevelopment;
           }
-        });
 
-        // SEND RESULT BACK
+         
+          else if (name.toLowerCase().includes("insurance")) {
+            const target = 40000;
+            avg = insuranceValue;
+
+            if (avg <= target) result = (avg / target) * 10;
+            else if (avg / target < 1.25) result = 10;
+            else result = 12.5;
+
+            weightageScore = avg === 0 ? -2 : (result / 100) * weightage;
+
+            finalKpis[name] = {
+              score: Number(result.toFixed(2)),
+              achieved: avg || 0,
+              weightage,
+              weightageScore: Number(weightageScore.toFixed(2)),
+            };
+
+            Total += weightageScore;
+            continue;
+          }
+
+          if (avg === 0) result = 0;
+          else if (avg <= weightage) result = (avg / weightage) * 10;
+          else if (avg / weightage < 1.25) result = 12.5;
+          else result = 0;
+
+          weightageScore = (result / 100) * weightage;
+          Total += weightageScore;
+
+          finalKpis[name] = {
+            score: Number(result.toFixed(2)),
+            achieved: avg || 0,
+            weightage,
+            weightageScore: Number(weightageScore.toFixed(2)),
+          };
+        }
+
         resolve({
           hod_id,
           period,
@@ -1523,7 +1210,7 @@ const calculateHodAllScores = (
     });
   });
 };
-
+//All AGM-DGM Scores
 performanceMasterRouter.get("/AGM-DGM-Scores", async (req, res) => {
   const { period } = req.query;
 
@@ -1556,7 +1243,7 @@ performanceMasterRouter.get("/AGM-DGM-Scores", async (req, res) => {
           agm.hod_id,
           agm.role,
           calculateStaffScores,
-          calculateBranchStaffScore
+          calculateBMScores
         );
 
         results.push({

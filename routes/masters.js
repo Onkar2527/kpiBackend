@@ -337,7 +337,6 @@ mastersRouter.post("/transfers", (req, res) => {
     new_branch_id,
     kpi_total,
     period,
-    transfer_date,
     deposit_target,
     deposit_achieved,
     loan_gen_target,
@@ -360,7 +359,6 @@ mastersRouter.post("/transfers", (req, res) => {
     new_branch_id,
     kpi_total,
     period,
-    transfer_date,
     deposit_target,
     deposit_achieved,
     loan_gen_target,
@@ -462,20 +460,24 @@ mastersRouter.put("/Transfers_user/:id", (req, res) => {
   );
 });
 mastersRouter.put("/Transfers_date/:id", (req, res) => {
-  const {} = req.body;
-  const date = new Date();
-  const user = { transfer_date: date };
-
   pool.query(
-    "UPDATE users SET ? WHERE id = ?",
-    [user, req.params.id],
-    (error) => {
-      if (error)
+    "UPDATE users SET transfer_date = NOW() WHERE id = ?",
+    [req.params.id],
+    (error, result) => {
+      if (error) {
         return res.status(500).json({ error: "Internal server error" });
+      }
+
+      if (result.affectedRows === 0) {
+        return res.status(404).json({ error: "User not found" });
+      }
+
+    
       res.json({ ok: true });
     }
   );
 });
+
 mastersRouter.put("/resign_user/:id", (req, res) => {
   const user = { branch_id: "" };
 
@@ -581,7 +583,7 @@ ORDER BY
         switch (kpi) {
           case "deposit":
           case "loan_gen":
-            if (ratio < 1) {
+            if (ratio <= 1) {
               outOf10 = ratio * 10;
             } else if (ratio < 1.25) {
               outOf10 = 10;
@@ -593,7 +595,7 @@ ORDER BY
             break;
 
           case "loan_amulya":
-            if (ratio < 1) {
+            if (ratio <= 1) {
               outOf10 = ratio * 10;
             } else if (ratio < 1.25) {
               outOf10 = 10;
@@ -605,7 +607,7 @@ ORDER BY
           case "insurance":
             if (ratio === 0) {
               outOf10 = -2;
-            } else if (ratio < 1) {
+            } else if (ratio <= 1) {
               outOf10 = ratio * 10;
             } else if (ratio < 1.25) {
               outOf10 = 10;
@@ -616,7 +618,7 @@ ORDER BY
 
           case "recovery":
           case "audit":
-            if (ratio < 1) {
+            if (ratio <= 1) {
               outOf10 = ratio * 10;
             } else {
               outOf10 = 12.5;

@@ -14,6 +14,7 @@ import { kpisRouter } from './routes/kpis.js';
 import periodsRouter from './routes/periods.js';
 import { KpiRouter } from './routes/kpi_master.js';
 import {performanceMasterRouter} from './routes/performanceMaster.js'
+import {transferRouter} from './routes/transfer.js'
 
 // Create and configure the Express app.  CORS is enabled for all
 // origins to simplify local development.  The JSON body parser
@@ -38,6 +39,7 @@ app.use('/api/kpis', kpisRouter);
 app.use('/api/periods', periodsRouter);
 app.use('/api/kpi_master',KpiRouter);
 app.use('/api/performnceMaster',performanceMasterRouter);
+app.use('/api/trans',transferRouter);
 
 // Start listening for HTTP requests on the configured port.
 const PORT = process.env.PORT || 3000;

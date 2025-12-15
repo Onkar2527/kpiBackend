@@ -139,7 +139,7 @@ summaryRouter.get("/scores", (req, res) => {
             switch (row.kpi) {
               case "deposit":
               case "loan_gen":
-                if (ratio < 1) {
+                if (ratio <= 1) {
                   outOf10 = ratio * 10;
                 } else if (ratio < 1.25) {
                   outOf10 = 10;
@@ -151,7 +151,7 @@ summaryRouter.get("/scores", (req, res) => {
                 break;
 
               case "loan_amulya":
-                if (ratio < 1) {
+                if (ratio <= 1) {
                   outOf10 = ratio * 10;
                 } else if (ratio < 1.25) {
                   outOf10 = 10;
@@ -162,7 +162,7 @@ summaryRouter.get("/scores", (req, res) => {
               case "insurance":
                 if (ratio === 0) {
                   outOf10 = -2;
-                } else if (ratio < 1) {
+                } else if (ratio <= 1) {
                   outOf10 = ratio * 10;
                 } else if (ratio < 1.25) {
                   outOf10 = 10;
@@ -173,7 +173,7 @@ summaryRouter.get("/scores", (req, res) => {
 
               case "recovery":
               case "audit":
-                if (ratio < 1) {
+                if (ratio <= 1) {
                   outOf10 = ratio * 10;
                 } else {
                   outOf10 = 12.5;
@@ -493,7 +493,7 @@ summaryRouter.get("/bm-scores", (req, res) => {
                 switch (row.kpi) {
                   case "deposit":
                   case "loan_gen":
-                    if (ratio < 1) {
+                    if (ratio <= 1) {
                       outOf10 = ratio * 10;
                     } else if (ratio < 1.25) {
                       outOf10 = 10;
@@ -505,7 +505,7 @@ summaryRouter.get("/bm-scores", (req, res) => {
                     break;
 
                   case "loan_amulya":
-                    if (ratio < 1) {
+                    if (ratio <= 1) {
                       outOf10 = ratio * 10;
                     } else if (ratio < 1.25) {
                       outOf10 = 10;
@@ -517,7 +517,7 @@ summaryRouter.get("/bm-scores", (req, res) => {
                   case "insurance":
                     if (ratio === 0) {
                       outOf10 = -2;
-                    } else if (ratio < 1) {
+                    } else if (ratio <= 1) {
                       outOf10 = ratio * 10;
                     } else if (ratio < 1.25) {
                       outOf10 = 10;
@@ -528,7 +528,7 @@ summaryRouter.get("/bm-scores", (req, res) => {
 
                   case "recovery":
                   case "audit":
-                    if (ratio < 1) {
+                    if (ratio <= 1) {
                       outOf10 = ratio * 10;
                     } else {
                       outOf10 = 12.5;
@@ -618,7 +618,7 @@ summaryRouter.get("/staff-scores", (req, res) => {
       switch (kpi) {
         case "deposit":
         case "loan_gen":
-          if (ratio < 1) {
+          if (ratio <= 1) {
             outOf10 = ratio * 10;
           } else if (ratio < 1.25) {
             outOf10 = 10;
@@ -630,7 +630,7 @@ summaryRouter.get("/staff-scores", (req, res) => {
           break;
 
         case "loan_amulya":
-          if (ratio < 1) {
+          if (ratio <= 1) {
             outOf10 = ratio * 10;
           } else if (ratio < 1.25) {
             outOf10 = 10;
@@ -641,7 +641,7 @@ summaryRouter.get("/staff-scores", (req, res) => {
         case "insurance":
           if (ratio === 0) {
             outOf10 = -2;
-          } else if (ratio < 1) {
+          } else if (ratio <= 1) {
             outOf10 = ratio * 10;
           } else if (ratio < 1.25) {
             outOf10 = 10;
@@ -652,7 +652,7 @@ summaryRouter.get("/staff-scores", (req, res) => {
 
         case "recovery":
         case "audit":
-          if (ratio < 1) {
+          if (ratio <= 1) {
             outOf10 = ratio * 10;
           } else {
             outOf10 = 12.5;
@@ -1057,27 +1057,27 @@ summaryRouter.get("/staff-scores-all", (req, res) => {
     switch (kpi) {
       case "deposit":
       case "loan_gen":
-        if (ratio < 1) outOf10 = ratio * 10;
+        if (ratio <= 1) outOf10 = ratio * 10;
         else if (ratio < 1.25) outOf10 = 10;
         else outOf10 = 12.5;
         break;
 
       case "loan_amulya":
-        if (ratio < 1) outOf10 = ratio * 10;
+        if (ratio <= 1) outOf10 = ratio * 10;
         else if (ratio < 1.25) outOf10 = 10;
         else outOf10 = 12.5;
         break;
 
       case "insurance":
         if (achieved === 0) return 0;
-        if (ratio < 1) outOf10 = ratio * 10;
+        if (ratio <= 1) outOf10 = ratio * 10;
         else if (ratio < 1.25) outOf10 = 10;
         else outOf10 = 12.5;
         break;
 
       case "recovery":
       case "audit":
-        if (ratio < 1) outOf10 = ratio * 10;
+        if (ratio <= 1) outOf10 = ratio * 10;
         else outOf10 = 12.5;
         break;
 
@@ -1826,7 +1826,19 @@ summaryRouter.get("/get-salary-all-staff", (req, res) => {
     res.json(result);
   });
 });
+summaryRouter.get("/get-salary-all-agms", (req, res) => {
+  const { period, hod_id } = req.query;
+  if (!period || !hod_id)
+    return res.status(400).json({ error: "period and hod_id are required" });
+  const query = `select u.id,b.salary ,b.increment from base_salary b join users u on u.PF_NO=b.PF_NO where b.period=? and u.id=?`;
 
+  pool.query(query, [period, hod_id], (error, result) => {
+    if (error) {
+      return res.status(500).json({ error: "Internal server error" });
+    }
+    res.json(result);
+  });
+});
 summaryRouter.get("/transfer-bm-scores", (req, res) => {
   const { period, branchId } = req.query;
   if (!period || !branchId)
@@ -1845,12 +1857,14 @@ summaryRouter.get("/transfer-bm-scores", (req, res) => {
   const fy = getFY(period);
 
   pool.query(
-    `SELECT id FROM users WHERE branch_id=? AND role='BM'`,
+    `SELECT id FROM users WHERE branch_id=? AND role='BM' order by transfer_date desc`,
     [branchId],
     (err, BMRows) => {
       if (err) return res.status(500).json({ error: "Internal server error" });
+      console.log(BMRows);
+      
+      const BMID = BMRows?.[0]?.id || BMRows?.[1]?.id || 0;
 
-      const BMID = BMRows?.[0]?.id || 0;
 
       pool.query(
         `SELECT *
@@ -1867,7 +1881,7 @@ summaryRouter.get("/transfer-bm-scores", (req, res) => {
               .status(404)
               .json({ error: "BM transfer target not found" });
 
-          const bm = bmRows[0];
+          const bm = bmRows[0] || {};
           const transferDate = new Date(bm.transfer_date);
 
           function monthDiffstart(d1, d2) {
@@ -1966,7 +1980,7 @@ summaryRouter.get("/transfer-bm-scores", (req, res) => {
                           switch (kpi) {
                             case "deposit":
                             case "loan_gen":
-                              if (ratio < 1) outOf10 = ratio * 10;
+                              if (ratio <= 1) outOf10 = ratio * 10;
                               else if (ratio < 1.25) outOf10 = 10;
                               else if (
                                 auditRatio >= 0.75 &&
@@ -1979,13 +1993,13 @@ summaryRouter.get("/transfer-bm-scores", (req, res) => {
                             case "loan_amulya":
                             case "recovery":
                             case "audit":
-                              if (ratio < 1) outOf10 = ratio * 10;
+                              if (ratio <= 1) outOf10 = ratio * 10;
                               else outOf10 = 12.5;
                               break;
 
                             case "insurance":
                               if (ratio === 0) outOf10 = -2;
-                              else if (ratio < 1) outOf10 = ratio * 10;
+                              else if (ratio <= 1) outOf10 = ratio * 10;
                               else if (ratio < 1.25) outOf10 = 10;
                               else outOf10 = 12.5;
                               break;
