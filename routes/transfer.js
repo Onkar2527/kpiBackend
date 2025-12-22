@@ -407,13 +407,14 @@ transferRouter.post("/transfer-staff-master", (req, res) => {
           .json({ error: "Failed to update transfer date" });
       }
 
-
-      autoDistributeTargetsOldBranch(period, old_branchId, (err) => {
+     
+      autoDistributeTargetsOldBranch(period, old_branchId,role, (err) => {
         if (err) {
           return res
             .status(500)
             .json({ error: "Old branch distribution failed" });
         }
+      
         const {
           staff_id,
           old_branch_id,

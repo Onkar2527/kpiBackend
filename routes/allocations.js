@@ -230,232 +230,279 @@ export const autoDistributeTargetsResign = (period, branchId, callback) => {
         (err, staff) => {
           if (err) return callback(err);
           if (!staff.length) return callback(new Error("No staff found"));
+          const transferTargetMap = {
+            deposit: 0,
+            loan_gen: 0,
+            loan_amulya: 0,
+            recovery: 0,
+          };
 
-          // NEW ARRAYS
-          const transferStaff = [];
-          const newJoinStaff = [];
-          const oldStaff = [];
-          const resignedStaff = staff.filter((s) => s.resign === 1);
-          staff.forEach((s) => {
-            if (s.resign === 1) return; // Skip resigned staff
-
-            const td = s.transfer_date ? new Date(s.transfer_date) : null;
-            const jd = s.user_add_date ? new Date(s.user_add_date) : null;
-
-            if (td) {
-              if (td >= fy.start && td <= fy.end) {
-                transferStaff.push(s);
-              } else {
-                oldStaff.push(s); // Old staff
-              }
-              return;
-            }
-
-            if (jd && jd >= fy.start && jd <= fy.end) {
-              newJoinStaff.push(s);
-              return;
-            }
-
-            oldStaff.push(s);
-          });
-
-          // ACTIVE STAFF = OLD STAFF ONLY
-          const activeStaff = oldStaff;
-
-          const totalStaff =
-            activeStaff.length +
-            transferStaff.length +
-            newJoinStaff.length +
-            resignedStaff.length;
-
-          const kpis = [
-            "deposit",
-            "loan_gen",
-            "loan_amulya",
-            "recovery",
-            "insurance",
-            "audit",
-          ];
-
-          // DELETE OLD ALLOCATIONS
           pool.query(
-            "DELETE FROM allocations WHERE period = ? AND branch_id = ? AND kpi IN (?)",
-            [period, branchId, kpis],
-            (err) => {
-              if (err) return callback(err);
+            `
+           SELECT 
+            SUM(deposit_target)     AS deposit,
+            SUM(loan_gen_target)    AS loan_gen,
+            SUM(loan_amulya_target) AS loan_amulya,
+            SUM(recovery_target)    AS recovery
+          FROM employee_transfer
+          WHERE old_branch_id = ?
+            AND period = ?
+            AND old_designation <> 'BM';
 
-              let updates = [];
+            `,
+            [branchId, period],
+            (err4, rows) => {
+              if (err4) return callback(err4);
 
-              kpis.forEach((kpi) => {
-                const t = targets.find((x) => x.kpi === kpi);
-                if (!t) return;
+              const r = rows[0] || {};
 
-                const totalTarget = t.amount;
+              transferTargetMap.deposit = Number(r.deposit || 0);
+              transferTargetMap.loan_gen = Number(r.loan_gen || 0);
+              transferTargetMap.loan_amulya = Number(r.loan_amulya || 0);
+              transferTargetMap.recovery = Number(r.recovery || 0);
+              console.log(transferTargetMap);
+              
 
-                let totalResignedWorkedTarget = 0;
-                let totalTransferGiven = 0;
-                let totalNewJoinGiven = 0;
+              // NEW ARRAYS
+              const transferStaff = [];
+              const newJoinStaff = [];
+              const oldStaff = [];
+              const resignedStaff = staff.filter((s) => s.resign === 1);
+              staff.forEach((s) => {
+                if (s.resign === 1) return; // Skip resigned staff
 
-                resignedStaff.forEach((r) => {
-                  if (!r.resign_date) return;
+                const td = s.transfer_date ? new Date(s.transfer_date) : null;
+                const jd = s.user_add_date ? new Date(s.user_add_date) : null;
 
-                  const monthsWorked = getRemaingMonthsWorked(
-                    r.resign_date,
-                    periodEnd
-                  );
-
-                  if (kpi === "audit") {
-                    const auditTarget = (totalTarget / 12) * monthsWorked;
-
-                    updates.push([
-                      Math.round(auditTarget),
-                      "resigned",
-                      period,
-                      branchId,
-                      r.id,
-                      kpi,
-                    ]);
+                if (td) {
+                  if (td >= fy.start && td <= fy.end) {
+                    transferStaff.push(s);
                   } else {
-                    const { resignedTarget } = calculateTargets(
-                      totalTarget,
-                      totalStaff,
-                      1,
-                      monthsWorked
-                    );
-
-                    totalResignedWorkedTarget += resignedTarget;
-
-                    updates.push([
-                      Math.round(resignedTarget),
-                      "resigned",
-                      period,
-                      branchId,
-                      r.id,
-                      kpi,
-                    ]);
+                    oldStaff.push(s); // Old staff
                   }
-                });
-
-                transferStaff.forEach((ts) => {
-                  const months = getMonthsWorked(ts.transfer_date, periodEnd);
-
-                  if (kpi === "audit") {
-                    const auditTarget = (totalTarget / 12) * months;
-
-                    updates.push([
-                      Math.round(auditTarget),
-                      "transfer",
-                      period,
-                      branchId,
-                      ts.id,
-                      kpi,
-                    ]);
-                  } else {
-                    const perStaffAnnual = totalTarget / totalStaff;
-                    const target = (perStaffAnnual * months) / 12;
-
-                    totalTransferGiven += target;
-
-                    updates.push([
-                      Math.round(target),
-                      "transfer",
-                      period,
-                      branchId,
-                      ts.id,
-                      kpi,
-                    ]);
-                  }
-                });
-
-                newJoinStaff.forEach((nj) => {
-                  const months = getMonthsWorked(nj.user_add_date, periodEnd);
-
-                  if (kpi === "audit") {
-                    const auditTarget = (totalTarget / 12) * months;
-
-                    updates.push([
-                      Math.round(auditTarget),
-                      "new_join",
-                      period,
-                      branchId,
-                      nj.id,
-                      kpi,
-                    ]);
-                  } else {
-                    const perStaffAnnual = totalTarget / totalStaff;
-                    const target = (perStaffAnnual * months) / 12;
-
-                    totalNewJoinGiven += target;
-
-                    updates.push([
-                      Math.round(target),
-                      "new_join",
-                      period,
-                      branchId,
-                      nj.id,
-                      kpi,
-                    ]);
-                  }
-                });
-
-                if (kpi === "audit") {
-                  activeStaff.forEach((st) => {
-                    updates.push([
-                      Math.round(totalTarget),
-                      "published",
-                      period,
-                      branchId,
-                      st.id,
-                      kpi,
-                    ]);
-                  });
                   return;
                 }
 
-                const remainingTarget =
-                  totalTarget -
-                  totalResignedWorkedTarget -
-                  totalTransferGiven -
-                  totalNewJoinGiven;
+                if (jd && jd >= fy.start && jd <= fy.end) {
+                  newJoinStaff.push(s);
+                  return;
+                }
 
-                const perActive = Math.floor(
-                  activeStaff.length ? remainingTarget / activeStaff.length : 0
-                );
-
-                activeStaff.forEach((st) => {
-                  updates.push([
-                    perActive,
-                    "published",
-                    period,
-                    branchId,
-                    st.id,
-                    kpi,
-                  ]);
-                });
+                oldStaff.push(s);
               });
 
-              // UPSERT FINAL ALLOCATIONS
+              // ACTIVE STAFF = OLD STAFF ONLY
+              const activeStaff = oldStaff;
+
+              const totalStaff =
+                activeStaff.length +
+                transferStaff.length +
+                newJoinStaff.length +
+                resignedStaff.length;
+
+              const kpis = [
+                "deposit",
+                "loan_gen",
+                "loan_amulya",
+                "recovery",
+                "insurance",
+                "audit",
+              ];
+
+              // DELETE OLD ALLOCATIONS
               pool.query(
-                `
+                "DELETE FROM allocations WHERE period = ? AND branch_id = ? AND kpi IN (?)",
+                [period, branchId, kpis],
+                (err) => {
+                  if (err) return callback(err);
+
+                  let updates = [];
+
+                  kpis.forEach((kpi) => {
+                    const t = targets.find((x) => x.kpi === kpi);
+                    if (!t) return;
+
+                   const totalTarget = Math.max(
+                      0,
+                      t.amount - (transferTargetMap[kpi] || 0)
+                    );
+                   
+                    
+
+                    let totalResignedWorkedTarget = 0;
+                    let totalTransferGiven = 0;
+                    let totalNewJoinGiven = 0;
+
+                    resignedStaff.forEach((r) => {
+                      if (!r.resign_date) return;
+
+                      const monthsWorked = getRemaingMonthsWorked(
+                        r.resign_date,
+                        periodEnd
+                      );
+
+                      if (kpi === "audit" || kpi === "insurance") {
+                        const auditTarget = (totalTarget / 12) * monthsWorked;
+
+                        updates.push([
+                          Math.round(auditTarget),
+                          "resigned",
+                          period,
+                          branchId,
+                          r.id,
+                          kpi,
+                        ]);
+                      } else {
+                        const { resignedTarget } = calculateTargets(
+                          totalTarget,
+                          totalStaff,
+                          1,
+                          monthsWorked
+                        );
+
+                        totalResignedWorkedTarget += resignedTarget;
+
+                        updates.push([
+                          Math.round(resignedTarget),
+                          "resigned",
+                          period,
+                          branchId,
+                          r.id,
+                          kpi,
+                        ]);
+                      }
+                    });
+
+                    transferStaff.forEach((ts) => {
+                      const months = getMonthsWorked(
+                        ts.transfer_date,
+                        periodEnd
+                      );
+
+                      if (kpi === "audit" || kpi === "insurance") {
+                        const auditTarget = (totalTarget / 12) * months;
+
+                        updates.push([
+                          Math.round(auditTarget),
+                          "transfer",
+                          period,
+                          branchId,
+                          ts.id,
+                          kpi,
+                        ]);
+                      } else {
+                        const perStaffAnnual = totalTarget / totalStaff;
+                        const target = (perStaffAnnual * months) / 12;
+
+                        totalTransferGiven += target;
+
+                        updates.push([
+                          Math.round(target),
+                          "transfer",
+                          period,
+                          branchId,
+                          ts.id,
+                          kpi,
+                        ]);
+                      }
+                    });
+
+                    newJoinStaff.forEach((nj) => {
+                      const months = getMonthsWorked(
+                        nj.user_add_date,
+                        periodEnd
+                      );
+
+                      if (kpi === "audit" || kpi === "insurance") {
+                        const auditTarget = (totalTarget / 12) * months;
+
+                        updates.push([
+                          Math.round(auditTarget),
+                          "new_join",
+                          period,
+                          branchId,
+                          nj.id,
+                          kpi,
+                        ]);
+                      } else {
+                        const perStaffAnnual = totalTarget / totalStaff;
+                        const target = (perStaffAnnual * months) / 12;
+
+                        totalNewJoinGiven += target;
+
+                        updates.push([
+                          Math.round(target),
+                          "new_join",
+                          period,
+                          branchId,
+                          nj.id,
+                          kpi,
+                        ]);
+                      }
+                    });
+
+                    if (kpi === "audit" || kpi === "insurance") {
+                      activeStaff.forEach((st) => {
+                        updates.push([
+                          Math.round(totalTarget),
+                          "published",
+                          period,
+                          branchId,
+                          st.id,
+                          kpi,
+                        ]);
+                      });
+                      return;
+                    }
+
+                    const remainingTarget =
+                      totalTarget -
+                      totalResignedWorkedTarget -
+                      totalTransferGiven -
+                      totalNewJoinGiven;
+
+                    const perActive = Math.floor(
+                      activeStaff.length
+                        ? remainingTarget / activeStaff.length
+                        : 0
+                    );
+
+                    activeStaff.forEach((st) => {
+                      updates.push([
+                        perActive,
+                        "published",
+                        period,
+                        branchId,
+                        st.id,
+                        kpi,
+                      ]);
+                    });
+                  });
+
+                  // UPSERT FINAL ALLOCATIONS
+                  pool.query(
+                    `
                 INSERT INTO allocations (amount, state, period, branch_id, user_id, kpi)
                 VALUES ?
                 ON DUPLICATE KEY UPDATE 
                   amount = VALUES(amount),
                   state = VALUES(state)
                 `,
-                [updates],
-                (err) => {
-                  if (err) return callback(err);
+                    [updates],
+                    (err) => {
+                      if (err) return callback(err);
 
-                  callback(null, {
-                    message: "Target Update Successful",
-                    summary: {
-                      activeStaff: activeStaff.length,
-                      transferStaff: transferStaff.length,
-                      newJoinStaff: newJoinStaff.length,
-                      resignedStaff: resignedStaff.length,
-                    },
-                  });
+                      callback(null, {
+                        message: "Target Update Successful",
+                        summary: {
+                          activeStaff: activeStaff.length,
+                          transferStaff: transferStaff.length,
+                          newJoinStaff: newJoinStaff.length,
+                          resignedStaff: resignedStaff.length,
+                        },
+                      });
+                    }
+                  );
                 }
               );
             }
@@ -483,6 +530,39 @@ export const autoDistributeTargetsNewUsers = (period, branchId, callback) => {
         (err, staff) => {
           if (err) return callback(err);
           if (!staff.length) return callback(new Error("No staff found"));
+
+            const transferTargetMap = {
+            deposit: 0,
+            loan_gen: 0,
+            loan_amulya: 0,
+            recovery: 0,
+          };
+
+          pool.query(
+            `
+           SELECT 
+            SUM(deposit_target)     AS deposit,
+            SUM(loan_gen_target)    AS loan_gen,
+            SUM(loan_amulya_target) AS loan_amulya,
+            SUM(recovery_target)    AS recovery
+          FROM employee_transfer
+          WHERE old_branch_id = ?
+            AND period = ?
+            AND old_designation <> 'BM';
+
+            `,
+            [branchId, period],
+            (err4, rows) => {
+              if (err4) return callback(err4);
+
+              const r = rows[0] || {};
+
+              transferTargetMap.deposit = Number(r.deposit || 0);
+              transferTargetMap.loan_gen = Number(r.loan_gen || 0);
+              transferTargetMap.loan_amulya = Number(r.loan_amulya || 0);
+              transferTargetMap.recovery = Number(r.recovery || 0);
+              console.log(transferTargetMap);
+              
 
           // NEW SEPARATE ARRAYS
           const transferStaff = [];
@@ -537,12 +617,15 @@ export const autoDistributeTargetsNewUsers = (period, branchId, callback) => {
                 const t = targets.find((x) => x.kpi === kpi);
                 if (!t) return;
 
-                const totalTarget = t.amount;
+                const totalTarget = Math.max(
+                0,
+                t.amount - (transferTargetMap[kpi] || 0)
+              );
 
                 let totalTransferGiven = 0;
                 let totalNewJoinGiven = 0;
 
-                if (kpi === "audit") {
+                if (kpi === "audit" || kpi === "insurance") {
                   // Transfer staff audit target
                   transferStaff.forEach((ts) => {
                     const months = getMonthsWorked(ts.transfer_date, fy.end);
@@ -674,6 +757,7 @@ export const autoDistributeTargetsNewUsers = (period, branchId, callback) => {
               );
             }
           );
+          });
         }
       );
     }
@@ -753,7 +837,7 @@ async function getActualMonthsWorked(pool, staffId, userTd, fyStart) {
   return monthDiff(fy, effectiveDb);
 }
 
-export const autoDistributeTargetsOldBranch = (period, branchId, callback) => {
+export const autoDistributeTargetsOldBranch = (period, branchId,role, callback) => {
   const periodEnd = getFinancialYearEnd(period);
   const fy = getFinancialYearRange(period);
 
@@ -773,6 +857,38 @@ export const autoDistributeTargetsOldBranch = (period, branchId, callback) => {
           if (err) return callback(err);
           if (!staff.length) return callback(new Error("No staff found"));
 
+          const transferTargetMap = {
+            deposit: 0,
+            loan_gen: 0,
+            loan_amulya: 0,
+            recovery: 0,
+          };
+
+          pool.query(
+            `
+           SELECT 
+            SUM(deposit_target)     AS deposit,
+            SUM(loan_gen_target)    AS loan_gen,
+            SUM(loan_amulya_target) AS loan_amulya,
+            SUM(recovery_target)    AS recovery
+          FROM employee_transfer
+          WHERE old_branch_id = ?
+            AND period = ?
+            AND old_designation <> 'BM';
+
+            `,
+            [branchId, period],
+            (err4, rows) => {
+              if (err4) return callback(err4);
+
+              const r = rows[0] || {};
+
+              transferTargetMap.deposit = Number(r.deposit || 0);
+              transferTargetMap.loan_gen = Number(r.loan_gen || 0);
+              transferTargetMap.loan_amulya = Number(r.loan_amulya || 0);
+              transferTargetMap.recovery = Number(r.recovery || 0);
+              console.log(transferTargetMap);
+              
           const activeStaff = [];
           const resignPrevoius = [];
           const resignedStaff = [];
@@ -835,8 +951,17 @@ export const autoDistributeTargetsOldBranch = (period, branchId, callback) => {
               for (const kpi of kpis) {
                 const t = targets.find((x) => x.kpi === kpi);
                 if (!t) continue;
-
-                const totalTarget = t.amount;
+                let totalTarget
+                if(role !== 'BM'){
+                totalTarget = Math.max(
+                0,
+                t.amount - (transferTargetMap[kpi] || 0)
+              );
+            }else{
+              totalTarget=t.amount;
+            }
+              console.log(totalTarget);
+              
                 let totalResignedWorkedTarget = 0;
 
                 for (const r of resignedStaff) {
@@ -850,7 +975,7 @@ export const autoDistributeTargetsOldBranch = (period, branchId, callback) => {
                   );
                  
                   
-                  if (kpi === "audit") {
+                  if (kpi === "audit" || kpi === 'insurance') {
                     const perMonth = totalTarget / 12;
                     const resignedAuditTarget = perMonth * monthsWorked;
 
@@ -893,7 +1018,7 @@ export const autoDistributeTargetsOldBranch = (period, branchId, callback) => {
                     periodEnd
                   );
 
-                  if (kpi === "audit") {
+                  if (kpi === "audit" || kpi === 'insurance') {
                     const perMonth = totalTarget / 12;
                     const resignedAuditTarget = perMonth * monthsWorked;
 
@@ -926,7 +1051,7 @@ export const autoDistributeTargetsOldBranch = (period, branchId, callback) => {
                   }
                 }
 
-                if (kpi === "audit") {
+                if (kpi === "audit" || kpi === 'insurance') {
                   for (const st of activeStaff) {
                     updates.push([
                       Math.round(totalTarget),
@@ -950,7 +1075,7 @@ export const autoDistributeTargetsOldBranch = (period, branchId, callback) => {
                     periodEnd
                   );
 
-                  if (kpi === "audit") {
+                  if (kpi === "audit" || kpi === 'insurance') {
                     const perMonth = totalTarget / 12;
                     const resignedAuditTarget = perMonth * monthsWorked;
 
@@ -1021,6 +1146,7 @@ export const autoDistributeTargetsOldBranch = (period, branchId, callback) => {
               );
             }
           );
+          });
         }
       );
     }
@@ -1046,6 +1172,37 @@ export const autoDistributeTargetsNewBranch = (period, branchId, callback) => {
           if (err) return callback(err);
           if (!staff.length) return callback(new Error("No staff found"));
 
+            const transferTargetMap = {
+            deposit: 0,
+            loan_gen: 0,
+            loan_amulya: 0,
+            recovery: 0,
+          };
+
+          pool.query(
+            `
+           SELECT 
+            SUM(deposit_target)     AS deposit,
+            SUM(loan_gen_target)    AS loan_gen,
+            SUM(loan_amulya_target) AS loan_amulya,
+            SUM(recovery_target)    AS recovery
+          FROM employee_transfer
+          WHERE old_branch_id = ?
+            AND period = ?
+            AND old_designation <> 'BM';
+            `,
+            [branchId, period],
+            (err4, rows) => {
+              if (err4) return callback(err4);
+
+              const r = rows[0] || {};
+
+              transferTargetMap.deposit = Number(r.deposit || 0);
+              transferTargetMap.loan_gen = Number(r.loan_gen || 0);
+              transferTargetMap.loan_amulya = Number(r.loan_amulya || 0);
+              transferTargetMap.recovery = Number(r.recovery || 0);
+              console.log(transferTargetMap);
+              
           const activeStaff = [];
           const newStaff = [];
           const newStaffOnDate = [];
@@ -1093,10 +1250,15 @@ export const autoDistributeTargetsNewBranch = (period, branchId, callback) => {
                 const t = targets.find((x) => x.kpi === kpi);
                 if (!t) return;
 
-                const totalTarget = t.amount;
+               const totalTarget = Math.max(
+                0,
+                t.amount - (transferTargetMap[kpi] || 0)
+              );
                 let totalResignedWorkedTarget = 0;
+                console.log(totalTarget);
+                
 
-                if (kpi === "audit") {
+                if (kpi === "audit" || kpi === 'insurance') {
                   finalNewStaff.forEach((ns) => {
                     const months = getMonthsWorked(
                       ns.transfer_date || ns.user_add_date,
@@ -1187,6 +1349,7 @@ export const autoDistributeTargetsNewBranch = (period, branchId, callback) => {
               );
             }
           );
+        });
         }
       );
     }

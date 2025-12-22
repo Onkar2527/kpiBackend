@@ -1262,3 +1262,45 @@ performanceMasterRouter.get("/AGM-DGM-Scores", async (req, res) => {
     res.json(results);
   });
 });
+
+
+performanceMasterRouter.post('/deputation-report', (req, res) => {
+  const { period, department } = req.body;
+ 
+  let sql = `
+    SELECT
+      emp_id,
+      name,
+      place,
+      design,
+      branch,
+      work_at,
+      weightage_score,
+      department
+    FROM deputation_staff
+    WHERE 1 = 1
+  `;
+
+  const params = [];
+
+  if (department && department !== 'All') {
+    sql += ' AND department = ?';
+    params.push(department);
+  }
+
+  if (period) {
+    sql += ' AND period = ?';
+    params.push(period);
+  }
+
+  sql += ' ORDER BY department, name';
+
+  console.log(sql);
+  
+  pool.query(sql, params, (err, rows) => {
+    if (err) return res.status(500).json(err);
+    res.json(rows);
+  });
+});
+
+

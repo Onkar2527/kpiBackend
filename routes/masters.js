@@ -98,7 +98,7 @@ mastersRouter.put("/weightages", (req, res) => {
 // Users
 mastersRouter.get("/users", (req, res) => {
   pool.query(
-    "SELECT u.id, u.username, u.name, u.role, b.name as branch_name, u.PF_NO, d.name as department_name FROM users u left join branches b on u.branch_id=b.code left join departments d on d.id=u.department_id WHERE u.resign=0",
+    "SELECT u.id, u.username, u.name, u.role, b.name as branch_name, u.PF_NO, d.name as department_name,u.branch_id FROM users u left join branches b on u.branch_id=b.code left join departments d on d.id=u.department_id WHERE u.resign=0",
     (error, results) => {
       if (error)
         return res.status(500).json({ error: "Internal server error" });

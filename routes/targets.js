@@ -1366,3 +1366,102 @@ function getFinancialYearRange2(period) {
     end: new Date(Date.UTC(s + 1, 2, 1)), 
   };
 }
+
+
+targetsRouter.post(
+  "/upload-deputation-staff",
+  upload.single("deputationFile"),
+  (req, res) => {
+    if (!req.file)
+      return res.status(400).json({ error: "deputationFile required" });
+
+    const results = [];
+
+    Readable.from(req.file.buffer)
+      .pipe(csv())
+      .on("data", (row) => results.push(row))
+      .on("end", () => {
+        if (!results.length)
+          return res.status(400).json({ error: "CSV file is empty" });
+
+        const values = results.map((row) => [
+          (row.emp_id || "").trim(),
+          (row.name || "").trim(),
+          (row.place || "").trim(),
+          (row.design || "").trim(),
+          (row.branch || "").trim(),
+          (row.work_at || "").trim(),
+          row.weightage_score === "" || row.weightage_score == null
+            ? 0
+            : Number(row.weightage_score),
+          (row.department || "").trim(),
+          (row.period || "").trim(),
+        ]);
+
+        const empIds = [...new Set(values.map(v => v[0]))];
+        const periods = [...new Set(values.map(v => v[8]))];
+
+        if (!periods.length || !periods[0]) {
+          return res.status(400).json({ error: "Period missing in CSV" });
+        }
+
+        const empPlaceholders = empIds.map(() => "?").join(",");
+        const periodPlaceholders = periods.map(() => "?").join(",");
+
+        const deleteQuery = `
+          DELETE FROM deputation_staff
+          WHERE emp_id IN (${empPlaceholders})
+          AND period IN (${periodPlaceholders})
+        `;
+
+        pool.getConnection((connErr, conn) => {
+          if (connErr) return res.status(500).json(connErr);
+
+          conn.beginTransaction((txErr) => {
+            if (txErr) {
+              conn.release();
+              return res.status(500).json(txErr);
+            }
+
+            conn.query(
+              deleteQuery,
+              [...empIds, ...periods],
+              (delErr) => {
+                if (delErr) {
+                  return conn.rollback(() => {
+                    conn.release();
+                    res.status(500).json({ error: "Delete failed" });
+                  });
+                }
+
+                const insertQuery = `
+                  INSERT INTO deputation_staff
+                  (emp_id, name, place, design, branch, work_at, weightage_score, department, period)
+                  VALUES ?
+                `;
+
+                conn.query(insertQuery, [values], (insErr) => {
+                  if (insErr) {
+                    return conn.rollback(() => {
+                      conn.release();
+                      res.status(500).json({ error: "Insert failed" });
+                    });
+                  }
+
+                  conn.commit(() => {
+                    conn.release();
+                    res.json({
+                      ok: true,
+                      inserted: values.length,
+                      periods,
+                    });
+                  });
+                });
+              }
+            );
+          });
+        });
+      });
+  }
+);
+
