@@ -982,7 +982,7 @@ mastersRouter.post("/update_employee_transfer_Transfered", (req, res) => {
 });
 mastersRouter.get("/get-AGM", (req, res) => {
   pool.query(
-    ` select id , username from users where role in ('AGM','DGM','AGM_AUDIT','AGM_INSURANCE','AGM_IT')`,
+    ` select id , username,name from users where role in ('AGM','DGM','AGM_AUDIT','AGM_INSURANCE','AGM_IT')`,
     (error, results) => {
       if (error)
         return res.status(500).json({ error: "Internal server error" });

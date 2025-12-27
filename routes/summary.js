@@ -2064,42 +2064,22 @@ summaryRouter.get("/transfer-bm-scores", (req, res) => {
 });
 
 summaryRouter.get("/branch-attenders", async (req, res) => {
-  const { period, branchId } = req.query;
+  const { period, branchId, hod_id } = req.query;
 
-  if (!period || !branchId) {
-    return res.status(400).json({ error: "period and branchId are required" });
+  if (!period) {
+    return res.status(400).json({ error: "period is required" });
   }
 
   try {
-    const kpiQuery = `
-      SELECT 
-        k.kpi_name,
-        r.id AS role_kpi_mapping_id,
-        r.weightage
-      FROM role_kpi_mapping r
-      JOIN kpi_master k ON r.kpi_id = k.id
-      WHERE r.role = 'Attender'
-    `;
-
+    
     const attenderKpis = await new Promise((resolve, reject) => {
-      pool.query(kpiQuery, (err, rows) => {
-        if (err) return reject(err);
-        resolve(rows);
-      });
-    });
-
-    const kpiMap = {};
-    attenderKpis.forEach((k) => {
-      kpiMap[k.kpi_name] = {
-        id: k.role_kpi_mapping_id,
-        weightage: k.weightage,
-      };
-    });
-
-    const users = await new Promise((resolve, reject) => {
       pool.query(
-        "SELECT id, name FROM users WHERE branch_id = ? AND role = 'Attender'",
-        [branchId],
+        `
+        SELECT k.kpi_name, r.id AS role_kpi_mapping_id, r.weightage
+        FROM role_kpi_mapping r
+        JOIN kpi_master k ON r.kpi_id = k.id
+        WHERE r.role = 'Attender'
+        `,
         (err, rows) => {
           if (err) return reject(err);
           resolve(rows);
@@ -2107,99 +2087,131 @@ summaryRouter.get("/branch-attenders", async (req, res) => {
       );
     });
 
-    if (!users.length) {
-      return res.json([]);
-    }
+    if (!attenderKpis.length) return res.json([]);
 
-    const response = [];
+    const kpiMap = {};
+    attenderKpis.forEach(k => {
+      kpiMap[k.kpi_name] = k;
+    });
 
-    for (const user of users) {
-      const finalKpis = {};
+    const normalizedBranchId =
+    branchId && branchId !== 'null' && branchId !== 'undefined'
+      ? branchId
+      : null;
 
-      const cleanliness = kpiMap["Cleanliness"]
-        ? await new Promise((resolve, reject) => {
+      const users = await new Promise((resolve, reject) => {
+      let sql, params;
+
+      if (normalizedBranchId) {
+        sql = "SELECT id, name FROM users WHERE branch_id=? AND role='Attender'";
+        params = [normalizedBranchId];
+      } else {
+        sql = "SELECT id, name FROM users WHERE hod_id=? AND role='Attender'";
+        params = [hod_id];
+      }
+
+      pool.query(sql, params, (err, rows) => {
+        if (err) return reject(err);
+        resolve(rows);
+      });
+    });
+
+    
+    if (!users.length) return res.json([]);
+
+  
+    const response = await Promise.all(
+      users.map(async (user) => {
+        const [userKpis, insuranceRow] = await Promise.all([
+          new Promise((resolve, reject) => {
             pool.query(
-              "SELECT SUM(value) AS total FROM user_kpi_entry WHERE role_kpi_mapping_id=? AND user_id=? AND period=?",
-              [kpiMap["Cleanliness"].id, user.id, period],
+              `
+              SELECT role_kpi_mapping_id, SUM(value) AS total
+              FROM user_kpi_entry
+              WHERE user_id=? AND period=?
+              GROUP BY role_kpi_mapping_id
+              `,
+              [user.id, period],
               (err, rows) => {
                 if (err) return reject(err);
-                resolve(Number(rows[0].total || 0));
+                const map = {};
+                rows.forEach(r => map[r.role_kpi_mapping_id] = Number(r.total || 0));
+                resolve(map);
+              }
+            );
+          }),
+          new Promise((resolve, reject) => {
+            pool.query(
+              `
+              SELECT SUM(value) AS total
+              FROM entries
+              WHERE kpi='insurance' AND employee_id=? AND period=?
+              `,
+              [user.id, period],
+              (err, rows) => {
+                if (err) return reject(err);
+                resolve(Number(rows[0]?.total || 0));
               }
             );
           })
-        : 0;
+        ]);
 
-      const behavior = kpiMap["Attitude, Behavior & Discipline"]
-        ? await new Promise((resolve, reject) => {
-            pool.query(
-              "SELECT SUM(value) AS total FROM user_kpi_entry WHERE role_kpi_mapping_id=? AND user_id=? AND period=?",
-              [kpiMap["Attitude, Behavior & Discipline"].id, user.id, period],
-              (err, rows) => {
-                if (err) return reject(err);
-                resolve(Number(rows[0].total || 0));
-              }
-            );
-          })
-        : 0;
+       
+        const finalKpis = {};
+        let totalScore = 0;
 
-      const insurance = await new Promise((resolve, reject) => {
-        pool.query(
-          "SELECT SUM(value) AS total FROM entries WHERE kpi='insurance' AND employee_id=? AND period=?",
-          [user.id, period],
-          (err, rows) => {
-            if (err) return reject(err);
-            resolve(Number(rows[0].total || 0));
+        for (const kpi of attenderKpis) {
+          let achieved = 0;
+          let target = kpi.weightage;
+
+          if (kpi.kpi_name === "Cleanliness") {
+            achieved = userKpis[kpi.role_kpi_mapping_id] || 0;
           }
-        );
-      });
-      let totalScore = 0;
-      attenderKpis.forEach((kpi, index) => {
-        let achieved = 0;
-        let target = 0;
 
-        if (index === 0) {
-          achieved = cleanliness;
-          target = kpi.weightage;
-        }
-        if (index === 1) {
-          achieved = behavior;
-          target = kpi.weightage;
-        }
-        if (index === 2) {
-          achieved = insurance;
-          target = 40000;
-        }
+          if (kpi.kpi_name === "Attitude, Behavior & Discipline") {
+            achieved = userKpis[kpi.role_kpi_mapping_id] || 0;
+          }
 
-        let score = 0;
-        if (achieved > 0) {
-          const ratio = achieved / target;
-          if (ratio <= 1) score = ratio * 10;
-          else if (ratio <= 1.25) score = 10;
-          else score = 12.5;
-        }
+          if (kpi.kpi_name.toLowerCase().includes("insurance")) {
+            achieved = insuranceRow;
+            target = 40000;
+          }
 
-        finalKpis[kpi.kpi_name] = {
-          target,
-          achieved,
-          weightage: kpi.weightage,
-          score,
-          weightageScore:
-            kpi.kpi_name === "Insurance Target" && achieved === 0
+          let score = 0;
+          if (achieved > 0) {
+            const ratio = achieved / target;
+            if (ratio <= 1) score = ratio * 10;
+            else if (ratio <= 1.25) score = 10;
+            else score = 12.5;
+          }
+
+          const weightageScore =
+            kpi.kpi_name.toLowerCase().includes("insurance") && achieved === 0
               ? -2
-              : (score * kpi.weightage) / 100,
-        };
-        totalScore += finalKpis[kpi.kpi_name].weightageScore;
-      });
+              : (score * kpi.weightage) / 100;
 
-      response.push({
-        staffId: user.id,
-        staffName: user.name,
-        total: totalScore,
-        kpis: finalKpis,
-      });
-    }
+          finalKpis[kpi.kpi_name] = {
+            target,
+            achieved,
+            weightage: kpi.weightage,
+            score,
+            weightageScore,
+          };
+
+          totalScore += weightageScore;
+        }
+
+        return {
+          staffId: user.id,
+          staffName: user.name,
+          total: Number(totalScore.toFixed(2)),
+          kpis: finalKpis,
+        };
+      })
+    );
 
     res.json(response);
+
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: "Internal server error" });
