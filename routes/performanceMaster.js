@@ -1417,9 +1417,7 @@ performanceMasterRouter.post("/save-or-update-ho-staff-kpi", (req, res) => {
 //   });
 // });
 
-performanceMasterRouter.post(
-  "/get-Total-Ho_staff-details",
-  async (req, res) => {
+performanceMasterRouter.post("/get-Total-Ho_staff-details",async (req, res) => {
     const { hod_id, period } = req.body;
 
     if (!hod_id || !period) {
@@ -1988,7 +1986,8 @@ const calculateHodAllScores = async (
         weightageScore: Number(weightageScore.toFixed(2)),
       };
     }
-
+    
+    
     return {
       hod_id,
       period,
@@ -2081,10 +2080,979 @@ performanceMasterRouter.post("/deputation-report", (req, res) => {
 
   sql += " ORDER BY department, name";
 
-  console.log(sql);
-
   pool.query(sql, params, (err, rows) => {
     if (err) return res.status(500).json(err);
     res.json(rows);
   });
+});
+performanceMasterRouter.post("/getAllBranchesScore", async (req, res) => {
+  const { period } = req.body;
+
+  if (!period) {
+    return res.status(400).json({ error: "period is required" });
+  }
+
+  try {
+    const branchReportData = {};
+
+   
+    const branches = await new Promise((resolve, reject) => {
+      pool.query(
+        `SELECT code, name FROM branches`,
+        (err, rows) => {
+          if (err) return reject(err);
+          resolve(rows);
+        }
+      );
+    });
+
+
+    const branchesWithScore = await Promise.all(
+      branches.map(async (branch) => {
+        try {
+          // Fetch BM
+          const bmRows = await new Promise((resolve, reject) => {
+            pool.query(
+              `SELECT PF_NO, name FROM users WHERE role='BM' AND branch_id = ?`,
+              [branch.code],
+              (err, rows) => {
+                if (err) return reject(err);
+                resolve(rows);
+              }
+            );
+          });
+
+          const bm = bmRows[0] || null;
+
+        
+          const branchScore = await calculateBMScores(period, branch.code);
+         
+          
+          return {
+            ...branch,
+            bmId: bm?.PF_NO ?? null,
+            bmName: bm?.name ?? null,
+            bmTotalScore: branchScore?.total ?? 0,
+          };
+        } catch (err) {
+          console.error(`BM score failed for branch ${branch.code}`, err);
+          return {
+            ...branch,
+            bmId: null,
+            bmName: null,
+            bmTotalScore: 0,
+          };
+        }
+      })
+    );
+
+    branchReportData.totalBranches = branchesWithScore;
+    branchReportData.totalBranchesCount = branchesWithScore.length;
+
+    res.json(branchReportData);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({
+      error: "Failed to load branch report data",
+    });
+  }
+});
+//single clerk kpi score
+function calculateStaffScoresCb(period, employeeId, branchId, callback) {
+  // STEP 1: allocations + achieved
+  pool.query(
+    `
+    SELECT a.kpi, a.amount AS target, w.weightage, e.total_achieved AS achieved
+    FROM (SELECT kpi, amount, user_id FROM allocations WHERE period = ? AND user_id = ?) AS a
+    LEFT JOIN (
+      SELECT kpi, SUM(value) AS total_achieved
+      FROM entries
+      WHERE period = ? AND employee_id = ? AND status = 'Verified'
+      GROUP BY kpi
+    ) AS e ON a.kpi = e.kpi
+    LEFT JOIN weightage w ON a.kpi = w.kpi
+    `,
+    [period, employeeId, period, employeeId],
+    (err, results) => {
+      if (err) return callback(err);
+
+      // STEP 2: branch targets
+      pool.query(
+        `
+        SELECT t.kpi, t.amount AS target, w.weightage, e.total_achieved AS achieved
+        FROM (SELECT kpi, amount FROM targets WHERE period = ? AND branch_id = ? AND kpi IN ('deposit','loan_gen','loan_amulya','recovery','audit','insurance')) AS t
+        LEFT JOIN (
+          SELECT kpi, SUM(value) AS total_achieved
+          FROM entries
+          WHERE period = ? AND branch_id = ? AND status = 'Verified'
+          GROUP BY kpi
+        ) AS e ON t.kpi = e.kpi
+        LEFT JOIN weightage w ON t.kpi = w.kpi
+        `,
+        [period, branchId, period, branchId],
+        (err, branchResults) => {
+          if (err) return callback(err);
+
+          // STEP 3: insurance achieved (employee specific)
+          pool.query(
+            `
+            SELECT SUM(value) AS achieved
+            FROM entries
+            WHERE period = ? AND employee_id = ? AND kpi = 'insurance'
+            `,
+            [period, employeeId],
+            (err, insRows) => {
+              if (err) return callback(err);
+
+              const insuranceAchieved = insRows?.[0]?.achieved || 0;
+
+              branchResults.forEach((row) => {
+                if (row.kpi === "insurance") {
+                  row.achieved = insuranceAchieved;
+                }
+              });
+
+              // STEP 4: score calculation
+              const scores = {};
+              let totalWeightageScore = 0;
+
+              results.forEach((row) => {
+                if (row.kpi === "recovery") {
+                  const br = branchResults.find(
+                    (b) => b.kpi === "recovery"
+                  );
+                  if (br) {
+                    row.target = br.target;
+                    row.achieved = br.achieved;
+                  }
+                }
+
+                const score = calculateScore(
+                  row.kpi,
+                  row.achieved,
+                  row.target
+                );
+
+                const weightageScore =
+                  row.kpi === "insurance" && score === 0
+                    ? -2
+                    : (score * row.weightage) / 100;
+
+                scores[row.kpi] = {
+                  score,
+                  target: row.target || 0,
+                  achieved: row.achieved || 0,
+                  weightage: row.weightage || 0,
+                  weightageScore,
+                };
+
+                totalWeightageScore += weightageScore;
+              });
+
+              scores.total = totalWeightageScore;
+
+              callback(null, scores);
+            }
+          );
+        }
+      );
+    }
+  );
+}
+function calculateScore(kpi, achieved, target) {
+  let outOf10 = 0;
+  if (!target) return 0;
+
+  const ratio = achieved / target;
+
+  switch (kpi) {
+    case "deposit":
+    case "loan_gen":
+      outOf10 = ratio <= 1 ? ratio * 10 : ratio < 1.25 ? 10 : 12.5;
+      break;
+
+    case "loan_amulya":
+      outOf10 = ratio <= 1 ? ratio * 10 : ratio < 1.25 ? 10 : 12.5;
+      break;
+
+    case "insurance":
+      if (ratio === 0) outOf10 = -2;
+      else outOf10 = ratio <= 1 ? ratio * 10 : ratio < 1.25 ? 10 : 12.5;
+      break;
+
+    case "recovery":
+    case "audit":
+      outOf10 = ratio <= 1 ? ratio * 10 : 12.5;
+      break;
+  }
+
+  return Math.max(0, Math.min(12.5, isNaN(outOf10) ? 0 : outOf10));
+}
+
+//single hostaff 
+function calculateSpecificAllStaffScoresCb(
+  period,
+  ho_staff_id,
+  role,
+  callback
+) {
+ 
+  const kpiWeightageQuery = `
+    SELECT 
+      rkm.id AS role_kpi_mapping_id,
+      km.kpi_name,
+      rkm.weightage
+    FROM role_kpi_mapping rkm
+    JOIN kpi_master km ON km.id = rkm.kpi_id
+    WHERE rkm.role = ? AND rkm.deleted_at IS NULL
+  `;
+
+  pool.query(kpiWeightageQuery, [role], (err, kpiWeightage) => {
+    if (err) return callback(err);
+    if (!kpiWeightage.length)
+      return callback(new Error("No KPI found for this role"));
+
+ 
+    const userEntryQuery = `
+      SELECT 
+        role_kpi_mapping_id, 
+        value AS achieved 
+      FROM user_kpi_entry 
+      WHERE period = ? AND user_id = ? AND deleted_at IS NULL
+    `;
+
+    pool.query(
+      userEntryQuery,
+      [period, ho_staff_id],
+      (err2, userEntries) => {
+        if (err2) return callback(err2);
+
+        
+        const insuranceQuery = `
+          SELECT value AS achieved 
+          FROM entries 
+          WHERE kpi='insurance' AND employee_id = ?
+        `;
+
+        pool.query(
+          insuranceQuery,
+          [ho_staff_id],
+          (err3, insuranceRows) => {
+            if (err3) return callback(err3);
+
+            const insuranceValue = insuranceRows.length
+              ? Number(insuranceRows[0].achieved)
+              : 0;
+
+            const achievedMap = {};
+            userEntries.forEach(
+              (e) => (achievedMap[e.role_kpi_mapping_id] = e.achieved)
+            );
+
+           
+            let totalWeightageScore = 0;
+            const scores = {};
+
+            kpiWeightage.forEach((row) => {
+              const { role_kpi_mapping_id, kpi_name, weightage } = row;
+
+              let achieved = 0;
+
+              if (kpi_name.toLowerCase() === "insurance") {
+                achieved = insuranceValue;
+              } else {
+                achieved =
+                  parseFloat(achievedMap[role_kpi_mapping_id]) || 0;
+              }
+
+              const target =
+                kpi_name.toLowerCase() === "insurance"
+                  ? 40000
+                  : weightage;
+
+              let score = 0;
+              if (achieved > 0) {
+                const ratio = achieved / target;
+                if (ratio <= 1) score = ratio * 10;
+                else if (ratio < 1.25) score = 10;
+                else score = 12.5;
+              }
+
+              let weightageScore = (score * weightage) / 100;
+
+              if (kpi_name.toLowerCase() === "insurance" && score === 0) {
+                weightageScore = -2;
+              }
+
+              totalWeightageScore += weightageScore;
+
+              scores[kpi_name] = {
+                score: Number(score.toFixed(2)),
+                achieved,
+                weightage,
+                weightageScore: Number(weightageScore.toFixed(2)),
+              };
+            });
+
+            scores.total = Number(totalWeightageScore.toFixed(2));
+
+            callback(null, scores);
+          }
+        );
+      }
+    );
+  });
+}
+
+//attender score
+async function getBranchAttendersScores(period, branchId, hod_id) {
+  if (!period) {
+    throw new Error("period is required");
+  }
+
+  
+ 
+  const attenderKpis = await new Promise((resolve, reject) => {
+    pool.query(
+      `
+      SELECT k.kpi_name, r.id AS role_kpi_mapping_id, r.weightage
+      FROM role_kpi_mapping r
+      JOIN kpi_master k ON r.kpi_id = k.id
+      WHERE r.role = 'Attender'
+      `,
+      (err, rows) => {
+        if (err) return reject(err);
+        resolve(rows);
+      }
+    );
+  });
+
+  if (!attenderKpis.length) return [];
+
+  
+  const normalizedBranchId =
+    branchId && branchId !== "null" && branchId !== "undefined"
+      ? branchId
+      : null;
+
+  
+  const users = await new Promise((resolve, reject) => {
+    let sql, params;
+
+    if (normalizedBranchId) {
+      sql = "SELECT id, name FROM users WHERE branch_id=? AND role='Attender'";
+      params = [normalizedBranchId];
+    } else {
+      sql = "SELECT id, name FROM users WHERE hod_id=? AND role='Attender'";
+      params = [hod_id];
+    }
+
+    pool.query(sql, params, (err, rows) => {
+      if (err) return reject(err);
+      resolve(rows);
+    });
+  });
+
+  if (!users.length) return [];
+
+  
+  const response = await Promise.all(
+    users.map(async (user) => {
+      const [userKpis, insuranceRow] = await Promise.all([
+        // Manual KPIs
+        new Promise((resolve, reject) => {
+          pool.query(
+            `
+            SELECT role_kpi_mapping_id, SUM(value) AS total
+            FROM user_kpi_entry
+            WHERE user_id=? AND period=?
+            GROUP BY role_kpi_mapping_id
+            `,
+            [user.id, period],
+            (err, rows) => {
+              if (err) return reject(err);
+              const map = {};
+              rows.forEach(
+                (r) => (map[r.role_kpi_mapping_id] = Number(r.total || 0))
+              );
+              resolve(map);
+            }
+          );
+        }),
+
+        // Insurance
+        new Promise((resolve, reject) => {
+          pool.query(
+            `
+            SELECT SUM(value) AS total
+            FROM entries
+            WHERE kpi='insurance' AND employee_id=? AND period=?
+            `,
+            [user.id, period],
+            (err, rows) => {
+              if (err) return reject(err);
+              resolve(Number(rows[0]?.total || 0));
+            }
+          );
+        }),
+      ]);
+
+      const finalKpis = {};
+      let totalScore = 0;
+
+      for (const kpi of attenderKpis) {
+        let achieved = 0;
+        let target = kpi.weightage;
+
+        if (
+          kpi.kpi_name === "Cleanliness" ||
+          kpi.kpi_name === "Attitude, Behavior & Discipline"
+        ) {
+          achieved = userKpis[kpi.role_kpi_mapping_id] || 0;
+        }
+
+        if (kpi.kpi_name.toLowerCase().includes("insurance")) {
+          achieved = insuranceRow;
+          target = 40000;
+        }
+
+        let score = 0;
+        if (achieved > 0) {
+          const ratio = achieved / target;
+          if (ratio <= 1) score = ratio * 10;
+          else if (ratio <= 1.25) score = 10;
+          else score = 12.5;
+        }
+
+        const weightageScore =
+          kpi.kpi_name.toLowerCase().includes("insurance") && achieved === 0
+            ? -2
+            : (score * kpi.weightage) / 100;
+
+        finalKpis[kpi.kpi_name] = {
+          target,
+          achieved,
+          weightage: kpi.weightage,
+          score,
+          weightageScore,
+        };
+
+        totalScore += weightageScore;
+        
+        
+      }
+      return {
+        staffId: user.id,
+        staffName: user.name,
+        total: Number(totalScore.toFixed(2)),
+        kpis: finalKpis,
+      };
+    })
+  );
+
+  return response;
+}
+
+
+//user report
+// performanceMasterRouter.post("/getAllUserReport", (req, res) => {
+//   const { period } = req.body;
+
+//   if (!period) {
+//     return res.status(400).json({ error: "period is required" });
+//   }
+
+//   const agmScores = [];
+//   let gmUser = null;
+
+//   pool.query(
+//     `
+//     SELECT u.id, u.username, u.name, u.role, u.branch_id, u.hod_id,b.name as branch_name
+//     FROM users u left join branches b on u.branch_id=b.id
+//     WHERE u.role IN (
+//       "BM","Clerk","HO_STAFF","GM",
+//       "AGM","DGM","AGM_IT","AGM_AUDIT","AGM_INSURANCE",
+//       "Attender"
+//     )
+//     `,
+//     (err, users) => {
+//       if (err) {
+//         console.error(err);
+//         return res.status(500).json({ error: "Failed to load users" });
+//       }
+
+//       if (!users.length) {
+//         return res.json({ totalUsers: 0, users: [] });
+//       }
+
+//       const results = [];
+//       let completed = 0;
+
+//       const done = () => {
+//         completed++;
+
+//         if (completed === users.length) {
+
+//           if (gmUser && agmScores.length) {
+//             const totalAGMs = agmScores.length || 1;
+//             const totalWeightage = 100;
+//             const perAGMWeightage = totalWeightage / totalAGMs;
+
+//             const gmFinalTotal = agmScores.reduce((acc, agm) => {
+//               const weightageScore =
+//                 (agm.total * perAGMWeightage) / 100;
+//               return acc + weightageScore;
+//             }, 0);
+
+//             results.push({
+//               ...gmUser,
+//               bmTotalScore: Number(gmFinalTotal.toFixed(2)),
+//             });
+//           }
+
+//           return res.json({
+//             totalUsers: results.length,
+//             users: results,
+//           });
+//         }
+//       };
+
+//       users.forEach((user) => {
+
+     
+//         if (user.role === "GM") {
+//           gmUser = user;
+//           done();
+//         }
+
+        
+//         else if (user.role === "BM") {
+//           calculateBMScores(period, user.branch_id)
+//             .then((bmScore) => {
+//               results.push({
+//                 ...user,
+//                 bmTotalScore: bmScore?.total ?? 0,
+//               });
+//               done();
+//             })
+//             .catch(() => {
+//               results.push({ ...user, bmTotalScore: 0 });
+//               done();
+//             });
+//         }
+
+    
+//         else if (user.role === "Clerk") {
+//           calculateStaffScoresCb(
+//             period,
+//             user.id,
+//             user.branch_id,
+//             (err, clerkScore) => {
+//               results.push({
+//                 ...user,
+//                 bmTotalScore: err ? 0 : clerkScore?.total ?? 0,
+//               });
+//               done();
+//             }
+//           );
+//         }
+
+      
+//         else if (user.role === "HO_STAFF") {
+//           calculateSpecificAllStaffScoresCb(
+//             period,
+//             user.id,
+//             user.role,
+//             (err, hoStaffScore) => {
+//               results.push({
+//                 ...user,
+//                 bmTotalScore: err ? 0 : hoStaffScore?.total ?? 0,
+//               });
+//               done();
+//             }
+//           );
+//         }
+
+//         else if (
+//           ["AGM","DGM","AGM_IT","AGM_AUDIT","AGM_INSURANCE"].includes(user.role)
+//         ) {
+//           calculateHodAllScores(
+//             pool,
+//             period,
+//             user.id,
+//             user.role,
+//             calculateStaffScores,
+//             calculateBMScores
+//           )
+//             .then((hodScore) => {
+//               const total = hodScore?.total ?? 0;
+
+//               agmScores.push({
+//                 userId: user.id,
+//                 role: user.role,
+//                 total,
+//               });
+
+//               results.push({
+//                 ...user,
+//                 bmTotalScore: total,
+//               });
+
+//               done();
+//             })
+//             .catch(() => {
+//               agmScores.push({
+//                 userId: user.id,
+//                 role: user.role,
+//                 total: 0,
+//               });
+
+//               results.push({
+//                 ...user,
+//                 bmTotalScore: 0,
+//               });
+
+//               done();
+//             });
+//         }
+
+     
+//         else if (user.role === "Attender") {
+//           getBranchAttendersScores(
+//             period,
+//             user.branch_id,
+//             user.hod_id
+//           )
+//             .then((attenders) => {
+//               const current = attenders.find(
+//                 (a) => a.staffId === user.id
+//               );
+
+//               results.push({
+//                 ...user,
+//                 bmTotalScore: current?.total ?? 0,
+//               });
+
+//               done();
+//             })
+//             .catch(() => {
+//               results.push({ ...user, bmTotalScore: 0 });
+//               done();
+//             });
+//         }
+
+        
+//         else {
+//           results.push({ ...user, bmTotalScore: 0 });
+//           done();
+//         }
+//       });
+//     }
+//   );
+// });
+function getAllUsers(pool, cb) {
+  pool.query(
+    `
+    SELECT u.id, u.username, u.name, u.role,
+           u.branch_id, u.hod_id,
+           b.name AS branch_name
+    FROM users u
+    LEFT JOIN branches b ON u.branch_id = b.id
+    WHERE u.role IN (
+      "BM","Clerk","HO_STAFF","GM",
+      "AGM","DGM","AGM_IT","AGM_AUDIT","AGM_INSURANCE",
+      "Attender"
+    )
+    `,
+    cb
+  );
+}
+
+performanceMasterRouter.post("/usersBM", async (req, res) => {
+  const { period } = req.body;
+
+  getAllUsers(pool, async (err, users) => {
+    if (err) {
+      return res.status(500).json({ error: "Failed to load users" });
+    }
+
+    const list = users.filter(u => u.role === "BM");
+
+    const result = await Promise.all(
+      list.map(async (u) => {
+        const branchId = Number(u.branch_id);
+        const score = await calculateBMScores(
+          String(period),
+          branchId
+        );
+
+        return {
+          ...u,
+          bmTotalScore: score?.total ?? 0
+        };
+      })
+    );
+
+    res.json({ users: result });
+  });
+});
+
+performanceMasterRouter.post("/usersClerk", (req, res) => {
+  const { period } = req.body;
+
+  getAllUsers(pool, async (err, users) => {
+    if (err) {
+      return res.status(500).json({ error: "Failed to load users" });
+    }
+
+    const list = users.filter(u => u.role === "Clerk");
+
+    const result = await Promise.all(
+      list.map(u =>
+        new Promise(resolve => {
+          calculateStaffScoresCb(
+            (period),        
+            (u.id),
+            (u.branch_id),
+            (err, clerkScore) => {
+              resolve({
+                ...u,
+                bmTotalScore: err ? 0 : clerkScore?.total ?? 0
+              });
+            }
+          );
+        })
+      )
+    );
+
+    res.json({ users: result });
+  });
+});
+
+performanceMasterRouter.post("/usersHOStaff", (req, res) => {
+  const { period } = req.body;
+
+  getAllUsers(pool, async (err, users) => {
+    if (err) {
+      return res.status(500).json({ error: "Failed to load users" });
+    }
+
+    const list = users.filter(u => u.role === "HO_STAFF");
+
+    const result = await Promise.all(
+      list.map(u =>
+        new Promise(resolve => {
+          calculateSpecificAllStaffScoresCb(
+            String(period),          // ✅ primitive
+            Number(u.id),
+            u.role,
+            (err, hoStaffScore) => {
+              resolve({
+                ...u,
+                bmTotalScore: err ? 0 : hoStaffScore?.total ?? 0
+              });
+            }
+          );
+        })
+      )
+    );
+
+    res.json({ users: result });
+  });
+});
+
+
+performanceMasterRouter.post("/usersAttender", (req, res) => {
+  const { period } = req.body;
+
+  getAllUsers(pool, async (err, users) => {
+    if (err) {
+      return res.status(500).json({ error: "Failed to load users" });
+    }
+
+    const list = users.filter(u => u.role === "Attender");
+
+    const result = await Promise.all(
+      list.map(async (u) => {
+        try {
+          const attenders = await getBranchAttendersScores(
+            String(period),           
+            Number(u.branch_id),
+            Number(u.hod_id)
+          );
+
+          const current = attenders.find(
+            (a) => a.staffId === u.id
+          );
+
+          return {
+            ...u,
+            bmTotalScore: current?.total ?? 0
+          };
+        } catch (err) {
+          return {
+            ...u,
+            bmTotalScore: 0
+          };
+        }
+      })
+    );
+
+    res.json({ users: result });
+  });
+});
+
+performanceMasterRouter.post("/usersAgmGm", (req, res) => {
+  const { period } = req.body;
+
+  getAllUsers(pool, async (err, users) => {
+    if (err) {
+      return res.status(500).json({ error: "Failed to load users" });
+    }
+
+    const agmUsers = users.filter(u =>
+      ["AGM","DGM","AGM_IT","AGM_AUDIT","AGM_INSURANCE"].includes(u.role)
+    );
+
+    const gmUser = users.find(u => u.role === "GM") || null;
+
+    const agmScores = [];
+
+    /* ---------- AGM SCORES (PARALLEL) ---------- */
+    const agmResults = await Promise.all(
+      agmUsers.map(async (u) => {
+        try {
+          const hodScore = await calculateHodAllScores(
+            pool,
+            String(period),          // ✅ primitive
+            Number(u.id),
+            u.role,
+            calculateStaffScores,
+            calculateBMScores
+          );
+
+          const total = hodScore?.total ?? 0;
+          agmScores.push(total);
+
+          return {
+            ...u,
+            bmTotalScore: total
+          };
+        } catch (err) {
+          agmScores.push(0);
+          return {
+            ...u,
+            bmTotalScore: 0
+          };
+        }
+      })
+    );
+
+    /* ---------- GM CALCULATION (UNCHANGED LOGIC) ---------- */
+    const results = [...agmResults];
+
+    if (gmUser && agmScores.length) {
+      const per = 100 / agmScores.length;
+      const gmScore = agmScores.reduce(
+        (sum, a) => sum + (a * per) / 100,
+        0
+      );
+
+      results.push({
+        ...gmUser,
+        bmTotalScore: Number(gmScore.toFixed(2))
+      });
+    }
+
+    res.json({ users: results });
+  });
+});
+
+
+
+
+//departmentwise report
+performanceMasterRouter.post("/getAllBranchesScoreSectionsWise", async (req, res) => {
+  const { period , department} = req.body;
+
+  if (!period) {
+    return res.status(400).json({ error: "period is required" });
+  }
+
+  try {
+    const branchReportData = {};
+
+   
+    const branches = await new Promise((resolve, reject) => {
+      pool.query(
+        `SELECT code, name FROM branches`,
+        (err, rows) => {
+          if (err) return reject(err);
+          resolve(rows);
+        }
+      );
+    });
+
+
+    const branchesWithScore = await Promise.all(
+      branches.map(async (branch) => {
+        try {
+          // Fetch BM
+          const bmRows = await new Promise((resolve, reject) => {
+            pool.query(
+              `SELECT PF_NO, name FROM users WHERE role='BM' AND branch_id = ?`,
+              [branch.code],
+              (err, rows) => {
+                if (err) return reject(err);
+                resolve(rows);
+              }
+            );
+          });
+
+          const bm = bmRows[0] || null;
+
+        
+          const branchScore = await calculateBMScores(period, branch.code);
+          
+          console.log(branchScore )
+          
+          const deptKey = String(department || "").trim().toLowerCase();
+
+      const matchedKey = Object.keys(branchScore || {}).find(
+        key => key.toLowerCase() === deptKey
+      );
+      const formattedDepartment =
+      department
+        ? department.charAt(0).toUpperCase() + department.slice(1)
+        : null;
+      return {
+        ...branch,
+        bmId: bm?.PF_NO ?? null,
+        bmName: bm?.name ?? null,
+        department:formattedDepartment,
+        departmentData: matchedKey ? branchScore[matchedKey] : null
+      };
+
+        } catch (err) {
+          console.error(`BM score failed for branch ${branch.code}`, err);
+          return {
+            ...branch,
+            bmId: null,
+            bmName: null,
+            bmTotalScore: 0,
+          };
+        }
+      })
+    );
+
+    branchReportData.totalBranches = branchesWithScore;
+    branchReportData.totalBranchesCount = branchesWithScore.length;
+
+    res.json(branchReportData);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({
+      error: "Failed to load branch report data",
+    });
+  }
 });

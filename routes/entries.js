@@ -6,7 +6,6 @@ import { nanoid } from "nanoid";
 
 export const entriesRouter = express.Router();
 
-
 entriesRouter.post("/", (req, res) => {
   const {
     period,
@@ -59,7 +58,7 @@ entriesRouter.post("/", (req, res) => {
                   return res.json({
                     message: "Entry fully removed (value reached 0)",
                   });
-                }
+                },
               );
             } else {
               const updateQuery = `UPDATE entries SET value=?, date=? WHERE period=? AND branch_id=? AND kpi=? AND employee_id=? AND account_no=?`;
@@ -83,10 +82,10 @@ entriesRouter.post("/", (req, res) => {
                     message: "Entry value reduced successfully",
                     newValue,
                   });
-                }
+                },
               );
             }
-          }
+          },
         );
         return;
       }
@@ -153,12 +152,13 @@ entriesRouter.post("/", (req, res) => {
                   accountNo,
                   baseValue + (i < remainder ? 1 : 0),
                   entryDate,
+                  typeOfDeposit,
                   "Pending",
                 ]);
 
                 const insertQuery = `
           INSERT INTO entries 
-          (period, branch_id, employee_id, kpi, account_no, value, date, status)
+          (period, branch_id, employee_id, kpi, account_no, value, date, type, status)
           VALUES ?`;
 
                 pool.query(insertQuery, [entries], (err) => {
@@ -175,7 +175,7 @@ entriesRouter.post("/", (req, res) => {
                 });
               });
             });
-          }
+          },
         );
         return;
       }
@@ -195,6 +195,7 @@ entriesRouter.post("/", (req, res) => {
         account_no: accountNo || null,
         value: Number(value) || 0,
         date: entryDate,
+        type: typeOfDeposit,
         status: "Pending",
       };
       pool.query("INSERT INTO entries SET ?", entry, (err) => {
@@ -225,10 +226,11 @@ entriesRouter.post("/", (req, res) => {
           accountNo || null,
           baseValue + (i < remainder ? 1 : 0),
           entryDate,
+          typeOfDeposit,
           "Pending",
         ]);
 
-        const insertQuery = `INSERT INTO entries (period, branch_id, employee_id, kpi, account_no, value, date, status) VALUES ?`;
+        const insertQuery = `INSERT INTO entries (period, branch_id, employee_id, kpi, account_no, value, date, type, status) VALUES ?`;
         pool.query(insertQuery, [entries], (err) => {
           if (err)
             return res.status(500).json({ error: "Failed to insert entries" });
@@ -250,8 +252,7 @@ entriesRouter.post("/", (req, res) => {
 // List entries filtered by period, branchId, employeeId and status.
 entriesRouter.get("/", (req, res) => {
   const { period, branchId, employeeId, status } = req.query;
-  let query =
-    `SELECT e.*, u.name AS staffName 
+  let query = `SELECT e.*, u.name AS staffName 
     FROM entries e 
     JOIN users u ON e.employee_id = u.id 
     WHERE 1 = 1
@@ -291,7 +292,7 @@ entriesRouter.post("/:id/verify", (req, res) => {
       if (error)
         return res.status(500).json({ error: "Internal server error" });
       res.json({ ok: true });
-    }
+    },
   );
 });
 
@@ -305,7 +306,7 @@ entriesRouter.post("/:id/return", (req, res) => {
       if (error)
         return res.status(500).json({ error: "Internal server error" });
       res.json({ ok: true });
-    }
+    },
   );
 });
 
@@ -317,7 +318,7 @@ entriesRouter.post("/monthEntries", (req, res) => {
   }
 
   const query = `
-    SELECT e.*,u.PF_NO FROM entries e join users u on e.employee_id=u.id
+    SELECT e.*,u.PF_NO,b.name as branchName FROM entries e join users u on e.employee_id=u.id join branches b on e.branch_id=b.id
     WHERE period = ? 
   `;
   pool.query(query, [period], (error, results) => {
@@ -328,13 +329,18 @@ entriesRouter.post("/monthEntries", (req, res) => {
   });
 });
 
-entriesRouter.delete('/entries/:id', (req, res) => {
+entriesRouter.delete("/entries/:id", (req, res) => {
   console.log(`Deleting Entries with id: ${req.params.id}`);
-  pool.query('DELETE FROM entries WHERE id = ?', [req.params.id], (error, result) => {
-    if (error) return res.status(500).json({ error: 'Internal server error' });
-    if (result.affectedRows === 0) {
-      return res.status(404).json({ error: 'Entry not found' });
-    }
-    res.json({ ok: true });
-  });
+  pool.query(
+    "DELETE FROM entries WHERE id = ?",
+    [req.params.id],
+    (error, result) => {
+      if (error)
+        return res.status(500).json({ error: "Internal server error" });
+      if (result.affectedRows === 0) {
+        return res.status(404).json({ error: "Entry not found" });
+      }
+      res.json({ ok: true });
+    },
+  );
 });

@@ -41,7 +41,7 @@ mastersRouter.post("/departments", (req, res) => {
             connection.release();
             res.json({ id: result.insertId, name });
           });
-        }
+        },
       );
     });
   });
@@ -56,7 +56,7 @@ mastersRouter.put("/departments/:id", (req, res) => {
       if (error)
         return res.status(500).json({ error: "Internal server error" });
       res.json({ ok: true });
-    }
+    },
   );
 });
 mastersRouter.delete("/departments/:id", (req, res) => {
@@ -71,7 +71,7 @@ mastersRouter.delete("/departments/:id", (req, res) => {
         return res.status(404).json({ error: "Department not found" });
       }
       res.json({ ok: true });
-    }
+    },
   );
 });
 // Weightages
@@ -91,7 +91,7 @@ mastersRouter.put("/weightages", (req, res) => {
       if (error)
         return res.status(500).json({ error: "Internal server error" });
       res.json({ ok: true });
-    }
+    },
   );
 });
 
@@ -103,7 +103,7 @@ mastersRouter.get("/users", (req, res) => {
       if (error)
         return res.status(500).json({ error: "Internal server error" });
       res.json(results);
-    }
+    },
   );
 });
 
@@ -196,14 +196,14 @@ mastersRouter.put("/users/:id", (req, res) => {
       if (error)
         return res.status(500).json({ error: "Internal server error" });
       res.json({ ok: true });
-    }
+    },
   );
 });
 
 mastersRouter.post("/users/:id", (req, res) => {
   console.log(`Marking user resigned: ${req.params.id}`);
-const {resignedDate}=req.body; console.log(resignedDate);
-
+  const { resignedDate } = req.body;
+  console.log(resignedDate);
 
   pool.query(
     "UPDATE users SET resign = 1,  resign_date = ? WHERE id = ?",
@@ -219,7 +219,7 @@ const {resignedDate}=req.body; console.log(resignedDate);
       }
 
       res.json({ ok: true, message: "User marked as resigned" });
-    }
+    },
   );
 });
 
@@ -232,7 +232,7 @@ mastersRouter.get("/users/branch/:branchId/role/:role", (req, res) => {
       if (error)
         return res.status(500).json({ error: "Internal server error" });
       res.json(results);
-    }
+    },
   );
 });
 
@@ -286,7 +286,7 @@ mastersRouter.put("/branches/:id", (req, res) => {
       if (error)
         return res.status(500).json({ error: "Internal server error" });
       res.json({ ok: true });
-    }
+    },
   );
 });
 
@@ -302,7 +302,7 @@ mastersRouter.delete("/branches/:id", (req, res) => {
         return res.status(404).json({ error: "Branch not found" });
       }
       res.json({ ok: true });
-    }
+    },
   );
 });
 
@@ -326,7 +326,7 @@ JOIN branches b2
       if (error)
         return res.status(500).json({ error: "Internal server error" });
       res.json(results);
-    }
+    },
   );
 });
 
@@ -425,7 +425,7 @@ mastersRouter.put("/transfers/:id", (req, res) => {
       if (error)
         return res.status(500).json({ error: "Internal server error" });
       res.json({ ok: true });
-    }
+    },
   );
 });
 
@@ -441,7 +441,7 @@ mastersRouter.delete("/transfers/:id", (req, res) => {
         return res.status(404).json({ error: "Transfer not found" });
       }
       res.json({ ok: true });
-    }
+    },
   );
 });
 
@@ -456,7 +456,7 @@ mastersRouter.put("/Transfers_user/:id", (req, res) => {
       if (error)
         return res.status(500).json({ error: "Internal server error" });
       res.json({ ok: true });
-    }
+    },
   );
 });
 mastersRouter.put("/Transfers_date/:id", (req, res) => {
@@ -472,9 +472,8 @@ mastersRouter.put("/Transfers_date/:id", (req, res) => {
         return res.status(404).json({ error: "User not found" });
       }
 
-    
       res.json({ ok: true });
-    }
+    },
   );
 });
 
@@ -488,7 +487,7 @@ mastersRouter.put("/resign_user/:id", (req, res) => {
       if (error)
         return res.status(500).json({ error: "Internal server error" });
       res.json({ ok: true });
-    }
+    },
   );
 });
 mastersRouter.delete("/Transfer_for_delete_allocation", (req, res) => {
@@ -502,7 +501,7 @@ mastersRouter.delete("/Transfer_for_delete_allocation", (req, res) => {
       if (error)
         return res.status(500).json({ error: "Internal server error" });
       res.json({ ok: true });
-    }
+    },
   );
 });
 
@@ -516,14 +515,14 @@ mastersRouter.delete("/Transfer_for_delete_ho_staff", (req, res) => {
       if (error)
         return res.status(500).json({ error: "Internal server error" });
       res.json({ ok: true });
-    }
+    },
   );
 });
 
 // trasfer-history
 mastersRouter.post("/trasfer-history", (req, res) => {
   const { period } = req.body;
-  const query = `SELECT e.staff_id, s.name, DATE(MIN(e.transfer_date)) AS transfer_date,s.resign FROM employee_transfer e JOIN  users s ON s.id = e.staff_id WHERE e.period= ?  GROUP BY e.staff_id, DATE(e.transfer_date) ORDER BY DATE(MIN(e.transfer_date))`;
+  const query = `SELECT e.staff_id,s.PF_NO, s.name, DATE(MIN(e.transfer_date)) AS transfer_date,s.resign FROM employee_transfer e JOIN  users s ON s.id = e.staff_id WHERE e.period= ?  GROUP BY e.staff_id, DATE(e.transfer_date) ORDER BY DATE(MIN(e.transfer_date))`;
   pool.query(query, [period], (error, results) => {
     if (error) return res.status(500).json({ error: "Internal server error" });
     res.json(results);
@@ -538,6 +537,7 @@ mastersRouter.post("/transfer-Kpi-history", (req, res) => {
     e.*,
     u.name AS staff_name,
     b.name AS branch_name,
+    bi.name AS new_branch_name,
     u.resign as resigned
 FROM 
     employee_transfer e
@@ -546,6 +546,9 @@ FROM
     INNER JOIN branches b 
         ON b.code COLLATE utf8mb4_unicode_ci = 
            e.old_branch_id COLLATE utf8mb4_unicode_ci
+    INNER JOIN branches bi 
+        ON bi.code COLLATE utf8mb4_unicode_ci = 
+           e.new_branch_id COLLATE utf8mb4_unicode_ci       
 WHERE 
     e.period COLLATE utf8mb4_unicode_ci = ?
     AND e.staff_id = ?
@@ -571,9 +574,9 @@ ORDER BY
 
       const calculateScore = (kpi, achieved, target) => {
         let outOf10;
-       if (!target || target === 0) {
-  return 0;     
-}
+        if (!target || target === 0) {
+          return 0;
+        }
 
         const ratio = achieved / target;
         const auditRatio = kpi === "audit" ? kpi.achieved / kpi.target : 0;
@@ -689,8 +692,8 @@ ORDER BY
               row.key === "insurance" && score === 0
                 ? -2
                 : isNaN(weightageScore)
-                ? 0
-                : weightageScore,
+                  ? 0
+                  : weightageScore,
           };
 
           totalWeightageScore += branchScores[row.key].weightageScore;
@@ -700,7 +703,8 @@ ORDER BY
           transfer_date: t.transfer_date,
           old_designation: t.old_designation,
           new_designation: t.new_designation,
-          branch_name: t.branch_name,
+          old_branch_name: t.branch_name,
+          new_branch_name: t.new_branch_name,
           total_weightage_score: totalWeightageScore,
           ...branchScores,
         });
@@ -740,7 +744,7 @@ mastersRouter.put("/changePassword/:id", (req, res) => {
       if (error)
         return res.status(500).json({ error: "Internal server error" });
       res.json({ ok: true });
-    }
+    },
   );
 });
 
@@ -780,7 +784,7 @@ mastersRouter.put("/updateentries/:id", (req, res) => {
           updatedEntry: result[0],
         });
       });
-    }
+    },
   );
 });
 //update emplyee trasfer table for resign employee report
@@ -872,13 +876,13 @@ mastersRouter.post("/update_employee_transfer", (req, res) => {
                       "Transfer updated and user branch cleared successfully",
                     updatedFields: updateData,
                   });
-                }
+                },
               );
-            }
+            },
           );
-        }
+        },
       );
-    }
+    },
   );
 });
 //update emplyee trasfer table for Transfered employee report
@@ -953,7 +957,6 @@ mastersRouter.post("/update_employee_transfer_Transfered", (req, res) => {
                   .status(500)
                   .json({ error: "Database error 3", details: err });
 
-              
               const userUpdate = { branch_id: "" };
 
               pool.query(
@@ -971,13 +974,13 @@ mastersRouter.post("/update_employee_transfer_Transfered", (req, res) => {
                       "Transfer updated and user branch cleared successfully",
                     updatedFields: updateData,
                   });
-                }
+                },
               );
-            }
+            },
           );
-        }
+        },
       );
-    }
+    },
   );
 });
 mastersRouter.get("/get-AGM", (req, res) => {
@@ -987,6 +990,6 @@ mastersRouter.get("/get-AGM", (req, res) => {
       if (error)
         return res.status(500).json({ error: "Internal server error" });
       res.json(results);
-    }
+    },
   );
 });

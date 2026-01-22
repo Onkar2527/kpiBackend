@@ -299,7 +299,8 @@ export const autoDistributeTargetsResign = (period, branchId, callback) => {
                 transferStaff.length +
                 newJoinStaff.length +
                 resignedStaff.length;
-
+              console.log(activeStaff,resignedStaff);
+              
               const kpis = [
                 "deposit",
                 "loan_gen",
@@ -322,13 +323,12 @@ export const autoDistributeTargetsResign = (period, branchId, callback) => {
                     const t = targets.find((x) => x.kpi === kpi);
                     if (!t) return;
 
-                   const totalTarget = Math.max(
-                      0,
-                      t.amount - (transferTargetMap[kpi] || 0)
-                    );
+                   const totalTarget = t.amount  
+                  
                    
                     
-
+                    console.log(totalTarget);
+                    
                     let totalResignedWorkedTarget = 0;
                     let totalTransferGiven = 0;
                     let totalNewJoinGiven = 0;
@@ -361,7 +361,8 @@ export const autoDistributeTargetsResign = (period, branchId, callback) => {
                         );
 
                         totalResignedWorkedTarget += resignedTarget;
-
+                        console.log(resignedTarget);
+                        
                         updates.push([
                           Math.round(resignedTarget),
                           "resigned",
@@ -395,7 +396,7 @@ export const autoDistributeTargetsResign = (period, branchId, callback) => {
                         const target = (perStaffAnnual * months) / 12;
 
                         totalTransferGiven += target;
-
+                        console.log("transferTarget", target);
                         updates.push([
                           Math.round(target),
                           "transfer",
@@ -429,7 +430,7 @@ export const autoDistributeTargetsResign = (period, branchId, callback) => {
                         const target = (perStaffAnnual * months) / 12;
 
                         totalNewJoinGiven += target;
-
+                       logs("newJoinTarget", target);
                         updates.push([
                           Math.round(target),
                           "new_join",
@@ -459,8 +460,10 @@ export const autoDistributeTargetsResign = (period, branchId, callback) => {
                       totalTarget -
                       totalResignedWorkedTarget -
                       totalTransferGiven -
-                      totalNewJoinGiven;
+                      totalNewJoinGiven-(transferTargetMap[kpi] || 0);
 
+                      console.log(totalTarget,totalResignedWorkedTarget,totalTransferGiven,totalNewJoinGiven,transferTargetMap);
+                      
                     const perActive = Math.floor(
                       activeStaff.length
                         ? remainingTarget / activeStaff.length
@@ -617,10 +620,7 @@ export const autoDistributeTargetsNewUsers = (period, branchId, callback) => {
                 const t = targets.find((x) => x.kpi === kpi);
                 if (!t) return;
 
-                const totalTarget = Math.max(
-                0,
-                t.amount - (transferTargetMap[kpi] || 0)
-              );
+                const totalTarget = t.amount 
 
                 let totalTransferGiven = 0;
                 let totalNewJoinGiven = 0;
@@ -714,7 +714,8 @@ export const autoDistributeTargetsNewUsers = (period, branchId, callback) => {
                 });
 
                 const remainingTarget =
-                  totalTarget - totalTransferGiven - totalNewJoinGiven;
+                  totalTarget - totalTransferGiven - totalNewJoinGiven - (transferTargetMap[kpi] || 0)
+;
 
                 const perActive = Math.floor(
                   activeStaff.length ? remainingTarget / activeStaff.length : 0
@@ -951,16 +952,11 @@ export const autoDistributeTargetsOldBranch = (period, branchId,role, callback) 
               for (const kpi of kpis) {
                 const t = targets.find((x) => x.kpi === kpi);
                 if (!t) continue;
-                let totalTarget
-                if(role !== 'BM'){
-                totalTarget = Math.max(
-                0,
-                t.amount - (transferTargetMap[kpi] || 0)
-              );
-            }else{
-              totalTarget=t.amount;
-            }
-              console.log(totalTarget);
+
+               
+             const totalTarget=t.amount;
+            
+              
               
                 let totalResignedWorkedTarget = 0;
 
@@ -973,6 +969,7 @@ export const autoDistributeTargetsOldBranch = (period, branchId,role, callback) 
                     r.user_add_date,
                     fy.start
                   );
+                 console.log('resigmotu',monthsWorked);
                  
                   
                   if (kpi === "audit" || kpi === 'insurance') {
@@ -996,7 +993,7 @@ export const autoDistributeTargetsOldBranch = (period, branchId,role, callback) 
                     );
 
                     totalResignedWorkedTarget += resignedTarget;
-
+                    logs('resigmotuTarget',resignedTarget);
                     updates.push([
                       Math.round(resignedTarget),
                       "Transfered",
@@ -1096,7 +1093,8 @@ export const autoDistributeTargetsOldBranch = (period, branchId,role, callback) 
                     );
 
                     totalNewJoinerWorkedTargetPrevious += resignedTarget;
-
+                    console.log('resigned',resignedTarget);
+                    
                     updates.push([
                       Math.round(resignedTarget),
                       "published",
@@ -1108,16 +1106,25 @@ export const autoDistributeTargetsOldBranch = (period, branchId,role, callback) 
                   }
                 }
 
-                const remainingTarget =
+                let remainingTarget=0;
+                if(role==='BM'){
+                  remainingTarget =
                   totalTarget -
                   totalResignedWorkedTarget -
                   totalResignedWorkedTargetPrevious -
                   totalNewJoinerWorkedTargetPrevious;
-
+                }else{
+                remainingTarget =
+                  totalTarget -
+                  totalResignedWorkedTarget -
+                  totalResignedWorkedTargetPrevious -
+                  totalNewJoinerWorkedTargetPrevious-(transferTargetMap[kpi] || 0);
+                }
+                
                 const perActive = Math.floor(
                   activeStaff.length ? remainingTarget / activeStaff.length : 0
                 );
-
+                logs('perActive',perActive);
                 for (const st of activeStaff) {
                   updates.push([
                     perActive,
@@ -1250,10 +1257,7 @@ export const autoDistributeTargetsNewBranch = (period, branchId, callback) => {
                 const t = targets.find((x) => x.kpi === kpi);
                 if (!t) return;
 
-               const totalTarget = Math.max(
-                0,
-                t.amount - (transferTargetMap[kpi] || 0)
-              );
+               const totalTarget = t.amount;
                 let totalResignedWorkedTarget = 0;
                 console.log(totalTarget);
                 
@@ -1315,7 +1319,7 @@ export const autoDistributeTargetsNewBranch = (period, branchId, callback) => {
                 });
 
                 const remainingTarget =
-                  totalTarget - totalResignedWorkedTarget - newStaffTotalGiven;
+                  totalTarget - totalResignedWorkedTarget - newStaffTotalGiven-(transferTargetMap[kpi] || 0);
 
                 const perOld = Math.floor(
                   activeStaff.length ? remainingTarget / activeStaff.length : 0
