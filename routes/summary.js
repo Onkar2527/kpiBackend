@@ -23,7 +23,7 @@ summaryRouter.get("/branch", (req, res) => {
         totals[row.kpi] = row.total;
       });
       res.json(totals);
-    }
+    },
   );
 });
 
@@ -190,7 +190,7 @@ summaryRouter.get("/scores", (req, res) => {
             branchScores[row.kpi] = calculateScore(
               row.kpi,
               row.achieved,
-              row.target
+              row.target,
             );
           });
 
@@ -258,9 +258,9 @@ summaryRouter.get("/scores", (req, res) => {
           });
 
           res.json(scores);
-        }
+        },
       );
-    }
+    },
   );
 });
 
@@ -376,15 +376,15 @@ summaryRouter.get("/bm-dashboard-counts", (req, res) => {
                       counts.loan_gen.totalAchieved = results3[0]?.total || 0;
 
                       res.json(counts);
-                    }
+                    },
                   );
-                }
+                },
               );
-            }
+            },
           );
         });
       });
-    }
+    },
   );
 });
 
@@ -541,7 +541,7 @@ summaryRouter.get("/bm-scores", (req, res) => {
 
                 outOf10 = Math.max(
                   0,
-                  Math.min(cap, isNaN(outOf10) ? 0 : outOf10)
+                  Math.min(cap, isNaN(outOf10) ? 0 : outOf10),
                 );
 
                 const weightageScore = (outOf10 * (row.weightage || 0)) / 100;
@@ -580,9 +580,9 @@ summaryRouter.get("/bm-scores", (req, res) => {
             const finalScores = calculateScores(cap);
 
             res.json(finalScores);
-          }
+          },
         );
-      }
+      },
     );
   });
 });
@@ -700,7 +700,7 @@ summaryRouter.get("/staff-scores", (req, res) => {
                 roleKpis.forEach((kpi) => {
                   if (kpi.kpi_type === "manual") {
                     const evaluation = evaluations.find(
-                      (ev) => ev.role_kpi_id === kpi.id
+                      (ev) => ev.role_kpi_id === kpi.id,
                     );
                     if (evaluation) {
                       const score = evaluation.score;
@@ -717,7 +717,7 @@ summaryRouter.get("/staff-scores", (req, res) => {
                       const outOf10 = calculateScore(
                         "insurance",
                         branchInsurance.achieved,
-                        branchInsurance.target
+                        branchInsurance.target,
                       );
                       const weightageScore = (outOf10 * kpi.weightage) / 100;
 
@@ -735,9 +735,9 @@ summaryRouter.get("/staff-scores", (req, res) => {
 
                 scores.total = totalWeightageScore;
                 res.json(scores);
-              }
+              },
             );
-          }
+          },
         );
       });
     } else {
@@ -796,7 +796,7 @@ summaryRouter.get("/staff-scores", (req, res) => {
                     const score = calculateScore(
                       row.kpi,
                       row.achieved,
-                      row.target
+                      row.target,
                     );
                     const weightageScore = (score * (row.weightage || 0)) / 100;
                     branchScores[row.kpi] = {
@@ -808,22 +808,20 @@ summaryRouter.get("/staff-scores", (req, res) => {
                         row.kpi === "insurance" && score === 0
                           ? -2
                           : isNaN(weightageScore)
-                          ? 0
-                          : weightageScore,
+                            ? 0
+                            : weightageScore,
                     };
                   });
-                  
-                  
+
                   const scores = {};
                   let totalWeightageScore = 0;
                   results.forEach((row) => {
                     if (row.kpi) {
                       if (row.kpi === "recovery") {
                         const branchRecovery = branchResults.find(
-                          (b) => b.kpi === "recovery"
+                          (b) => b.kpi === "recovery",
                         );
-                  
-                        
+
                         if (branchRecovery) {
                           row.target = branchRecovery.target;
                           row.achieved = branchRecovery.achieved;
@@ -832,7 +830,7 @@ summaryRouter.get("/staff-scores", (req, res) => {
                       const score = calculateScore(
                         row.kpi,
                         row.achieved,
-                        row.target
+                        row.target,
                       );
                       const weightageScore = (score * row.weightage) / 100;
                       scores[row.kpi] = {
@@ -844,31 +842,28 @@ summaryRouter.get("/staff-scores", (req, res) => {
                           row.kpi === "insurance" && score === 0
                             ? -2
                             : isNaN(weightageScore)
-                            ? 0
-                            : weightageScore,
+                              ? 0
+                              : weightageScore,
                       };
                       totalWeightageScore += scores[row.kpi].weightageScore;
                     }
                   });
-                  
-                  
+
                   // scores.deposit = branchScores.deposit;
                   // scores.loan_gen = branchScores.loan_gen;
                   // scores.loan_amulya = branchScores.loan_amulya;
                   scores.recovery = branchScores.recovery;
                   // scores.audit = branchScores.audit;
                   // scores.insurance = branchScores.insurance;
-                  
 
                   scores["total"] = totalWeightageScore;
-                  
-  
+
                   res.json(scores);
-                }
+                },
               );
-            }
+            },
           );
-        }
+        },
       );
     }
   });
@@ -880,7 +875,7 @@ export async function getTransferKpiHistory(pool, period, staff_id) {
         e.*,
         u.name AS staff_name,
         b.name AS branch_name,
-        u.resign as resigned
+        u.resign AS resigned
       FROM employee_transfer e
       INNER JOIN users u ON u.id = e.staff_id
       INNER JOIN branches b 
@@ -902,6 +897,21 @@ export async function getTransferKpiHistory(pool, period, staff_id) {
         const weightageMap = {};
         weightages.forEach((w) => (weightageMap[w.kpi] = w.weightage));
 
+        const getMonthDiff = (startDate, endDate) => {
+          const start = new Date(startDate);
+          const end = new Date(endDate);
+          return (
+            (end.getFullYear() - start.getFullYear()) * 12 +
+            (end.getMonth() - start.getMonth()) +
+            1
+          );
+        };
+
+        const getFinancialYearStart = (period) => {
+          const startYear = parseInt(period.split("-")[0], 10);
+          return new Date(startYear, 3, 1);
+        };
+
         const calculateScore = (kpi, achieved, target) => {
           if (!target || target === 0) return 0;
 
@@ -914,20 +924,12 @@ export async function getTransferKpiHistory(pool, period, staff_id) {
             case "loan_amulya":
               outOf10 = ratio < 1 ? ratio * 10 : ratio < 1.25 ? 10 : 12.5;
               break;
-            case "insurance":
-              outOf10 =
-                ratio === 0
-                  ? -2
-                  : ratio < 1
-                  ? ratio * 10
-                  : ratio < 1.25
-                  ? 10
-                  : 12.5;
-              break;
+
             case "recovery":
             case "audit":
               outOf10 = ratio < 1 ? ratio * 10 : 12.5;
               break;
+
             default:
               outOf10 = 0;
           }
@@ -942,45 +944,24 @@ export async function getTransferKpiHistory(pool, period, staff_id) {
           resigned: transfers[0].resigned,
           transfers: [],
           avg_kpi: 0,
+          branch_avg_kpi: {},
         };
 
         let allBranchKpiScores = [];
+        const branchWiseKpi = {};
+        const branchTransferDates = {};
 
         transfers.forEach((t) => {
           const branchScores = {};
           let totalWeightageScore = 0;
 
+       
           const kpis = [
-            {
-              key: "deposit",
-              achieved: t.deposit_achieved,
-              target: t.deposit_target,
-            },
-            {
-              key: "loan_gen",
-              achieved: t.loan_gen_achieved,
-              target: t.loan_gen_target,
-            },
-            {
-              key: "loan_amulya",
-              achieved: t.loan_amulya_achieved,
-              target: t.loan_amulya_target,
-            },
-            {
-              key: "recovery",
-              achieved: t.recovery_achieved,
-              target: t.recovery_target,
-            },
-            {
-              key: "audit",
-              achieved: t.audit_achieved,
-              target: t.audit_target,
-            },
-            {
-              key: "insurance",
-              achieved: t.insurance_achieved,
-              target: t.insurance_target,
-            },
+            { key: "deposit", achieved: t.deposit_achieved, target: t.deposit_target },
+            { key: "loan_gen", achieved: t.loan_gen_achieved, target: t.loan_gen_target },
+            { key: "loan_amulya", achieved: t.loan_amulya_achieved, target: t.loan_amulya_target },
+            { key: "recovery", achieved: t.recovery_achieved, target: t.recovery_target },
+            { key: "audit", achieved: t.audit_achieved, target: t.audit_target }
           ];
 
           kpis.forEach((row) => {
@@ -995,14 +976,22 @@ export async function getTransferKpiHistory(pool, period, staff_id) {
               target: row.target || 0,
               score,
               weightage,
-              weightageScore:
-                row.key === "insurance" && score === 0 ? -2 : weightageScore,
+              weightageScore,
             };
 
-            totalWeightageScore += branchScores[row.key].weightageScore;
+            totalWeightageScore += weightageScore;
           });
 
           allBranchKpiScores.push(totalWeightageScore);
+
+          if (!branchWiseKpi[t.branch_name]) {
+            branchWiseKpi[t.branch_name] = { total: 0, count: 0 };
+            branchTransferDates[t.branch_name] = [];
+          }
+
+          branchWiseKpi[t.branch_name].total += totalWeightageScore;
+          branchWiseKpi[t.branch_name].count += 1;
+          branchTransferDates[t.branch_name].push(new Date(t.transfer_date));
 
           staffResult.transfers.push({
             transfer_date: t.transfer_date,
@@ -1019,11 +1008,33 @@ export async function getTransferKpiHistory(pool, period, staff_id) {
           staffResult.avg_kpi = sum / allBranchKpiScores.length;
         }
 
+        const fyStart = getFinancialYearStart(staffResult.period);
+
+        Object.keys(branchWiseKpi).forEach((branch) => {
+          const { total, count } = branchWiseKpi[branch];
+          const avgKpi = count > 0 ? total / count : 0;
+
+          const dates = branchTransferDates[branch].sort((a, b) => a - b);
+
+          let months;
+          if (dates.length === 1) {
+            months = getMonthDiff(fyStart, dates[0]);
+          } else {
+            months = getMonthDiff(dates[0], dates[dates.length - 1]);
+          }
+
+          staffResult.branch_avg_kpi[branch] = {
+            avg_kpi: avgKpi,
+            months,
+          };
+        });
+
         resolve(staffResult);
       });
     });
   });
 }
+
 
 summaryRouter.get("/staff-scores-all", (req, res) => {
   const { period, branchId } = req.query;
@@ -1051,10 +1062,9 @@ summaryRouter.get("/staff-scores-all", (req, res) => {
     if (!target) return 0;
 
     const ratio = achieved / target;
-    const insuranceration=kpi==='insurance' ? ratio:0;
-    const recoveryration=kpi==='recovery' ? ratio:0;
-   
-    
+    const insuranceration = kpi === "insurance" ? ratio : 0;
+    const recoveryration = kpi === "recovery" ? ratio : 0;
+
     let outOf10 = 0;
 
     switch (kpi) {
@@ -1062,7 +1072,8 @@ summaryRouter.get("/staff-scores-all", (req, res) => {
       case "loan_gen":
         if (ratio <= 1) outOf10 = ratio * 10;
         else if (ratio < 1.25) outOf10 = 10;
-        else if(insuranceration >= 0.75 && recoveryration >= 0.75) outOf10 = 12.5;
+        else if (insuranceration >= 0.75 && recoveryration >= 0.75)
+          outOf10 = 12.5;
         else outOf10 = 10;
         break;
 
@@ -1238,16 +1249,16 @@ ORDER BY u.id, k.kpi`;
                   const history = await getTransferKpiHistory(
                     pool,
                     period,
-                    sid
+                    sid,
                   );
 
                   staff.previousKpi = Number(history.avg_kpi || 0);
-
+                  staff.branch_name = history.branch_avg_kpi;
                   resolve();
                 } catch (err) {
                   reject(err);
                 }
-              })
+              }),
             );
 
             // Insurance achieved
@@ -1263,9 +1274,9 @@ ORDER BY u.id, k.kpi`;
                     const achieved = Number(ins[0]?.achieved || 0);
                     staff.insurance.achieved = achieved;
                     resolve();
-                  }
+                  },
                 );
-              })
+              }),
             );
           });
 
@@ -1277,7 +1288,7 @@ ORDER BY u.id, k.kpi`;
                 ins.score = calculateScore(
                   "insurance",
                   ins.achieved,
-                  ins.target
+                  ins.target,
                 );
                 ins.weightageScore =
                   ins.score === 0 ? -2 : (ins.score * ins.weightage) / 100;
@@ -1300,7 +1311,9 @@ ORDER BY u.id, k.kpi`;
                   total += Number(staff[kpi].weightageScore || 0);
                 });
 
-                total += staff.previousKpi;
+                const avrofpreviousKpi = (total + (staff.previousKpi || 0)) / 2;
+                staff.originalTotal = total;
+                total = avrofpreviousKpi;
 
                 // Penalty rule
                 if (
@@ -1319,9 +1332,9 @@ ORDER BY u.id, k.kpi`;
               console.error("Promise error:", err);
               res.status(500).json({ error: "Internal server error" });
             });
-        }
+        },
       );
-    }
+    },
   );
 });
 // summaryRouter.get("/staff-scores-all", (req, res) => {
@@ -1691,7 +1704,7 @@ summaryRouter.get("/ho-hod-scores", (req, res) => {
         kpis.forEach((kpi) => {
           const total = kpiResults.reduce(
             (sum, row) => sum + parseFloat(row[kpi] || 0),
-            0
+            0,
           );
           avgAchieved[kpi] = kpiResults.length ? total / kpiResults.length : 0;
         });
@@ -1847,7 +1860,7 @@ function getMonthStartDate(dateInput) {
   const d = new Date(dateInput);
 
   const year = d.getFullYear();
-  const month = String(d.getMonth() + 1).padStart(2, '0');
+  const month = String(d.getMonth() + 1).padStart(2, "0");
 
   return `${year}-${month}-01`;
 }
@@ -1874,10 +1887,8 @@ summaryRouter.get("/transfer-bm-scores", (req, res) => {
     [branchId],
     (err, BMRows) => {
       if (err) return res.status(500).json({ error: "Internal server error" });
-      console.log(BMRows);
-      
-      const BMID = BMRows?.[0]?.id || BMRows?.[1]?.id || 0;
 
+      const BMID = BMRows?.[0]?.id || BMRows?.[1]?.id || 0;
 
       pool.query(
         `SELECT *
@@ -1902,7 +1913,7 @@ summaryRouter.get("/transfer-bm-scores", (req, res) => {
               0,
               (d2.getFullYear() - d1.getFullYear()) * 12 +
                 (d2.getMonth() - d1.getMonth()) +
-                1
+                1,
             );
           }
 
@@ -1916,8 +1927,8 @@ summaryRouter.get("/transfer-bm-scores", (req, res) => {
             recovery: bm.recovery_target || 0,
             insurance: bm.insurance_target || 0,
           };
-          const mouthStart=getMonthStartDate(transferDate);
-          
+          const mouthStart = getMonthStartDate(transferDate);
+
           const entriesQuery = `
             SELECT kpi, SUM(value) AS achieved 
             FROM entries
@@ -2053,25 +2064,24 @@ summaryRouter.get("/transfer-bm-scores", (req, res) => {
                       totalMonthsWorked: totalMonths,
                     });
                   });
-                }
+                },
               );
-            }
+            },
           );
-        }
+        },
       );
-    }
+    },
   );
 });
-
+// all branch or gm  all attender api and also for get specific attender score
 summaryRouter.get("/branch-attenders", async (req, res) => {
-  const { period, branchId, hod_id } = req.query;
+  const { period, branchId, hod_id, staff_id } = req.query;
 
   if (!period) {
     return res.status(400).json({ error: "period is required" });
   }
 
   try {
-    
     const attenderKpis = await new Promise((resolve, reject) => {
       pool.query(
         `
@@ -2083,30 +2093,38 @@ summaryRouter.get("/branch-attenders", async (req, res) => {
         (err, rows) => {
           if (err) return reject(err);
           resolve(rows);
-        }
+        },
       );
     });
 
     if (!attenderKpis.length) return res.json([]);
 
     const kpiMap = {};
-    attenderKpis.forEach(k => {
+    attenderKpis.forEach((k) => {
       kpiMap[k.kpi_name] = k;
     });
 
-    const normalizedBranchId =
-    branchId && branchId !== 'null' && branchId !== 'undefined'
-      ? branchId
-      : null;
+    const normalizedBranchId2 =
+      branchId && branchId !== "null" && branchId !== "undefined"
+        ? branchId
+        : null;
+    const normalizedStaffId =
+      staff_id && staff_id !== "null" && staff_id !== "undefined"
+        ? staff_id
+        : null;
 
-      const users = await new Promise((resolve, reject) => {
+    const users = await new Promise((resolve, reject) => {
       let sql, params;
-
-      if (normalizedBranchId) {
-        sql = "SELECT id, name FROM users WHERE branch_id=? AND role='Attender'";
-        params = [normalizedBranchId];
+      if (normalizedStaffId) {
+        sql =
+          "SELECT id, branch_id, name FROM users WHERE id=? AND role='Attender'";
+        params = [staff_id];
+      } else if (normalizedBranchId2) {
+        sql =
+          "SELECT id, branch_id, name FROM users WHERE branch_id=? AND role='Attender'";
+        params = [normalizedBranchId2];
       } else {
-        sql = "SELECT id, name FROM users WHERE hod_id=? AND role='Attender'";
+        sql = "SELECT id, hod_id, name FROM users WHERE hod_id=? AND role='Attender'";
         params = [hod_id];
       }
 
@@ -2116,10 +2134,46 @@ summaryRouter.get("/branch-attenders", async (req, res) => {
       });
     });
 
-    
     if (!users.length) return res.json([]);
 
-  
+   
+    let masterUserId = null;
+    if (normalizedStaffId) {
+      
+      const staffUser = users[0];
+      if (staffUser && staffUser.branch_id) {
+        
+        const bmUser = await new Promise((resolve, reject) => {
+          pool.query(
+            "SELECT id FROM users WHERE branch_id=? AND role='BM' LIMIT 1",
+            [staffUser.branch_id],
+            (err, rows) => {
+              if (err) return reject(err);
+              resolve(rows[0] || null);
+            }
+          );
+        });
+        masterUserId = bmUser ? bmUser.id : normalizedStaffId;
+      } else {
+        masterUserId = normalizedStaffId;
+      }
+    } else if (normalizedBranchId2) {
+      
+      const bmUser = await new Promise((resolve, reject) => {
+        pool.query(
+          "SELECT id FROM users WHERE branch_id=? AND role='BM' LIMIT 1",
+          [normalizedBranchId2],
+          (err, rows) => {
+            if (err) return reject(err);
+            resolve(rows[0] || null);
+          }
+        );
+      });
+      masterUserId = bmUser ? bmUser.id : null;
+    } else if (hod_id) {
+      masterUserId = hod_id;
+    }
+
     const response = await Promise.all(
       users.map(async (user) => {
         const [userKpis, insuranceRow] = await Promise.all([
@@ -2128,16 +2182,18 @@ summaryRouter.get("/branch-attenders", async (req, res) => {
               `
               SELECT role_kpi_mapping_id, SUM(value) AS total
               FROM user_kpi_entry
-              WHERE user_id=? AND period=?
+              WHERE user_id=? AND period=? AND master_user_id=?
               GROUP BY role_kpi_mapping_id
               `,
-              [user.id, period],
+              [user.id, period, masterUserId],
               (err, rows) => {
                 if (err) return reject(err);
                 const map = {};
-                rows.forEach(r => map[r.role_kpi_mapping_id] = Number(r.total || 0));
+                rows.forEach(
+                  (r) => (map[r.role_kpi_mapping_id] = Number(r.total || 0)),
+                );
                 resolve(map);
-              }
+              },
             );
           }),
           new Promise((resolve, reject) => {
@@ -2151,12 +2207,11 @@ summaryRouter.get("/branch-attenders", async (req, res) => {
               (err, rows) => {
                 if (err) return reject(err);
                 resolve(Number(rows[0]?.total || 0));
-              }
+              },
             );
-          })
+          }),
         ]);
 
-       
         const finalKpis = {};
         let totalScore = 0;
 
@@ -2207,11 +2262,10 @@ summaryRouter.get("/branch-attenders", async (req, res) => {
           total: Number(totalScore.toFixed(2)),
           kpis: finalKpis,
         };
-      })
+      }),
     );
 
     res.json(response);
-
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: "Internal server error" });

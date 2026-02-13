@@ -21,7 +21,7 @@ pool.query(
     if (error) {
       console.error("Error creating insurance_targets table:", error);
     }
-  }
+  },
 );
 
 // Router implementing branch and insurance target endpoints.
@@ -90,7 +90,7 @@ targetsRouter.post("/upload", upload.single("targetFile"), (req, res) => {
 
       results.forEach((row) => {
         let periodKey = Object.keys(row).find(
-          (k) => k.trim().toLowerCase() === "period"
+          (k) => k.trim().toLowerCase() === "period",
         );
         const period = (row[periodKey] || "").trim();
 
@@ -105,7 +105,7 @@ targetsRouter.post("/upload", upload.single("targetFile"), (req, res) => {
 
       results.forEach((row) => {
         let periodKey = Object.keys(row).find(
-          (k) => k.trim().toLowerCase() === "period"
+          (k) => k.trim().toLowerCase() === "period",
         );
         const period = (row[periodKey] || "").trim();
         if (!Object.keys(row).some((k) => k.trim() === "audit")) {
@@ -116,12 +116,8 @@ targetsRouter.post("/upload", upload.single("targetFile"), (req, res) => {
       const branchIds = [...new Set(results.map((r) => r.branch_id))];
       const placeholders = branchIds.map(() => "?").join(",");
 
-      console.log("Parsed data preview:", results.slice(0, 3));
-
       const allKpis = [...new Set(values.map((v) => v[2]))];
       const kpiPlaceholders = allKpis.map(() => "?").join(",");
-
-      console.log("Deleting only KPIs:", allKpis);
 
       const deleteQuery = `
         DELETE FROM targets
@@ -144,7 +140,7 @@ targetsRouter.post("/upload", upload.single("targetFile"), (req, res) => {
             [results[0].period],
             (error) => {
               if (error) console.error("Error inserting period:", error);
-            }
+            },
           );
 
           pool.query(
@@ -161,15 +157,15 @@ targetsRouter.post("/upload", upload.single("targetFile"), (req, res) => {
                   if (err)
                     console.error(
                       `Error auto-distributing targets for branch ${branchId}:`,
-                      err
+                      err,
                     );
                 });
               });
 
               res.json({ ok: true });
-            }
+            },
           );
-        }
+        },
       );
     });
 });
@@ -211,9 +207,6 @@ targetsRouter.post("/upload1", upload.single("targetFile"), (req, res) => {
         });
       });
 
-      console.log("Parsed normalized data (first 3 rows):");
-      console.log(results.slice(0, 3));
-
       const firstPeriod = results[0]["period"] || results[0].period;
       const branchIds = [
         ...new Set(results.map((r) => r["branch_id"] || r.branch_id)),
@@ -222,8 +215,6 @@ targetsRouter.post("/upload1", upload.single("targetFile"), (req, res) => {
 
       const allKpis = [...new Set(values.map((v) => v[2]))];
       const kpiPlaceholders = allKpis.map(() => "?").join(",");
-
-      console.log("Deleting only KPIs:", allKpis);
 
       const deleteQuery = `
         DELETE FROM targets 
@@ -246,7 +237,7 @@ targetsRouter.post("/upload1", upload.single("targetFile"), (req, res) => {
             [firstPeriod],
             (error) => {
               if (error) console.error("Error inserting period:", error);
-            }
+            },
           );
 
           pool.query(
@@ -263,7 +254,7 @@ targetsRouter.post("/upload1", upload.single("targetFile"), (req, res) => {
                   if (err)
                     console.error(
                       `Error auto-distributing targets for branch ${branchId}:`,
-                      err
+                      err,
                     );
                 });
               });
@@ -273,9 +264,9 @@ targetsRouter.post("/upload1", upload.single("targetFile"), (req, res) => {
                 inserted: values.length,
                 branches: branchIds,
               });
-            }
+            },
           );
-        }
+        },
       );
     });
 });
@@ -302,9 +293,8 @@ targetsRouter.post(
               key,
               row[key],
               "published",
-            ])
+            ]),
         );
-        console.log(results);
 
         // const hasAudit = results.some(row => row.hasOwnProperty('audit'));
         // if (!hasAudit && results.length > 0) {
@@ -326,7 +316,7 @@ targetsRouter.post(
               [results[0].period],
               (error) => {
                 if (error) console.error("Error inserting period:", error);
-              }
+              },
             );
             pool.query(
               "INSERT INTO targets (period, branch_id, kpi, amount, state) VALUES ?",
@@ -345,19 +335,19 @@ targetsRouter.post(
                     if (err) {
                       console.error(
                         `Error auto-distributing targets for branch ${branchId}:`,
-                        err
+                        err,
                       );
                     }
                   });
                 });
 
                 res.json({ ok: true });
-              }
+              },
             );
-          }
+          },
         );
       });
-  }
+  },
 );
 
 targetsRouter.post("/upload-insurance-global", (req, res) => {
@@ -381,7 +371,7 @@ targetsRouter.post("/upload-insurance-global", (req, res) => {
       if (error)
         return res.status(500).json({ error: "Internal server error" });
       res.json({ ok: true });
-    }
+    },
   );
 });
 
@@ -432,7 +422,7 @@ targetsRouter.post(
 
         results.forEach((row) => {
           let periodKey = Object.keys(row).find(
-            (k) => k.trim().toLowerCase() === "period"
+            (k) => k.trim().toLowerCase() === "period",
           );
           const period = (row[periodKey] || "").trim();
 
@@ -498,12 +488,12 @@ targetsRouter.post(
                   inserted: values.length,
                   deletedBranches: branchIdArray.length,
                 });
-              }
+              },
             );
-          }
+          },
         );
       });
-  }
+  },
 );
 
 //dashborad total Achived upload
@@ -531,7 +521,7 @@ targetsRouter.post(
 
         results.forEach((row) => {
           let periodKey = Object.keys(row).find(
-            (k) => k.trim().toLowerCase() === "period"
+            (k) => k.trim().toLowerCase() === "period",
           );
           const period = (row[periodKey] || "").trim();
 
@@ -597,12 +587,12 @@ targetsRouter.post(
                   inserted: values.length,
                   deletedBranches: branchIdArray.length,
                 });
-              }
+              },
             );
-          }
+          },
         );
       });
-  }
+  },
 );
 
 //upload salary
@@ -623,19 +613,19 @@ targetsRouter.post("/uploadSalary", upload.single("salaryFile"), (req, res) => {
 
       results.forEach((row) => {
         const periodKey = Object.keys(row).find(
-          (k) => k.trim().toLowerCase() === "period"
+          (k) => k.trim().toLowerCase() === "period",
         );
         const pfKey = Object.keys(row).find(
-          (k) => k.trim().toLowerCase() === "pf_no"
+          (k) => k.trim().toLowerCase() === "pf_no",
         );
         const branchKey = Object.keys(row).find(
-          (k) => k.trim().toLowerCase() === "branch_id"
+          (k) => k.trim().toLowerCase() === "branch_id",
         );
         const salaryKey = Object.keys(row).find(
-          (k) => k.trim().toLowerCase() === "salary"
+          (k) => k.trim().toLowerCase() === "salary",
         );
         const incrementKey = Object.keys(row).find(
-          (k) => k.trim().toLowerCase() === "increment"
+          (k) => k.trim().toLowerCase() === "increment",
         );
 
         const period = (row[periodKey] || "").trim();
@@ -664,7 +654,6 @@ targetsRouter.post("/uploadSalary", upload.single("salaryFile"), (req, res) => {
         WHERE period = ?
         AND PF_NO IN (${placeholders})
       `;
-      console.log(deleteQuery);
 
       pool.query(deleteQuery, [periodValue, ...pfArray], (deleteErr) => {
         if (deleteErr) {
@@ -727,13 +716,13 @@ targetsRouter.post(
 
       for (const row of results) {
         const periodKey = Object.keys(row).find(
-          (k) => k.trim().toLowerCase() === "period"
+          (k) => k.trim().toLowerCase() === "period",
         );
         const pfKey = Object.keys(row).find(
-          (k) => k.trim().toLowerCase() === "pf_no"
+          (k) => k.trim().toLowerCase() === "pf_no",
         );
         const insuranceKey = Object.keys(row).find(
-          (k) => k.trim().toLowerCase() === "insurance"
+          (k) => k.trim().toLowerCase() === "insurance",
         );
 
         const period = (row[periodKey] || "").trim();
@@ -749,7 +738,7 @@ targetsRouter.post(
             (err, rs) => {
               if (err || !rs.length) resolve(null);
               else resolve(rs[0].id);
-            }
+            },
           );
         });
 
@@ -786,7 +775,7 @@ targetsRouter.post(
       console.error(error);
       res.status(500).json({ error: "Internal server error" });
     }
-  }
+  },
 );
 
 export const getFinancialYearRange = (period) => {
@@ -815,9 +804,10 @@ targetsRouter.post(
   "/totalRecoveryAchieved",
   upload.single("totalRecoveryAchievedFile"),
   (req, res) => {
-
     if (!req.file)
-      return res.status(400).json({ error: "totalRecoveryAchievedFile required" });
+      return res
+        .status(400)
+        .json({ error: "totalRecoveryAchievedFile required" });
 
     const rows = [];
     Readable.from(req.file.buffer)
@@ -830,17 +820,14 @@ targetsRouter.post(
       });
 
     // ❗ Removed early res.json() — Only final response is allowed
-  }
+  },
 );
 
 function processRows(rows, res) {
-
-  if (!rows.length)
-    return res.status(400).json({ error: "CSV empty" });
+  if (!rows.length) return res.status(400).json({ error: "CSV empty" });
 
   const period = rows[0].period?.trim();
-  if (!period)
-    return res.status(400).json({ error: "Missing period" });
+  if (!period) return res.status(400).json({ error: "Missing period" });
 
   const fy = getFinancialYearRange1(period);
   const fyStart = fy.start;
@@ -856,7 +843,7 @@ function processRows(rows, res) {
       return res.json({
         ok: true,
         message: "recovery achieved uploaded successfully",
-        data: output
+        data: output,
       });
     }
 
@@ -867,7 +854,7 @@ function processRows(rows, res) {
       fyEnd,
       processedBranches,
       output,
-      next
+      next,
     );
   };
 
@@ -881,7 +868,7 @@ function processBranch(
   fyEnd,
   processedBranches,
   output,
-  next
+  next,
 ) {
   const sheetBranch = row.branch_id?.trim();
   const recoveryAmount = Number(row.recovery_amount?.trim() || 0);
@@ -890,19 +877,20 @@ function processBranch(
   if (processedBranches.has(sheetBranch)) return next();
   processedBranches.add(sheetBranch);
 
-
   pool.query(
     "SELECT id FROM users WHERE role='BM' AND branch_id=? AND resign=0 LIMIT 1",
     [sheetBranch],
     (err, bmRows) => {
       if (err || !bmRows.length) {
-        output.push({ branch: sheetBranch, error: err?.message || "No BM found" });
+        output.push({
+          branch: sheetBranch,
+          error: err?.message || "No BM found",
+        });
         return next();
       }
 
       const bmId = bmRows[0].id;
 
- 
       pool.query(
         `
         SELECT id, staff_id, old_branch_id, new_branch_id, transfer_date
@@ -935,12 +923,11 @@ function processBranch(
                   branch: sheetBranch,
                   recovery: recoveryAmount,
                   bm_given: recoveryAmount,
-                  transferred: []
+                  transferred: [],
                 });
                 return next();
               }
 
-              
               const byStaff = {};
               for (const tr of transferRows) {
                 if (!byStaff[tr.staff_id]) byStaff[tr.staff_id] = [];
@@ -958,14 +945,19 @@ function processBranch(
 
               for (const staffId in byStaff) {
                 const trs = byStaff[staffId];
-                trs.sort((a, b) => new Date(a.transfer_date) - new Date(b.transfer_date));
+                trs.sort(
+                  (a, b) =>
+                    new Date(a.transfer_date) - new Date(b.transfer_date),
+                );
 
                 let currentBranch = trs[0].old_branch_id;
                 let currentStart = fyStart;
 
                 for (const tr of trs) {
                   const t = new Date(tr.transfer_date);
-                  const segEnd = new Date(Date.UTC(t.getFullYear(), t.getMonth() - 1, 1));
+                  const segEnd = new Date(
+                    Date.UTC(t.getFullYear(), t.getMonth() - 1, 1),
+                  );
 
                   const months = countMonths(currentStart, segEnd);
 
@@ -974,7 +966,9 @@ function processBranch(
                   }
 
                   currentBranch = tr.new_branch_id;
-                  currentStart = new Date(Date.UTC(t.getFullYear(), t.getMonth(), 1));
+                  currentStart = new Date(
+                    Date.UTC(t.getFullYear(), t.getMonth(), 1),
+                  );
                 }
 
                 const finalMonths = countMonths(currentStart, fyEnd);
@@ -982,7 +976,7 @@ function processBranch(
                   segments.push({
                     staffId,
                     transferId: trs[trs.length - 1].id,
-                    months: finalMonths
+                    months: finalMonths,
                   });
                 }
               }
@@ -992,18 +986,17 @@ function processBranch(
                   branch: sheetBranch,
                   recovery: recoveryAmount,
                   bm_given: recoveryAmount,
-                  transferred: []
+                  transferred: [],
                 });
                 return next();
               }
 
-            
               const totalMonths = segments.reduce((s, x) => s + x.months, 0);
               const perMonth = recoveryAmount / totalMonths;
 
               let values = segments.map((seg) => ({
                 ...seg,
-                value: Math.floor(seg.months * perMonth)
+                value: Math.floor(seg.months * perMonth),
               }));
 
               let allocated = values.reduce((s, v) => s + v.value, 0);
@@ -1017,7 +1010,6 @@ function processBranch(
                 }
               }
 
-     
               pool.getConnection((err, conn) => {
                 if (err) {
                   output.push({ branch: sheetBranch, error: err.message });
@@ -1045,7 +1037,10 @@ function processBranch(
                         if (err) {
                           return conn.rollback(() => {
                             conn.release();
-                            output.push({ branch: sheetBranch, error: err.message });
+                            output.push({
+                              branch: sheetBranch,
+                              error: err.message,
+                            });
                             next();
                           });
                         }
@@ -1054,37 +1049,40 @@ function processBranch(
                           conn.commit((err) => {
                             conn.release();
                             if (err) {
-                              output.push({ branch: sheetBranch, error: err.message });
+                              output.push({
+                                branch: sheetBranch,
+                                error: err.message,
+                              });
                             } else {
                               output.push({
                                 branch: sheetBranch,
                                 recovery: recoveryAmount,
                                 bm_given: recoveryAmount,
-                                transferred: values
+                                transferred: values,
                               });
                             }
                             next();
                           });
                         }
-                      }
+                      },
                     );
                   });
                 });
               });
-            }
+            },
           );
-        }
+        },
       );
-    }
+    },
   );
 }
 
-function getFinancialYearRange1(period) {  
+function getFinancialYearRange1(period) {
   const [startYear] = period.split("-");
   const s = Number(startYear);
   return {
-    start: new Date(Date.UTC(s, 3, 1)), 
-    end: new Date(Date.UTC(s + 1, 2, 1)), 
+    start: new Date(Date.UTC(s, 3, 1)),
+    end: new Date(Date.UTC(s + 1, 2, 1)),
   };
 }
 //audit achieved
@@ -1092,7 +1090,6 @@ targetsRouter.post(
   "/totalAuditAchieved",
   upload.single("totalAuditAchievedFile"),
   (req, res) => {
-
     if (!req.file)
       return res.status(400).json({ error: "totalAuditAchievedFile required" });
 
@@ -1105,18 +1102,14 @@ targetsRouter.post(
         console.error(err);
         res.status(500).json({ error: "CSV parse error" });
       });
-
-  }
+  },
 );
 
 function processRows1(rows, res) {
-
-  if (!rows.length)
-    return res.status(400).json({ error: "CSV empty" });
+  if (!rows.length) return res.status(400).json({ error: "CSV empty" });
 
   const period = rows[0].period?.trim();
-  if (!period)
-    return res.status(400).json({ error: "Missing period" });
+  if (!period) return res.status(400).json({ error: "Missing period" });
 
   const fy = getFinancialYearRange2(period);
   const fyStart = fy.start;
@@ -1132,7 +1125,7 @@ function processRows1(rows, res) {
       return res.json({
         ok: true,
         message: "audit achieved uploaded successfully",
-        data: output
+        data: output,
       });
     }
 
@@ -1143,7 +1136,7 @@ function processRows1(rows, res) {
       fyEnd,
       processedBranches,
       output,
-      next
+      next,
     );
   };
 
@@ -1157,7 +1150,7 @@ function processBranch1(
   fyEnd,
   processedBranches,
   output,
-  next
+  next,
 ) {
   const sheetBranch = row.branch_id?.trim();
   const auditAmount = Number(row.audit_amount?.trim() || 0);
@@ -1166,19 +1159,20 @@ function processBranch1(
   if (processedBranches.has(sheetBranch)) return next();
   processedBranches.add(sheetBranch);
 
-  
   pool.query(
     "SELECT id FROM users WHERE role='BM' AND branch_id=? AND resign=0 LIMIT 1",
     [sheetBranch],
     (err, bmRows) => {
       if (err || !bmRows.length) {
-        output.push({ branch: sheetBranch, error: err?.message || "No BM found" });
+        output.push({
+          branch: sheetBranch,
+          error: err?.message || "No BM found",
+        });
         return next();
       }
 
       const bmId = bmRows[0].id;
 
- 
       pool.query(
         `
         SELECT id, staff_id, old_branch_id, new_branch_id, transfer_date
@@ -1194,15 +1188,13 @@ function processBranch1(
             return next();
           }
 
-         
           pool.query(
             `
             INSERT INTO entries (period, branch_id, employee_id, kpi, value, status)
             VALUES (?, ?, ?, 'audit', ?, 'Verified')
             `,
             [period, sheetBranch, bmId, auditAmount],
-           
-            
+
             (err) => {
               if (err) {
                 output.push({ branch: sheetBranch, error: err.message });
@@ -1214,7 +1206,7 @@ function processBranch1(
                   branch: sheetBranch,
                   recovery: auditAmount,
                   bm_given: auditAmount,
-                  transferred: []
+                  transferred: [],
                 });
                 return next();
               }
@@ -1236,14 +1228,19 @@ function processBranch1(
 
               for (const staffId in byStaff) {
                 const trs = byStaff[staffId];
-                trs.sort((a, b) => new Date(a.transfer_date) - new Date(b.transfer_date));
+                trs.sort(
+                  (a, b) =>
+                    new Date(a.transfer_date) - new Date(b.transfer_date),
+                );
 
                 let currentBranch = trs[0].old_branch_id;
                 let currentStart = fyStart;
 
                 for (const tr of trs) {
                   const t = new Date(tr.transfer_date);
-                  const segEnd = new Date(Date.UTC(t.getFullYear(), t.getMonth() - 1, 1));
+                  const segEnd = new Date(
+                    Date.UTC(t.getFullYear(), t.getMonth() - 1, 1),
+                  );
 
                   const months = countMonths(currentStart, segEnd);
 
@@ -1252,7 +1249,9 @@ function processBranch1(
                   }
 
                   currentBranch = tr.new_branch_id;
-                  currentStart = new Date(Date.UTC(t.getFullYear(), t.getMonth(), 1));
+                  currentStart = new Date(
+                    Date.UTC(t.getFullYear(), t.getMonth(), 1),
+                  );
                 }
 
                 const finalMonths = countMonths(currentStart, fyEnd);
@@ -1260,7 +1259,7 @@ function processBranch1(
                   segments.push({
                     staffId,
                     transferId: trs[trs.length - 1].id,
-                    months: finalMonths
+                    months: finalMonths,
                   });
                 }
               }
@@ -1270,18 +1269,17 @@ function processBranch1(
                   branch: sheetBranch,
                   recovery: auditAmount,
                   bm_given: auditAmount,
-                  transferred: []
+                  transferred: [],
                 });
                 return next();
               }
 
-             
               const totalMonths = segments.reduce((s, x) => s + x.months, 0);
               const perMonth = auditAmount / totalMonths;
 
               let values = segments.map((seg) => ({
                 ...seg,
-                value: Math.floor(seg.months * perMonth)
+                value: Math.floor(seg.months * perMonth),
               }));
 
               let allocated = values.reduce((s, v) => s + v.value, 0);
@@ -1295,7 +1293,6 @@ function processBranch1(
                 }
               }
 
-        
               pool.getConnection((err, conn) => {
                 if (err) {
                   output.push({ branch: sheetBranch, error: err.message });
@@ -1319,12 +1316,15 @@ function processBranch1(
                       WHERE id = ?
                       `,
                       [seg.value, seg.transferId],
-                      
+
                       (err) => {
                         if (err) {
                           return conn.rollback(() => {
                             conn.release();
-                            output.push({ branch: sheetBranch, error: err.message });
+                            output.push({
+                              branch: sheetBranch,
+                              error: err.message,
+                            });
                             next();
                           });
                         }
@@ -1333,28 +1333,31 @@ function processBranch1(
                           conn.commit((err) => {
                             conn.release();
                             if (err) {
-                              output.push({ branch: sheetBranch, error: err.message });
+                              output.push({
+                                branch: sheetBranch,
+                                error: err.message,
+                              });
                             } else {
                               output.push({
                                 branch: sheetBranch,
                                 recovery: auditAmount,
                                 bm_given: auditAmount,
-                                transferred: values
+                                transferred: values,
                               });
                             }
                             next();
                           });
                         }
-                      }
+                      },
                     );
                   });
                 });
               });
-            }
+            },
           );
-        }
+        },
       );
-    }
+    },
   );
 }
 
@@ -1362,11 +1365,10 @@ function getFinancialYearRange2(period) {
   const [startYear] = period.split("-");
   const s = Number(startYear);
   return {
-    start: new Date(Date.UTC(s, 3, 1)), 
-    end: new Date(Date.UTC(s + 1, 2, 1)), 
+    start: new Date(Date.UTC(s, 3, 1)),
+    end: new Date(Date.UTC(s + 1, 2, 1)),
   };
 }
-
 
 targetsRouter.post(
   "/upload-deputation-staff",
@@ -1398,8 +1400,8 @@ targetsRouter.post(
           (row.period || "").trim(),
         ]);
 
-        const empIds = [...new Set(values.map(v => v[0]))];
-        const periods = [...new Set(values.map(v => v[8]))];
+        const empIds = [...new Set(values.map((v) => v[0]))];
+        const periods = [...new Set(values.map((v) => v[8]))];
 
         if (!periods.length || !periods[0]) {
           return res.status(400).json({ error: "Period missing in CSV" });
@@ -1423,45 +1425,40 @@ targetsRouter.post(
               return res.status(500).json(txErr);
             }
 
-            conn.query(
-              deleteQuery,
-              [...empIds, ...periods],
-              (delErr) => {
-                if (delErr) {
-                  return conn.rollback(() => {
-                    conn.release();
-                    res.status(500).json({ error: "Delete failed" });
-                  });
-                }
+            conn.query(deleteQuery, [...empIds, ...periods], (delErr) => {
+              if (delErr) {
+                return conn.rollback(() => {
+                  conn.release();
+                  res.status(500).json({ error: "Delete failed" });
+                });
+              }
 
-                const insertQuery = `
+              const insertQuery = `
                   INSERT INTO deputation_staff
                   (emp_id, name, place, design, branch, work_at, weightage_score, department, period)
                   VALUES ?
                 `;
 
-                conn.query(insertQuery, [values], (insErr) => {
-                  if (insErr) {
-                    return conn.rollback(() => {
-                      conn.release();
-                      res.status(500).json({ error: "Insert failed" });
-                    });
-                  }
-
-                  conn.commit(() => {
+              conn.query(insertQuery, [values], (insErr) => {
+                if (insErr) {
+                  return conn.rollback(() => {
                     conn.release();
-                    res.json({
-                      ok: true,
-                      inserted: values.length,
-                      periods,
-                    });
+                    res.status(500).json({ error: "Insert failed" });
+                  });
+                }
+
+                conn.commit(() => {
+                  conn.release();
+                  res.json({
+                    ok: true,
+                    inserted: values.length,
+                    periods,
                   });
                 });
-              }
-            );
+              });
+            });
           });
         });
       });
-  }
+  },
 );
-

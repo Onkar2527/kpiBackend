@@ -7,7 +7,8 @@ import mysql from 'mysql';
 //   host: '20.197.10.226',
 //   user: 'appuser4',
 //   password: 'StrongP@ssw0rd!',
-//   database: 'kpi_system_prod'
+//   database: 'kpi_system_prod',
+//   timezone: "+05:30"
 // });
 
 const pool = mysql.createPool({
@@ -15,7 +16,8 @@ const pool = mysql.createPool({
   host: 'localhost',
   user: 'root',
   password: 'root',
-  database: 'kpi_system_prod'
+  database: 'kpi_system_prod',
+  timezone: "+05:30"
 });
 
 export default pool;

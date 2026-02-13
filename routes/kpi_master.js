@@ -64,7 +64,7 @@ KpiRouter.put('/kpiMaster/:id', (req, res) => {
 });
 
 KpiRouter.delete('/kpiMaster/:id', (req, res) => {
-  console.log(`Deleting KPI with id: ${req.params.id}`);
+  
 
   const query = 'UPDATE kpi_master SET deleted_at = NOW() WHERE id = ?';
   pool.query(query, [req.params.id], (error, result) => {
@@ -82,7 +82,7 @@ KpiRouter.delete('/kpiMaster/:id', (req, res) => {
 });
 //kpi mapping 
 KpiRouter.get('/kpiMapping', (req, res) => {
-  pool.query('SELECT * FROM role_kpi_mapping where deleted_at is null', (error, results) => {
+  pool.query('SELECT k.*, km.kpi_name as kpi_name FROM role_kpi_mapping k left join kpi_master km on k.kpi_id=km.id where k.deleted_at is null', (error, results) => {
     if (error) return res.status(500).json({ error: 'Internal server error' });
     res.json(results);
   });
@@ -141,7 +141,7 @@ KpiRouter.put('/kpiMapping/:id', (req, res) => {
 });
 
 KpiRouter.delete('/kpiMapping/:id', (req, res) => {
-  console.log(`Deleting KPI with id: ${req.params.id}`);
+  
 
   const query = 'UPDATE role_kpi_mapping SET deleted_at = NOW() WHERE id = ?';
   pool.query(query, [req.params.id], (error, result) => {

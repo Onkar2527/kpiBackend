@@ -60,7 +60,7 @@ mastersRouter.put("/departments/:id", (req, res) => {
   );
 });
 mastersRouter.delete("/departments/:id", (req, res) => {
-  console.log(`Deleting department with id: ${req.params.id}`);
+
   pool.query(
     "DELETE FROM departments WHERE id = ?",
     [req.params.id],
@@ -98,7 +98,7 @@ mastersRouter.put("/weightages", (req, res) => {
 // Users
 mastersRouter.get("/users", (req, res) => {
   pool.query(
-    "SELECT u.id, u.username, u.name, u.role, b.name as branch_name, u.PF_NO, d.name as department_name,u.branch_id FROM users u left join branches b on u.branch_id=b.code left join departments d on d.id=u.department_id WHERE u.resign=0",
+    "SELECT u.id, u.username, u.name, u.role, b.name as branch_name, u.PF_NO, d.name as department_name,u.branch_id,u.hod_id FROM users u left join branches b on u.branch_id=b.code left join departments d on d.id=u.department_id WHERE u.resign=0",
     (error, results) => {
       if (error)
         return res.status(500).json({ error: "Internal server error" });
@@ -119,15 +119,7 @@ mastersRouter.post("/users", (req, res) => {
     hod_id,
   } = req.body;
   const password_hash = bcrypt.hashSync(password, 10);
-  console.log("Adding user:", {
-    username,
-    name,
-    role,
-    branch_id,
-    department_id,
-    password_hash,
-    hod_id,
-  });
+ 
   const user = {
     username,
     name,
@@ -201,9 +193,9 @@ mastersRouter.put("/users/:id", (req, res) => {
 });
 
 mastersRouter.post("/users/:id", (req, res) => {
-  console.log(`Marking user resigned: ${req.params.id}`);
+  
   const { resignedDate } = req.body;
-  console.log(resignedDate);
+  
 
   pool.query(
     "UPDATE users SET resign = 1,  resign_date = ? WHERE id = ?",
@@ -238,7 +230,7 @@ mastersRouter.get("/users/branch/:branchId/role/:role", (req, res) => {
 
 // Branches
 mastersRouter.get("/branches", (req, res) => {
-  pool.query("SELECT * FROM branches", (error, results) => {
+  pool.query("SELECT b.*, u.name AS incharge_name FROM branches b left join users u on b.incharge_id=u.id ", (error, results) => {
     if (error) return res.status(500).json({ error: "Internal server error" });
     res.json(results);
   });
@@ -247,7 +239,7 @@ mastersRouter.get("/branches", (req, res) => {
 mastersRouter.post("/branches", (req, res) => {
   const { code, name, incharge_id } = req.body;
   const branch = { code, name, incharge_id };
-  console.log("Adding branch:", branch);
+
   pool.getConnection((err, connection) => {
     if (err) return res.status(500).json({ error: "Internal server error" });
     connection.beginTransaction((err) => {
@@ -291,7 +283,7 @@ mastersRouter.put("/branches/:id", (req, res) => {
 });
 
 mastersRouter.delete("/branches/:id", (req, res) => {
-  console.log(`Deleting branch with id: ${req.params.id}`);
+  
   pool.query(
     "DELETE FROM branches WHERE id = ?",
     [req.params.id],
@@ -375,7 +367,7 @@ mastersRouter.post("/transfers", (req, res) => {
     new_designation,
   };
 
-  console.log("Adding transfer:", transfer);
+  
 
   pool.getConnection((err, connection) => {
     if (err) return res.status(500).json({ error: "Internal server error" });
@@ -430,7 +422,7 @@ mastersRouter.put("/transfers/:id", (req, res) => {
 });
 
 mastersRouter.delete("/transfers/:id", (req, res) => {
-  console.log(`Deleting transfer with id: ${req.params.id}`);
+  
   pool.query(
     "DELETE FROM employee_transfer WHERE id = ?",
     [req.params.id],
@@ -446,8 +438,8 @@ mastersRouter.delete("/transfers/:id", (req, res) => {
 });
 
 mastersRouter.put("/Transfers_user/:id", (req, res) => {
-  const { branch_id, role } = req.body;
-  const user = { branch_id, role, transfered: 1 };
+  const { branch_id, role, hod_id } = req.body;
+  const user = { branch_id, role, transfered: 1, hod_id };
 
   pool.query(
     "UPDATE users SET ? WHERE id = ?",
@@ -529,6 +521,22 @@ mastersRouter.post("/trasfer-history", (req, res) => {
   });
 });
 
+const getMonthDiff = (startDate, endDate) => {
+  const start = new Date(startDate);
+  const end = new Date(endDate);
+  return (
+    (end.getFullYear() - start.getFullYear()) * 12 +
+    (end.getMonth() - start.getMonth()) +
+    1
+  );
+};
+
+const getFinancialYearStart = (period) => {
+  const startYear = parseInt(period.split("-")[0], 10);
+  return new Date(startYear, 3, 1); // April 1
+};
+
+
 mastersRouter.post("/transfer-Kpi-history", (req, res) => {
   const { period, staff_id } = req.body;
 
@@ -541,12 +549,11 @@ mastersRouter.post("/transfer-Kpi-history", (req, res) => {
     u.resign as resigned
 FROM 
     employee_transfer e
-    INNER JOIN users u 
-        ON u.id = e.staff_id
+    INNER JOIN users u ON u.id = e.staff_id
     INNER JOIN branches b 
         ON b.code COLLATE utf8mb4_unicode_ci = 
            e.old_branch_id COLLATE utf8mb4_unicode_ci
-    INNER JOIN branches bi 
+    LEFT JOIN branches bi 
         ON bi.code COLLATE utf8mb4_unicode_ci = 
            e.new_branch_id COLLATE utf8mb4_unicode_ci       
 WHERE 
@@ -574,58 +581,23 @@ ORDER BY
 
       const calculateScore = (kpi, achieved, target) => {
         let outOf10;
-        if (!target || target === 0) {
-          return 0;
-        }
+        if (!target || target === 0) return 0;
 
         const ratio = achieved / target;
-        const auditRatio = kpi === "audit" ? kpi.achieved / kpi.target : 0;
-        const recoveryRatio =
-          kpi === "recovery" ? kpi.achieved / kpi.target : 0;
 
         switch (kpi) {
           case "deposit":
           case "loan_gen":
-            if (ratio <= 1) {
-              outOf10 = ratio * 10;
-            } else if (ratio < 1.25) {
-              outOf10 = 10;
-            } else if (auditRatio >= 0.75 && recoveryRatio >= 0.75) {
-              outOf10 = 12.5;
-            } else {
-              outOf10 = 10;
-            }
+            outOf10 = ratio <= 1 ? ratio * 10 : ratio < 1.25 ? 10 : 12.5;
             break;
 
           case "loan_amulya":
-            if (ratio <= 1) {
-              outOf10 = ratio * 10;
-            } else if (ratio < 1.25) {
-              outOf10 = 10;
-            } else {
-              outOf10 = 12.5;
-            }
-            break;
-
-          case "insurance":
-            if (ratio === 0) {
-              outOf10 = -2;
-            } else if (ratio <= 1) {
-              outOf10 = ratio * 10;
-            } else if (ratio < 1.25) {
-              outOf10 = 10;
-            } else {
-              outOf10 = 12.5;
-            }
+            outOf10 = ratio <= 1 ? ratio * 10 : ratio < 1.25 ? 10 : 12.5;
             break;
 
           case "recovery":
           case "audit":
-            if (ratio <= 1) {
-              outOf10 = ratio * 10;
-            } else {
-              outOf10 = 12.5;
-            }
+            outOf10 = ratio <= 1 ? ratio * 10 : 12.5;
             break;
 
           default:
@@ -637,43 +609,29 @@ ORDER BY
 
       const staffResult = {
         staff_id: transfers[0].staff_id,
-        name: transfers[0].name,
+        name: transfers[0].staff_name,
         period: transfers[0].period,
         resigned: transfers[0].resigned,
         transfers: [],
+        branch_avg_kpi: {},
+        total_months: 0,
       };
+
+      const fyStart = getFinancialYearStart(period);
+      const branchTransferDates = {};
+      const branchWiseKpi = {};
 
       transfers.forEach((t) => {
         const branchScores = {};
         let totalWeightageScore = 0;
 
+       
         const kpis = [
-          {
-            key: "deposit",
-            achieved: t.deposit_achieved,
-            target: t.deposit_target,
-          },
-          {
-            key: "loan_gen",
-            achieved: t.loan_gen_achieved,
-            target: t.loan_gen_target,
-          },
-          {
-            key: "loan_amulya",
-            achieved: t.loan_amulya_achieved,
-            target: t.loan_amulya_target,
-          },
-          {
-            key: "recovery",
-            achieved: t.recovery_achieved,
-            target: t.recovery_target,
-          },
+          { key: "deposit", achieved: t.deposit_achieved, target: t.deposit_target },
+          { key: "loan_gen", achieved: t.loan_gen_achieved, target: t.loan_gen_target },
+          { key: "loan_amulya", achieved: t.loan_amulya_achieved, target: t.loan_amulya_target },
+          { key: "recovery", achieved: t.recovery_achieved, target: t.recovery_target },
           { key: "audit", achieved: t.audit_achieved, target: t.audit_target },
-          {
-            key: "insurance",
-            achieved: t.insurance_achieved,
-            target: t.insurance_target,
-          },
         ];
 
         kpis.forEach((row) => {
@@ -688,16 +646,19 @@ ORDER BY
             target: row.target || 0,
             score,
             weightage,
-            weightageScore:
-              row.key === "insurance" && score === 0
-                ? -2
-                : isNaN(weightageScore)
-                  ? 0
-                  : weightageScore,
+            weightageScore: isNaN(weightageScore) ? 0 : weightageScore,
           };
 
           totalWeightageScore += branchScores[row.key].weightageScore;
         });
+
+        const branch = t.branch_name;
+        if (!branchTransferDates[branch]) branchTransferDates[branch] = [];
+        branchTransferDates[branch].push(new Date(t.transfer_date));
+
+        if (!branchWiseKpi[branch]) branchWiseKpi[branch] = { total: 0, count: 0 };
+        branchWiseKpi[branch].total += totalWeightageScore;
+        branchWiseKpi[branch].count += 1;
 
         staffResult.transfers.push({
           transfer_date: t.transfer_date,
@@ -710,10 +671,33 @@ ORDER BY
         });
       });
 
+      let totalMonthsWorked = 0;
+      let branchCounter = {};
+
+      staffResult.transfers.forEach((t) => {
+        const branch = t.old_branch_name || "UNKNOWN";
+
+        branchCounter[branch] = (branchCounter[branch] || 0) + 1;
+        const key = `${branch}#${branchCounter[branch]}`;
+
+        staffResult.branch_avg_kpi[key] = {
+          avg_kpi: t.total_weightage_score,
+          months: 1,
+          new_branch_name: t.new_branch_name, 
+        };
+
+        totalMonthsWorked += 1;
+      });
+
+
+      staffResult.total_months = totalMonthsWorked;
+
       res.json([staffResult]);
     });
   });
 });
+
+
 
 mastersRouter.post("/verifyPassword", (req, res) => {
   const { userId, oldPassword } = req.body;
@@ -900,7 +884,7 @@ mastersRouter.post("/update_employee_transfer_Transfered", (req, res) => {
         return res
           .status(500)
           .json({ error: "Database error 1", details: err });
-      console.log(rows);
+      
 
       if (rows.length === 0) {
         return res
@@ -985,7 +969,7 @@ mastersRouter.post("/update_employee_transfer_Transfered", (req, res) => {
 });
 mastersRouter.get("/get-AGM", (req, res) => {
   pool.query(
-    ` select id , username,name from users where role in ('AGM','DGM','AGM_AUDIT','AGM_INSURANCE','AGM_IT')`,
+    ` select id , username,name from users where role in ('AGM','DGM','AGM_AUDIT','AGM_INSURANCE','AGM_IT','GM')`,
     (error, results) => {
       if (error)
         return res.status(500).json({ error: "Internal server error" });
@@ -993,3 +977,7 @@ mastersRouter.get("/get-AGM", (req, res) => {
     },
   );
 });
+
+
+
+

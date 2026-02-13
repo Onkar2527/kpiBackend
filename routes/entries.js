@@ -198,6 +198,8 @@ entriesRouter.post("/", (req, res) => {
         type: typeOfDeposit,
         status: "Pending",
       };
+    
+      
       pool.query("INSERT INTO entries SET ?", entry, (err) => {
         if (err)
           return res.status(500).json({ error: "Failed to insert entry" });
@@ -318,7 +320,7 @@ entriesRouter.post("/monthEntries", (req, res) => {
   }
 
   const query = `
-    SELECT e.*,u.PF_NO,b.name as branchName FROM entries e join users u on e.employee_id=u.id join branches b on e.branch_id=b.id
+    SELECT e.*,u.PF_NO,b.name as branchName FROM entries e join users u on e.employee_id=u.id join branches b on e.branch_id=b.code
     WHERE period = ? 
   `;
   pool.query(query, [period], (error, results) => {
@@ -330,7 +332,6 @@ entriesRouter.post("/monthEntries", (req, res) => {
 });
 
 entriesRouter.delete("/entries/:id", (req, res) => {
-  console.log(`Deleting Entries with id: ${req.params.id}`);
   pool.query(
     "DELETE FROM entries WHERE id = ?",
     [req.params.id],
