@@ -373,181 +373,79 @@ export const getFinancialYearRange = (period) => {
   return { start, end };
 };
 
-// transferRouter.post("/transfer-staff-master", (req, res) => {
-//   const { staff_id, period, old_branchId, new_branchId, role, transferData } =
-//     req.body;
-
-//   if (!staff_id || !period || !old_branchId || !new_branchId) {
-//     return res.status(400).json({ error: "Missing required fields" });
-//   }
-
-//   pool.query(
-//     "UPDATE users SET transfer_date = NOW() WHERE id=?",
-//     [staff_id],
-//     (err) => {
-//       if (err) {
-//         return res
-//           .status(500)
-//           .json({ error: "Failed to update transfer date" });
-//       }
-
-//       autoDistributeTargetsOldBranch(period, old_branchId, role, (err) => {
-//         if (err) {
-//           return res
-//             .status(500)
-//             .json({ error: "Old branch distribution failed" });
-//         }
-
-//         const {
-//           staff_id,
-//           old_branch_id,
-//           new_branch_id,
-//           kpi_total,
-//           period,
-//           deposit_target,
-//           deposit_achieved,
-//           loan_gen_target,
-//           loan_gen_achieved,
-//           loan_amulya_target,
-//           loan_amulya_achieved,
-//           audit_target,
-//           audit_achieved,
-//           recovery_target,
-//           recovery_achieved,
-//           insurance_target,
-//           insurance_achieved,
-//           old_designation,
-//           new_designation,
-//         } = transferData;
-
-//         const transfer = {
-//           staff_id,
-//           old_branch_id,
-//           new_branch_id,
-//           kpi_total,
-//           period,
-//           deposit_target,
-//           deposit_achieved,
-//           loan_gen_target,
-//           loan_gen_achieved,
-//           loan_amulya_target,
-//           loan_amulya_achieved,
-//           audit_target,
-//           audit_achieved,
-//           recovery_target,
-//           recovery_achieved,
-//           insurance_target,
-//           insurance_achieved,
-//           old_designation,
-//           new_designation,
-//         };
-
-//         pool.query("INSERT INTO employee_transfer SET ?", transfer, (err) => {
-//           if (err) {
-//             return res
-//               .status(500)
-//               .json({ error: "Employee transfer insert failed" });
-//           }
-
-//           if (role === "BM") {
-//             updateProratedTargetsFn(
-//               { body: { staff_id, period, old_branchId, new_branchId } },
-//               res,
-//             );
-//           } else {
-//             updateEmployeeTransferFromAllocations(
-//               pool,
-//               period,
-//               old_branchId,
-//               staff_id,
-//             )
-//               .then(() => {
-//                 res.json({
-//                   success: true,
-//                   message: "Employee transfer updated successfully",
-//                 });
-//               })
-//               .catch((err) => {
-//                 console.error(err);
-//                 res.status(500).json({
-//                   error: "Employee transfer allocation update failed",
-//                 });
-//               });
-//           }
-//         });
-//       });
-//     },
-//   );
-// });
-
-
 //trasfer logic for create transfer
 transferRouter.post("/transfer-staff-master", (req, res) => {
-  const { staff_id, period, old_branchId, new_branchId, role,selectedRole, transferData } =
-    req.body;
-  
+  const {
+    staff_id,
+    period,
+    old_branchId,
+    new_branchId,
+    role,
+    selectedRole,
+    transferData,
+  } = req.body;
+
   if (
-  !staff_id ||
-  !period ||
-  (selectedRole === 'Clerk' && !new_branchId) ||
-  (selectedRole !== 'HO_STAFF' && selectedRole !== 'Clerk' && (!old_branchId || !new_branchId)) ||
-  (selectedRole !== 'Attender' && selectedRole !== 'Clerk' && (!old_branchId || !new_branchId))
-) {
-  return res.status(400).json({ error: "Missing required fields" });
-}
+    !staff_id ||
+    !period ||
+    (selectedRole === "Clerk" && !new_branchId) ||
+    (selectedRole !== "HO_STAFF" &&
+      selectedRole !== "Clerk" &&
+      (!old_branchId || !new_branchId)) ||
+    (selectedRole !== "Attender" &&
+      selectedRole !== "Clerk" &&
+      (!old_branchId || !new_branchId))
+  ) {
+    return res.status(400).json({ error: "Missing required fields" });
+  }
 
-
-  
-
-if (role === "HO_STAFF" || role === "Attender") {
-  pool.query(
-    "UPDATE users SET transfer_date = NOW() WHERE id=?",
-    [staff_id],
-    (err) => {
-      if (err) {
-        return res.status(500).json({
-          error: "Failed to update transfer date",
-        });
-      }
-
-      if (role === "Attender") {
-        saveAttenderTransfer(pool, transferData, (err) => {
-          if (err) {
-            console.error(err);
-            return res.status(500).json({
-              error: "Attender transfer failed",
-            });
-          }
-
-          return res.json({
-            success: true,
-            message: "Attender transfer saved successfully",
-          });
-        });
-      }
-      if (role === "HO_STAFF") {
-      saveHoTransfer(pool, transferData, (err) => {
+  if (role === "HO_STAFF" || role === "Attender") {
+    pool.query(
+      "UPDATE users SET transfer_date = NOW() WHERE id=?",
+      [staff_id],
+      (err) => {
         if (err) {
-          console.error(err);
           return res.status(500).json({
-            error: "HO transfer failed",
+            error: "Failed to update transfer date",
           });
         }
 
-        return res.json({
-          success: true,
-          message: "HO staff transfer saved successfully",
-        });
-      });
-    }
-    }
-  );
+        if (role === "Attender") {
+          saveAttenderTransfer(pool, transferData, (err) => {
+            if (err) {
+              console.error(err);
+              return res.status(500).json({
+                error: "Attender transfer failed",
+              });
+            }
 
-  return; // stop here
-}
+            return res.json({
+              success: true,
+              message: "Attender transfer saved successfully",
+            });
+          });
+        }
+        if (role === "HO_STAFF") {
+          saveHoTransfer(pool, transferData, (err) => {
+            if (err) {
+              console.error(err);
+              return res.status(500).json({
+                error: "HO transfer failed",
+              });
+            }
 
+            return res.json({
+              success: true,
+              message: "HO staff transfer saved successfully",
+            });
+          });
+        }
+      },
+    );
 
- 
+    return; // stop here
+  }
+
   pool.query(
     "UPDATE users SET transfer_date = NOW() WHERE id=?",
     [staff_id],
@@ -619,14 +517,14 @@ if (role === "HO_STAFF" || role === "Attender") {
           if (role === "BM") {
             updateProratedTargetsFn(
               { body: { staff_id, period, old_branchId, new_branchId } },
-              res
+              res,
             );
           } else {
             updateEmployeeTransferFromAllocations(
               pool,
               period,
               old_branchId,
-              staff_id
+              staff_id,
             )
               .then(() => {
                 res.json({
@@ -643,74 +541,79 @@ if (role === "HO_STAFF" || role === "Attender") {
           }
         });
       });
-    }
+    },
   );
 });
 
 // transfer logic for update transfer
 transferRouter.post("/transfer-staff-master-update", (req, res) => {
-  const { staff_id, period, old_branchId, new_branchId, role,selectedRole, transferData } =
-    req.body;
+  const {
+    staff_id,
+    period,
+    old_branchId,
+    new_branchId,
+    role,
+    selectedRole,
+    transferData,
+  } = req.body;
 
-    if (
-  !staff_id ||
-  !period ||
-  (selectedRole === 'Clerk' && !new_branchId) ||
-  (selectedRole !== "HO_STAFF" && (!old_branchId || !new_branchId)) ||
-  (selectedRole !== "Attender" && (!old_branchId || !new_branchId))
-) {
-  return res.status(400).json({ error: "Missing required fields" });
-}
-
+  if (
+    !staff_id ||
+    !period ||
+    (selectedRole === "Clerk" && !new_branchId) ||
+    (selectedRole !== "HO_STAFF" && (!old_branchId || !new_branchId)) ||
+    (selectedRole !== "Attender" && (!old_branchId || !new_branchId))
+  ) {
+    return res.status(400).json({ error: "Missing required fields" });
+  }
 
   if (role === "HO_STAFF" || role === "Attender") {
-  pool.query(
-    "UPDATE users SET transfer_date = NOW() WHERE id=?",
-    [staff_id],
-    (err) => {
-      if (err) {
-        return res.status(500).json({
-          error: "Failed to update transfer date",
-        });
-      }
-
-       if (role === "Attender") {
-        saveAttenderTransfer(pool, transferData, (err) => {
-          if (err) {
-            console.error(err);
-            return res.status(500).json({
-              error: "Attender transfer failed",
-            });
-          }
-
-          return res.json({
-            success: true,
-            message: "Attender transfer saved successfully",
-          });
-        });
-      }
-       if (role === "HO_STAFF") {
-      saveHoTransfer(pool, transferData, (err) => {
+    pool.query(
+      "UPDATE users SET transfer_date = NOW() WHERE id=?",
+      [staff_id],
+      (err) => {
         if (err) {
-          console.error(err);
           return res.status(500).json({
-            error: "HO transfer failed",
+            error: "Failed to update transfer date",
           });
         }
 
-        return res.json({
-          success: true,
-          message: "HO staff transfer saved successfully",
-        });
-      });
-    }
-    }
-  );
+        if (role === "Attender") {
+          saveAttenderTransfer(pool, transferData, (err) => {
+            if (err) {
+              console.error(err);
+              return res.status(500).json({
+                error: "Attender transfer failed",
+              });
+            }
 
-  return; // stop here
-}
+            return res.json({
+              success: true,
+              message: "Attender transfer saved successfully",
+            });
+          });
+        }
+        if (role === "HO_STAFF") {
+          saveHoTransfer(pool, transferData, (err) => {
+            if (err) {
+              console.error(err);
+              return res.status(500).json({
+                error: "HO transfer failed",
+              });
+            }
 
- 
+            return res.json({
+              success: true,
+              message: "HO staff transfer saved successfully",
+            });
+          });
+        }
+      },
+    );
+
+    return; // stop here
+  }
+
   pool.query(
     "UPDATE users SET transfer_date = NOW() WHERE id=?",
     [staff_id],
@@ -786,14 +689,14 @@ transferRouter.post("/transfer-staff-master-update", (req, res) => {
             if (role === "BM") {
               updateProratedTargetsFn(
                 { body: { staff_id, period, old_branchId, new_branchId } },
-                res
+                res,
               );
             } else {
               updateEmployeeTransferFromAllocations(
                 pool,
                 period,
                 old_branchId,
-                staff_id
+                staff_id,
               )
                 .then(() => {
                   res.json({
@@ -808,131 +711,15 @@ transferRouter.post("/transfer-staff-master-update", (req, res) => {
                   });
                 });
             }
-          }
+          },
         );
       });
-    }
+    },
   );
 });
 
-// transferRouter.post("/transfer-staff-master-update", (req, res) => {
-//   const { staff_id, period, old_branchId, new_branchId, role, transferData } =
-//     req.body;
-
-//   if (!staff_id || !period || !old_branchId || !new_branchId) {
-//     return res.status(400).json({ error: "Missing required fields" });
-//   }
-
-//   pool.query(
-//     "UPDATE users SET transfer_date = NOW() WHERE id=?",
-//     [staff_id],
-//     (err) => {
-//       if (err) {
-//         return res
-//           .status(500)
-//           .json({ error: "Failed to update transfer date" });
-//       }
-
-//       autoDistributeTargetsOldBranch(period, old_branchId, (err) => {
-//         if (err) {
-//           return res
-//             .status(500)
-//             .json({ error: "Old branch distribution failed" });
-//         }
-//         const {
-//           id,
-//           staff_id,
-//           old_branch_id,
-//           new_branch_id,
-//           kpi_total,
-//           period,
-//           deposit_target,
-//           deposit_achieved,
-//           loan_gen_target,
-//           loan_gen_achieved,
-//           loan_amulya_target,
-//           loan_amulya_achieved,
-//           audit_target,
-//           audit_achieved,
-//           recovery_target,
-//           recovery_achieved,
-//           insurance_target,
-//           insurance_achieved,
-//           old_designation,
-//           new_designation,
-//         } = transferData;
-
-//         const transfer = {
-//           staff_id,
-//           old_branch_id,
-//           new_branch_id,
-//           kpi_total,
-//           period,
-//           deposit_target,
-//           deposit_achieved,
-//           loan_gen_target,
-//           loan_gen_achieved,
-//           loan_amulya_target,
-//           loan_amulya_achieved,
-//           audit_target,
-//           audit_achieved,
-//           recovery_target,
-//           recovery_achieved,
-//           insurance_target,
-//           insurance_achieved,
-//           old_designation,
-//           new_designation,
-//         };
-
-//         pool.query(
-//           "UPDATE employee_transfer SET ? WHERE id = ?",
-//           [transfer, id],
-//           (err) => {
-//             if (err) {
-//               return res
-//                 .status(500)
-//                 .json({ error: "Employee transfer update failed" });
-//             }
-
-//             if (role === "BM") {
-//               updateProratedTargetsFn(
-//                 { body: { staff_id, period, old_branchId, new_branchId } },
-//                 res,
-//               );
-//             } else {
-//               updateEmployeeTransferFromAllocations(
-//                 pool,
-//                 period,
-//                 old_branchId,
-//                 staff_id,
-//               )
-//                 .then(() => {
-//                   res.json({
-//                     success: true,
-//                     message: "Employee transfer updated successfully",
-//                   });
-//                 })
-//                 .catch((err) => {
-//                   console.error(err);
-//                   res.status(500).json({
-//                     error: "Employee transfer allocation update failed",
-//                   });
-//                 });
-//             }
-//           },
-//         );
-//       });
-//     },
-//   );
-// });
 function saveHoTransfer(pool, body, callback) {
-  const {
-    staff_id,
-    hod_id,
-    old_hod_id,
-    period,
-    
-  } = body;
+  const { staff_id, hod_id, old_hod_id, period } = body;
 
   if (!staff_id || !period) {
     return callback(new Error("Missing required HO transfer fields"));
@@ -947,7 +734,10 @@ function saveHoTransfer(pool, body, callback) {
     body.audit_achieved || 0,
     hod_id || null,
     old_hod_id || null,
-    period
+    body.old_designation || null,
+    body.new_designation || null,
+    period,
+    body.resiged || 0
   ];
 
   const sql = `
@@ -961,9 +751,12 @@ function saveHoTransfer(pool, body, callback) {
       \`Branch_Communication\`,
       hod_id,
       old_hod_id,
-      period
+      old_designation,
+      new_designation,
+      period,
+      resiged
     )
-    VALUES (?, NOW(), ?, ?, ?, ?, ?, ?, ?, ?)
+    VALUES (?, NOW(), ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `;
 
   pool.query(sql, values, callback);
@@ -994,22 +787,14 @@ transferRouter.post("/ho_transfer", (req, res) => {
 });
 
 function saveAttenderTransfer(pool, body, callback) {
-  const {
-    staff_id,
-    hod_id,
-    old_hod_id,
-    new_branch_id,
-    old_branch_id,
-    period,
-    
-  } = body;
+  const { staff_id, hod_id, old_hod_id, new_branch_id, old_branch_id, period } =
+    body;
 
-  
   if (!staff_id || !period) {
     return callback(new Error("Missing required Attender transfer fields"));
   }
 
-  const values = [ 
+  const values = [
     staff_id,
     body.kpi_total || 0,
     body.deposit_achieved || 0,
@@ -1020,7 +805,8 @@ function saveAttenderTransfer(pool, body, callback) {
     old_branch_id || null,
     body.old_designation || null,
     body.new_designation || null,
-    period
+    period,
+    body.resiged || 0
   ];
 
   const sql = `
@@ -1036,9 +822,10 @@ function saveAttenderTransfer(pool, body, callback) {
       old_branch_id,
       old_designation,
       new_designation,
-      period
+      period,
+      resiged
     )
-    VALUES (?, NOW(), ?, ?, ?, ?, ?, ?, ?, ?,?,?)
+    VALUES (?, NOW(), ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `;
 
   pool.query(sql, values, callback);

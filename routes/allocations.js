@@ -4,6 +4,7 @@ import pool from "../db.js";
 // Router handling staff allocations: auto‑distribution and publish.
 export const allocationsRouter = express.Router();
 
+//This function  help to auto distribute logic
 export const autoDistributeTargets = (period, branchId, callback) => {
   pool.query(
     "SELECT * FROM targets WHERE period = ? AND branch_id = ?",
@@ -96,7 +97,7 @@ export const autoDistributeTargets = (period, branchId, callback) => {
     },
   );
 };
-
+//This function  help to auto distribute logic for only the transfer staff
 export const autoDistributeTargetsInTransfer = (period, branchId, callback) => {
   pool.query(
     "DELETE FROM allocations WHERE period = ? AND branch_id = ?",
@@ -169,14 +170,12 @@ export const autoDistributeTargetsInTransfer = (period, branchId, callback) => {
   );
 };
 
+//This function  help to get year start and end date
 function getFinancialYearEnd(period) {
   const [startYr, endYr] = period.split("-");
   return new Date(`20${endYr}-03-31`);
 }
-function getFinancialYearStart(period) {
-  const [startYr, endYr] = period.split("-");
-  return new Date(`20${startYr}-04-01`); // Example: 2025-26 → 2026-03-31
-}
+//This function help to calculate totol month work
 function getMonthsWorked(resignedDate, periodEndDate) {
   const start = new Date(resignedDate);
   const end = new Date(periodEndDate);
@@ -188,7 +187,8 @@ function getMonthsWorked(resignedDate, periodEndDate) {
 
   return months < 0 ? 0 : months;
 }
-
+//This fucction help to calculate total target according totol months of work 
+// and total target of this branch and this total staff members 
 function calculateTargets(
   totalTarget,
   totalStaff,
@@ -208,301 +208,7 @@ function calculateTargets(
 
   return { resignedTarget, newIndividualTarget };
 }
-//resign user logic
-// export const autoDistributeTargetsResign = (period, branchId, callback) => {
-//   const periodEnd = getFinancialYearEnd(period);
-//   const fy = getFinancialYearRange(period);
-
-//   // 1. Fetch targets
-//   pool.query(
-//     "SELECT * FROM targets WHERE period = ? AND branch_id = ?",
-//     [period, branchId],
-//     (err, targets) => {
-//       if (err) return callback(err);
-//       if (!targets.length) return callback(new Error("No targets found"));
-
-//       // 2. Fetch staff
-//       pool.query(
-//         "SELECT id, name, resign, resign_date, transfer_date, user_add_date FROM users WHERE branch_id = ? AND role IN (?)",
-//         [branchId, ["CLERK"]],
-//         (err, staff) => {
-//           if (err) return callback(err);
-//           if (!staff.length) return callback(new Error("No staff found"));
-//           const transferTargetMap = {
-//             deposit: 0,
-//             loan_gen: 0,
-//             loan_amulya: 0,
-//             recovery: 0,
-//           };
-
-//           pool.query(
-//             `
-//            SELECT
-//             SUM(deposit_target)     AS deposit,
-//             SUM(loan_gen_target)    AS loan_gen,
-//             SUM(loan_amulya_target) AS loan_amulya,
-//             SUM(recovery_target)    AS recovery
-//           FROM employee_transfer
-//           WHERE old_branch_id = ?
-//             AND period = ?
-//             AND old_designation <> 'BM';
-
-//             `,
-//             [branchId, period],
-//             (err4, rows) => {
-//               if (err4) return callback(err4);
-
-//               const r = rows[0] || {};
-
-//               transferTargetMap.deposit = Number(r.deposit || 0);
-//               transferTargetMap.loan_gen = Number(r.loan_gen || 0);
-//               transferTargetMap.loan_amulya = Number(r.loan_amulya || 0);
-//               transferTargetMap.recovery = Number(r.recovery || 0);
-
-//               // NEW ARRAYS
-//               const transferStaff = [];
-//               const newJoinStaff = [];
-//               const oldStaff = [];
-//               const resignedStaff = staff.filter((s) => s.resign === 1);
-//               staff.forEach((s) => {
-//                 if (s.resign === 1) return; // Skip resigned staff
-
-//                 const td = s.transfer_date ? new Date(s.transfer_date) : null;
-//                 const jd = s.user_add_date ? new Date(s.user_add_date) : null;
-
-//                 if (td) {
-//                   if (td >= fy.start && td <= fy.end) {
-//                     transferStaff.push(s);
-//                   } else {
-//                     oldStaff.push(s); // Old staff
-//                   }
-//                   return;
-//                 }
-
-//                 if (jd && jd >= fy.start && jd <= fy.end) {
-//                   newJoinStaff.push(s);
-//                   return;
-//                 }
-
-//                 oldStaff.push(s);
-//               });
-
-//               // ACTIVE STAFF = OLD STAFF ONLY
-//               const activeStaff = oldStaff;
-
-//               const totalStaff =
-//                 activeStaff.length +
-//                 transferStaff.length +
-//                 newJoinStaff.length +
-//                 resignedStaff.length;
-
-//               const kpis = [
-//                 "deposit",
-//                 "loan_gen",
-//                 "loan_amulya",
-//                 "recovery",
-//                 "insurance",
-//                 "audit",
-//               ];
-
-//               // DELETE OLD ALLOCATIONS
-//               pool.query(
-//                 "DELETE FROM allocations WHERE period = ? AND branch_id = ? AND kpi IN (?)",
-//                 [period, branchId, kpis],
-//                 (err) => {
-//                   if (err) return callback(err);
-
-//                   let updates = [];
-
-//                   kpis.forEach((kpi) => {
-//                     const t = targets.find((x) => x.kpi === kpi);
-//                     if (!t) return;
-
-//                    const totalTarget = t.amount
-
-//                     let totalResignedWorkedTarget = 0;
-//                     let totalTransferGiven = 0;
-//                     let totalNewJoinGiven = 0;
-
-//                     resignedStaff.forEach((r) => {
-//                       if (!r.resign_date) return;
-
-//                       const monthsWorked = getRemaingMonthsWorked(
-//                         r.resign_date,
-//                         periodEnd
-//                       );
-
-//                       if (kpi === "audit" || kpi === "insurance") {
-//                         const auditTarget = (totalTarget / 12) * monthsWorked;
-
-//                         updates.push([
-//                           Math.round(auditTarget),
-//                           "resigned",
-//                           period,
-//                           branchId,
-//                           r.id,
-//                           kpi,
-//                         ]);
-//                       } else {
-//                         const { resignedTarget } = calculateTargets(
-//                           totalTarget,
-//                           totalStaff,
-//                           1,
-//                           monthsWorked
-//                         );
-
-//                         totalResignedWorkedTarget += resignedTarget;
-
-//                         updates.push([
-//                           Math.round(resignedTarget),
-//                           "resigned",
-//                           period,
-//                           branchId,
-//                           r.id,
-//                           kpi,
-//                         ]);
-//                       }
-//                     });
-
-//                     transferStaff.forEach((ts) => {
-//                       const months = getMonthsWorked(
-//                         ts.transfer_date,
-//                         periodEnd
-//                       );
-
-//                       if (kpi === "audit" || kpi === "insurance") {
-//                         const auditTarget = (totalTarget / 12) * months;
-
-//                         updates.push([
-//                           Math.round(auditTarget),
-//                           "transfer",
-//                           period,
-//                           branchId,
-//                           ts.id,
-//                           kpi,
-//                         ]);
-//                       } else {
-//                         const perStaffAnnual = totalTarget / totalStaff;
-//                         const target = (perStaffAnnual * months) / 12;
-
-//                         totalTransferGiven += target;
-
-//                         updates.push([
-//                           Math.round(target),
-//                           "transfer",
-//                           period,
-//                           branchId,
-//                           ts.id,
-//                           kpi,
-//                         ]);
-//                       }
-//                     });
-
-//                     newJoinStaff.forEach((nj) => {
-//                       const months = getMonthsWorked(
-//                         nj.user_add_date,
-//                         periodEnd
-//                       );
-
-//                       if (kpi === "audit" || kpi === "insurance") {
-//                         const auditTarget = (totalTarget / 12) * months;
-
-//                         updates.push([
-//                           Math.round(auditTarget),
-//                           "new_join",
-//                           period,
-//                           branchId,
-//                           nj.id,
-//                           kpi,
-//                         ]);
-//                       } else {
-//                         const perStaffAnnual = totalTarget / totalStaff;
-//                         const target = (perStaffAnnual * months) / 12;
-
-//                         totalNewJoinGiven += target;
-//                        logs("newJoinTarget", target);
-//                         updates.push([
-//                           Math.round(target),
-//                           "new_join",
-//                           period,
-//                           branchId,
-//                           nj.id,
-//                           kpi,
-//                         ]);
-//                       }
-//                     });
-
-//                     if (kpi === "audit" || kpi === "insurance") {
-//                       activeStaff.forEach((st) => {
-//                         updates.push([
-//                           Math.round(totalTarget),
-//                           "published",
-//                           period,
-//                           branchId,
-//                           st.id,
-//                           kpi,
-//                         ]);
-//                       });
-//                       return;
-//                     }
-
-//                     const remainingTarget =
-//                       totalTarget -
-//                       totalResignedWorkedTarget -
-//                       totalTransferGiven -
-//                       totalNewJoinGiven-(transferTargetMap[kpi] || 0);
-
-//                     const perActive = Math.floor(
-//                       activeStaff.length
-//                         ? remainingTarget / activeStaff.length
-//                         : 0
-//                     );
-
-//                     activeStaff.forEach((st) => {
-//                       updates.push([
-//                         perActive,
-//                         "published",
-//                         period,
-//                         branchId,
-//                         st.id,
-//                         kpi,
-//                       ]);
-//                     });
-//                   });
-
-//                   // UPSERT FINAL ALLOCATIONS
-//                   pool.query(
-//                     `
-//                 INSERT INTO allocations (amount, state, period, branch_id, user_id, kpi)
-//                 VALUES ?
-//                 ON DUPLICATE KEY UPDATE
-//                   amount = VALUES(amount),
-//                   state = VALUES(state)
-//                 `,
-//                     [updates],
-//                     (err) => {
-//                       if (err) return callback(err);
-
-//                       callback(null, {
-//                         message: "Target Update Successful",
-//                         summary: {
-//                           activeStaff: activeStaff.length,
-//                           transferStaff: transferStaff.length,
-//                           newJoinStaff: newJoinStaff.length,
-//                           resignedStaff: resignedStaff.length,
-//                         },
-//                       });
-//                     }
-//                   );
-//                 }
-//               );
-//             }
-//           );
-//         }
-//       );
-//     }
-//   );
-// };
+// This function help us to calculate target distribution in case resign staff
 export const autoDistributeTargetsResign = async (
   period,
   branchId,
@@ -674,7 +380,7 @@ export const autoDistributeTargetsResign = async (
   }
 };
 
-//new user add logic
+// This function help us to calculate target distribution in case new users Add
 export const autoDistributeTargetsNewUsers = (period, branchId, callback) => {
   const fy = getFinancialYearRange(period);
 
@@ -935,7 +641,7 @@ export const autoDistributeTargetsNewUsers = (period, branchId, callback) => {
   );
 };
 
-//   FINANCIAL YEAR RANGE
+// FINANCIAL YEAR RANGE
 export const getFinancialYearRange = (period) => {
   const [startStr, endStr] = period.split("-");
 
@@ -947,17 +653,7 @@ export const getFinancialYearRange = (period) => {
 
   return { start, end };
 };
-function getRemaingMonthsWorked(resignedDate, periodEndDate) {
-  const start = new Date(resignedDate);
-  const end = new Date(periodEndDate);
 
-  let months =
-    (end.getFullYear() - start.getFullYear()) * 12 +
-    (end.getMonth() - start.getMonth()) +
-    1;
-  months = 12 - months;
-  return months < 0 ? 0 : months;
-}
 //old Branch trasfer target distribution
 function monthDiff(d1, d2) {
   let months =
@@ -967,6 +663,7 @@ function monthDiff(d1, d2) {
   return months < 0 ? 0 : months;
 }
 
+//get Actual Months Worked According this transfer
 async function getActualMonthsWorked(pool, staffId, userTd, fyStart) {
   // 1. Get TWO latest transfer dates
   const dbDates = await new Promise((resolve) => {
@@ -1006,6 +703,7 @@ async function getActualMonthsWorked(pool, staffId, userTd, fyStart) {
   return monthDiff(fy, effectiveDb);
 }
 
+// This function help us to calculate target distribution in case Old branch 
 export const autoDistributeTargetsOldBranch = (
   period,
   branchId,
@@ -1327,7 +1025,7 @@ export const autoDistributeTargetsOldBranch = (
   );
 };
 
-//new Branch trasfer target distribution
+// This function help us to calculate target distribution in case new Branch 
 export const autoDistributeTargetsNewBranch = (period, branchId, callback) => {
   const fy = getFinancialYearRange(period);
 
@@ -1530,151 +1228,6 @@ export const autoDistributeTargetsNewBranch = (period, branchId, callback) => {
     },
   );
 };
-// export const autoDistributeTargetToBM = (period, branchId, callback) => {
-//   const fy = getFinancialYearRange(period);
-//   console.log(fy, fy.start, fy.end);
-
-//   pool.query(
-//     "SELECT * FROM targets WHERE period = ? AND branch_id = ?",
-//     [period, branchId],
-//     (err, targets) => {
-//       if (err) return callback(err);
-//       if (!targets.length) return callback(new Error("No targets found"));
-
-//       pool.query(
-//         "SELECT id, name, transfer_date FROM users WHERE branch_id = ? AND role=BM",
-//         [branchId],
-//         (err, staff) => {
-//           if (err) return callback(err);
-//           if (!staff.length) return callback(new Error("No staff found"));
-
-//           const activeStaff = [];
-//           const newStaff = [];
-//           const newStaffOnDate = [];
-
-//           staff.forEach((s) => {
-//             const td = s.transfer_date ? new Date(s.transfer_date) : null;
-
-//             if (td) {
-//               if (td >= fy.start && td <= fy.end) {
-//                 activeStaff.push(s);
-//               } else {
-//                 newStaff.push(s);
-//               }
-//               return;
-//             }
-//             activeStaff.push(s);
-//           });
-//           const totalStaff = activeStaff.length + newStaff.length;
-//           const kpis = [
-//             "deposit",
-//             "loan_gen",
-//             "loan_amulya",
-//             "recovery",
-//             "insurance",
-//             "audit",
-//           ];
-
-//           pool.query(
-//             "DELETE FROM allocations WHERE period = ? AND branch_id = ? AND kpi IN (?)",
-//             [period, branchId, kpis],
-//             (err) => {
-//               if (err) return callback(err);
-
-//               let updates = [];
-
-//               kpis.forEach((kpi) => {
-//                 const t = targets.find((x) => x.kpi === kpi);
-//                 if (!t) return;
-
-//                 const totalTarget = t.amount;
-//                 let totalResignedWorkedTarget = 0;
-
-//                 if (kpi === "audit") {
-//                   activeStaff.forEach((ns) => {
-//                     const months = getMonthsWorked(
-//                       ns.transfer_date || ns.user_add_date,
-//                       fy.end
-//                     );
-//                     const newAudit = Math.floor((totalTarget / 12) * months);
-
-//                     updates.push([
-//                       newAudit,
-//                       "published",
-//                       period,
-//                       branchId,
-//                       ns.id,
-//                       kpi,
-//                     ]);
-//                   });
-
-//                   return;
-//                 }
-
-//                 let newStaffTotalGiven = 0;
-
-//                 finalNewStaff.forEach((ns) => {
-//                   const monthsWorked = getMonthsWorked(
-//                     ns.transfer_date || ns.user_add_date,
-//                     fy.end
-//                   );
-
-//                   const newTarget = Math.floor(
-//                     (totalTarget / 12 / totalStaff) * monthsWorked
-//                   );
-
-//                   newStaffTotalGiven += newTarget;
-
-//                   updates.push([
-//                     newTarget,
-//                     "published",
-//                     period,
-//                     branchId,
-//                     ns.id,
-//                     kpi,
-//                   ]);
-//                 });
-
-//                 const remainingTarget =
-//                   totalTarget - totalResignedWorkedTarget - newStaffTotalGiven;
-
-//                 const perOld = Math.floor(
-//                   activeStaff.length ? remainingTarget / activeStaff.length : 0
-//                 );
-
-//                 activeStaff.forEach((os) => {
-//                   updates.push([
-//                     perOld,
-//                     "published",
-//                     period,
-//                     branchId,
-//                     os.id,
-//                     kpi,
-//                   ]);
-//                 });
-//               });
-
-//               pool.query(
-//                 `
-//                 INSERT INTO allocations (amount, state, period, branch_id, user_id, kpi)
-//                 VALUES ?
-//                 ON DUPLICATE KEY UPDATE
-//                   amount = VALUES(amount),
-//                   state = VALUES(state)
-//                 `,
-//                 [updates],
-//                 (err) => {
-//                   if (err) return callback(err);
-//                   callback(null, { message: "Target Update Successful" });
-//                 }
-//               );
-//             }
-//           );
-//         }
-//       );
-//     }
-//   );
-// };
 
 // across active staff (roles STAFF, ATTENDER, CLERK) in the given branch.
 allocationsRouter.post("/auto-distribute", (req, res) => {
@@ -1688,6 +1241,7 @@ allocationsRouter.post("/auto-distribute", (req, res) => {
   });
 });
 
+//this api for auto distribute for the transfer staff
 allocationsRouter.post("/auto-distribute-transfer", (req, res) => {
   const { period, branchId } = req.query;
   if (!period || !branchId)
@@ -1699,6 +1253,7 @@ allocationsRouter.post("/auto-distribute-transfer", (req, res) => {
   });
 });
 
+//this api for auto distribute for the resign staff
 allocationsRouter.post("/auto-distribute-resign", (req, res) => {
   const { period, branchId } = req.query;
   if (!period || !branchId)
@@ -1710,6 +1265,7 @@ allocationsRouter.post("/auto-distribute-resign", (req, res) => {
   });
 });
 
+//this api for auto distribute for the new joining staff
 allocationsRouter.post("/auto-distribute-new-user", (req, res) => {
   const { period, branchId } = req.query;
   if (!period || !branchId)
@@ -1720,6 +1276,7 @@ allocationsRouter.post("/auto-distribute-new-user", (req, res) => {
     res.json({ ok: true });
   });
 });
+//this api for auto distribute for the old branch in case of trasfer
 allocationsRouter.post("/auto-distribute-old-branch", (req, res) => {
   const { period, branchId } = req.query;
   if (!period || !branchId)
@@ -1730,6 +1287,7 @@ allocationsRouter.post("/auto-distribute-old-branch", (req, res) => {
     res.json({ ok: true });
   });
 });
+//this api for auto distribute for the new branch in case of trasfer
 allocationsRouter.post("/auto-distribute-new-branch", (req, res) => {
   const { period, branchId } = req.query;
   if (!period || !branchId)
@@ -1756,8 +1314,6 @@ allocationsRouter.post("/publish", (req, res) => {
 });
 
 // Query allocations by period/branch or employee.
-// GET /allocations?period=...&branchId=...&employeeId=...
-
 allocationsRouter.get("/", (req, res) => {
   const { period, branchId, employeeId } = req.query;
   if (!period) return res.status(400).json({ error: "period required" });
@@ -1929,6 +1485,7 @@ ${branchId ? "WHERE a.branch_id = ?" : ""}
   });
 });
 
+//BM transfer major part 
 allocationsRouter.post("/update-prorated-targets", (req, res) => {
   const { staff_id, period, old_branchId, new_branchId } = req.body;
 
@@ -2269,7 +1826,7 @@ allocationsRouter.post("/update-prorated-targets", (req, res) => {
     });
   });
 });
-
+// this api for the Clerk to BM Target distributrition 
 allocationsRouter.post("/CLEARK-TO-BM-Target", (req, res) => {
   const { period, branchId, staff_id } = req.body || {};
 

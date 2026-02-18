@@ -25,57 +25,8 @@ pool.query(
 );
 
 // Router implementing branch and insurance target endpoints.
-
 export const targetsRouter = express.Router();
 const upload = multer({ storage: multer.memoryStorage() });
-
-// POST /targets/upload
-// Upload a CSV file with targets for a given period.
-// targetsRouter.post('/upload', upload.single('targetFile'), (req, res) => {
-//   if (!req.file) return res.status(400).json({ error: 'targetFile required' });
-
-//   const results = [];
-//   Readable.from(req.file.buffer)
-//     .pipe(csv())
-//     .on('data', (data) => results.push(data))
-//     .on('end', () => {
-//       const values = results.flatMap(row =>
-//         Object.keys(row)
-//           .filter(key => key !== 'branch_id' && key !== 'period')
-//           .map(key => [row.period, row.branch_id, key, row[key], 'published'])
-//       );
-//       console.log(results);
-
-//       const hasAudit = results.some(row => row.hasOwnProperty('audit'));
-//       if (!hasAudit && results.length > 0) {
-//         values.push([results[0].period, results[0].branch_id, 'audit', 100, 'published']);
-//       }
-
-//       pool.query('DELETE FROM targets WHERE period = ? AND branch_id = ? AND kpi IN (?, ?, ?)', [results[0].period, results[0].branch_id, 'audit', 'loan_amulya', 'loan_gen'], (error) => {
-//         if (error) return res.status(500).json({ error: 'Internal server error' });
-
-//         pool.query('INSERT INTO periods (period) VALUES (?)', [results[0].period], (error) => {
-//           if (error) console.error('Error inserting period:', error);
-//         });
-//         pool.query('INSERT INTO targets (period, branch_id, kpi, amount, state) VALUES ?', [values], (error) => {
-//           if (error) return res.status(500).json({ error: 'Internal server error' });
-
-//           const uniqueBranchIds = [...new Set(results.map(row => row.branch_id))];
-//           console.log("gwvfs",uniqueBranchIds);
-
-//           uniqueBranchIds.forEach(branchId => {
-//             autoDistributeTargets(results[0].period, branchId, (err) => {
-//               if (err) {
-//                 console.error(`Error auto-distributing targets for branch ${branchId}:`, err);
-//               }
-//             });
-//           });
-
-//           res.json({ ok: true });
-//         });
-//       });
-//     });
-// });
 
 //upload the loan_amulya and deposit and loan gen  and audit file
 targetsRouter.post("/upload", upload.single("targetFile"), (req, res) => {
@@ -789,15 +740,6 @@ export const getFinancialYearRange = (period) => {
 
   return { start, end };
 };
-
-function countMonths(start, end) {
-  // normalize to first-of-month for consistent counting
-  const s = new Date(Date.UTC(start.getFullYear(), start.getMonth(), 1));
-  const e = new Date(Date.UTC(end.getFullYear(), end.getMonth(), 1));
-  return (
-    (e.getFullYear() - s.getFullYear()) * 12 + (e.getMonth() - s.getMonth()) + 1
-  );
-}
 
 //recovery achieved
 targetsRouter.post(

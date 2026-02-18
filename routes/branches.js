@@ -1,8 +1,6 @@
 import express from 'express';
 import { branches } from '../data.js';
 
-// Router for branch related endpoints.
-
 export const branchesRouter = express.Router();
 
 // GET /branches

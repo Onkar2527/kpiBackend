@@ -2,11 +2,6 @@ import express from 'express';
 import bcrypt from 'bcryptjs';
 import pool from '../db.js';
 
-// Router responsible for authentication endpoints.
-// Implements a simple username/password login against a database
-// user table.  In a production system you would issue a signed
-// JWT and store refresh tokens securely.
-
 export const auth = express.Router();
 
 // POST /auth/login

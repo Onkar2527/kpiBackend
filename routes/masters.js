@@ -59,8 +59,8 @@ mastersRouter.put("/departments/:id", (req, res) => {
     },
   );
 });
-mastersRouter.delete("/departments/:id", (req, res) => {
 
+mastersRouter.delete("/departments/:id", (req, res) => {
   pool.query(
     "DELETE FROM departments WHERE id = ?",
     [req.params.id],
@@ -74,6 +74,7 @@ mastersRouter.delete("/departments/:id", (req, res) => {
     },
   );
 });
+
 // Weightages
 mastersRouter.get("/weightages", (req, res) => {
   pool.query("SELECT * FROM weightage", (error, results) => {
@@ -119,7 +120,7 @@ mastersRouter.post("/users", (req, res) => {
     hod_id,
   } = req.body;
   const password_hash = bcrypt.hashSync(password, 10);
- 
+
   const user = {
     username,
     name,
@@ -193,12 +194,10 @@ mastersRouter.put("/users/:id", (req, res) => {
 });
 
 mastersRouter.post("/users/:id", (req, res) => {
-  
   const { resignedDate } = req.body;
-  
 
   pool.query(
-    "UPDATE users SET resign = 1,  resign_date = ? WHERE id = ?",
+    "UPDATE users SET resign = 1,  resign_date = ?, hod_id = NULL WHERE id = ?",
     [resignedDate, req.params.id],
     (error, result) => {
       if (error) {
@@ -230,10 +229,14 @@ mastersRouter.get("/users/branch/:branchId/role/:role", (req, res) => {
 
 // Branches
 mastersRouter.get("/branches", (req, res) => {
-  pool.query("SELECT b.*, u.name AS incharge_name FROM branches b left join users u on b.incharge_id=u.id ", (error, results) => {
-    if (error) return res.status(500).json({ error: "Internal server error" });
-    res.json(results);
-  });
+  pool.query(
+    "SELECT b.*, u.name AS incharge_name FROM branches b left join users u on b.incharge_id=u.id ",
+    (error, results) => {
+      if (error)
+        return res.status(500).json({ error: "Internal server error" });
+      res.json(results);
+    },
+  );
 });
 
 mastersRouter.post("/branches", (req, res) => {
@@ -283,7 +286,6 @@ mastersRouter.put("/branches/:id", (req, res) => {
 });
 
 mastersRouter.delete("/branches/:id", (req, res) => {
-  
   pool.query(
     "DELETE FROM branches WHERE id = ?",
     [req.params.id],
@@ -299,21 +301,50 @@ mastersRouter.delete("/branches/:id", (req, res) => {
 });
 
 //staff Transfers
-
 mastersRouter.get("/transfers", (req, res) => {
   pool.query(
-    `SELECT e.id,
-       u.name,
-       b1.name AS old_branch,
-       b2.name AS new_branch
-FROM employee_transfer e
+    `SELECT 
+    t.id,
+    u.name,
+    b1.name AS old_branch,
+    b2.name AS new_branch,
+    old_hod.name AS old_hod_name,
+    new_hod.name AS new_hod_name
+FROM (
+    SELECT 
+        id,
+        staff_id,
+        old_branch_id,
+        branch_id AS new_branch_id,
+        old_hod_id,
+        hod_id
+    FROM attender_transfer
+
+    UNION ALL
+
+    SELECT 
+        id,
+        staff_id,
+        NULL AS old_branch_id,
+        NULL AS new_branch_id,
+        old_hod_id,
+        hod_id
+    FROM ho_staff_transfer
+) t
 JOIN users u 
-    ON e.staff_id = u.id
-JOIN branches b1 
-    ON b1.code COLLATE utf8mb4_unicode_ci = e.old_branch_id COLLATE utf8mb4_unicode_ci
-JOIN branches b2 
-    ON b2.code COLLATE utf8mb4_unicode_ci = e.new_branch_id COLLATE utf8mb4_unicode_ci;
-`,
+    ON u.id = t.staff_id
+
+LEFT JOIN branches b1 
+    ON b1.code COLLATE utf8mb4_unicode_ci = t.old_branch_id COLLATE utf8mb4_unicode_ci
+
+LEFT JOIN branches b2 
+    ON b2.code COLLATE utf8mb4_unicode_ci = t.new_branch_id COLLATE utf8mb4_unicode_ci
+
+LEFT JOIN users old_hod 
+    ON old_hod.id = t.old_hod_id
+
+LEFT JOIN users new_hod 
+    ON new_hod.id = t.hod_id;`,
     (error, results) => {
       if (error)
         return res.status(500).json({ error: "Internal server error" });
@@ -366,8 +397,6 @@ mastersRouter.post("/transfers", (req, res) => {
     old_designation,
     new_designation,
   };
-
-  
 
   pool.getConnection((err, connection) => {
     if (err) return res.status(500).json({ error: "Internal server error" });
@@ -422,7 +451,6 @@ mastersRouter.put("/transfers/:id", (req, res) => {
 });
 
 mastersRouter.delete("/transfers/:id", (req, res) => {
-  
   pool.query(
     "DELETE FROM employee_transfer WHERE id = ?",
     [req.params.id],
@@ -514,29 +542,37 @@ mastersRouter.delete("/Transfer_for_delete_ho_staff", (req, res) => {
 // trasfer-history
 mastersRouter.post("/trasfer-history", (req, res) => {
   const { period } = req.body;
-  const query = `SELECT e.staff_id,s.PF_NO, s.name, DATE(MIN(e.transfer_date)) AS transfer_date,s.resign FROM employee_transfer e JOIN  users s ON s.id = e.staff_id WHERE e.period= ?  GROUP BY e.staff_id, DATE(e.transfer_date) ORDER BY DATE(MIN(e.transfer_date))`;
+  const query = `SELECT 
+    e.staff_id,
+    s.PF_NO,
+    s.name,
+    DATE(MIN(e.transfer_date)) AS transfer_date,
+    s.resign
+FROM (
+    SELECT staff_id, transfer_date, period FROM employee_transfer
+    UNION ALL
+    SELECT staff_id, transfer_date, period FROM ho_staff_transfer
+    UNION ALL
+    SELECT staff_id, transfer_date, period FROM attender_transfer
+) e
+JOIN users s 
+    ON s.id = e.staff_id
+WHERE e.period = ?
+GROUP BY e.staff_id, DATE(e.transfer_date)
+ORDER BY DATE(MIN(e.transfer_date));`;
   pool.query(query, [period], (error, results) => {
     if (error) return res.status(500).json({ error: "Internal server error" });
     res.json(results);
   });
 });
 
-const getMonthDiff = (startDate, endDate) => {
-  const start = new Date(startDate);
-  const end = new Date(endDate);
-  return (
-    (end.getFullYear() - start.getFullYear()) * 12 +
-    (end.getMonth() - start.getMonth()) +
-    1
-  );
-};
-
+//This function help to get strat Date and End Data of Year 
 const getFinancialYearStart = (period) => {
   const startYear = parseInt(period.split("-")[0], 10);
   return new Date(startYear, 3, 1); // April 1
 };
 
-
+// get the transfer-Kpi-history of indivisual staff
 mastersRouter.post("/transfer-Kpi-history", (req, res) => {
   const { period, staff_id } = req.body;
 
@@ -546,7 +582,8 @@ mastersRouter.post("/transfer-Kpi-history", (req, res) => {
     u.name AS staff_name,
     b.name AS branch_name,
     bi.name AS new_branch_name,
-    u.resign as resigned
+    u.resign as resigned,
+    u.resign_date as resign_date
 FROM 
     employee_transfer e
     INNER JOIN users u ON u.id = e.staff_id
@@ -612,6 +649,7 @@ ORDER BY
         name: transfers[0].staff_name,
         period: transfers[0].period,
         resigned: transfers[0].resigned,
+        resign_date: transfers[0].resign_date,
         transfers: [],
         branch_avg_kpi: {},
         total_months: 0,
@@ -625,12 +663,27 @@ ORDER BY
         const branchScores = {};
         let totalWeightageScore = 0;
 
-       
         const kpis = [
-          { key: "deposit", achieved: t.deposit_achieved, target: t.deposit_target },
-          { key: "loan_gen", achieved: t.loan_gen_achieved, target: t.loan_gen_target },
-          { key: "loan_amulya", achieved: t.loan_amulya_achieved, target: t.loan_amulya_target },
-          { key: "recovery", achieved: t.recovery_achieved, target: t.recovery_target },
+          {
+            key: "deposit",
+            achieved: t.deposit_achieved,
+            target: t.deposit_target,
+          },
+          {
+            key: "loan_gen",
+            achieved: t.loan_gen_achieved,
+            target: t.loan_gen_target,
+          },
+          {
+            key: "loan_amulya",
+            achieved: t.loan_amulya_achieved,
+            target: t.loan_amulya_target,
+          },
+          {
+            key: "recovery",
+            achieved: t.recovery_achieved,
+            target: t.recovery_target,
+          },
           { key: "audit", achieved: t.audit_achieved, target: t.audit_target },
         ];
 
@@ -656,7 +709,8 @@ ORDER BY
         if (!branchTransferDates[branch]) branchTransferDates[branch] = [];
         branchTransferDates[branch].push(new Date(t.transfer_date));
 
-        if (!branchWiseKpi[branch]) branchWiseKpi[branch] = { total: 0, count: 0 };
+        if (!branchWiseKpi[branch])
+          branchWiseKpi[branch] = { total: 0, count: 0 };
         branchWiseKpi[branch].total += totalWeightageScore;
         branchWiseKpi[branch].count += 1;
 
@@ -683,12 +737,11 @@ ORDER BY
         staffResult.branch_avg_kpi[key] = {
           avg_kpi: t.total_weightage_score,
           months: 1,
-          new_branch_name: t.new_branch_name, 
+          new_branch_name: t.new_branch_name,
         };
 
         totalMonthsWorked += 1;
       });
-
 
       staffResult.total_months = totalMonthsWorked;
 
@@ -697,8 +750,7 @@ ORDER BY
   });
 });
 
-
-
+//password change API Logic
 mastersRouter.post("/verifyPassword", (req, res) => {
   const { userId, oldPassword } = req.body;
   pool.query("SELECT * FROM users WHERE id = ?", [userId], (error, results) => {
@@ -732,6 +784,7 @@ mastersRouter.put("/changePassword/:id", (req, res) => {
   );
 });
 
+//admin panel entries management logic
 mastersRouter.put("/updateentries/:id", (req, res) => {
   const { kpi, account_no, value, date } = req.body;
 
@@ -771,6 +824,7 @@ mastersRouter.put("/updateentries/:id", (req, res) => {
     },
   );
 });
+
 //update emplyee trasfer table for resign employee report
 mastersRouter.post("/update_employee_transfer", (req, res) => {
   const { period, branchId, userId } = req.body;
@@ -869,6 +923,7 @@ mastersRouter.post("/update_employee_transfer", (req, res) => {
     },
   );
 });
+
 //update emplyee trasfer table for Transfered employee report
 mastersRouter.post("/update_employee_transfer_Transfered", (req, res) => {
   const { period, branchId, userId } = req.body;
@@ -884,7 +939,6 @@ mastersRouter.post("/update_employee_transfer_Transfered", (req, res) => {
         return res
           .status(500)
           .json({ error: "Database error 1", details: err });
-      
 
       if (rows.length === 0) {
         return res
@@ -967,6 +1021,8 @@ mastersRouter.post("/update_employee_transfer_Transfered", (req, res) => {
     },
   );
 });
+
+//get All Higher Authority
 mastersRouter.get("/get-AGM", (req, res) => {
   pool.query(
     ` select id , username,name from users where role in ('AGM','DGM','AGM_AUDIT','AGM_INSURANCE','AGM_IT','GM')`,
@@ -977,7 +1033,3 @@ mastersRouter.get("/get-AGM", (req, res) => {
     },
   );
 });
-
-
-
-

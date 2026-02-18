@@ -3,6 +3,7 @@ import db from "../db.js";
 
 const router = express.Router();
 
+//get period
 router.get("/", (req, res) => {
   db.query(
     "SELECT period FROM periods ORDER BY id DESC LIMIT 1",
@@ -15,10 +16,11 @@ router.get("/", (req, res) => {
       } else {
         res.json({ period: new Date().toISOString().slice(0, 7) });
       }
-    }
+    },
   );
 });
 
+//Insert period API
 router.post("/", (req, res) => {
   const { period } = req.body;
   db.query("INSERT INTO periods (period) VALUES (?)", [period], (err) => {

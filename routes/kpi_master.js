@@ -54,7 +54,6 @@ KpiRouter.post('/kpiMaster', (req, res) => {
   });
 });
 
-
 KpiRouter.put('/kpiMaster/:id', (req, res) => {
   const { kpi_name } = req.body;
   pool.query('UPDATE kpi_master SET kpi_name = ? WHERE id = ?', [ kpi_name, req.params.id], (error) => {
@@ -64,8 +63,6 @@ KpiRouter.put('/kpiMaster/:id', (req, res) => {
 });
 
 KpiRouter.delete('/kpiMaster/:id', (req, res) => {
-  
-
   const query = 'UPDATE kpi_master SET deleted_at = NOW() WHERE id = ?';
   pool.query(query, [req.params.id], (error, result) => {
     if (error) {
@@ -130,7 +127,6 @@ KpiRouter.post('/kpiMapping', (req, res) => {
     });
   });
 });
-
 
 KpiRouter.put('/kpiMapping/:id', (req, res) => {
   const { role,kpi_id,weightage} = req.body;

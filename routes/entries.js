@@ -1,8 +1,5 @@
 import express from "express";
 import pool from "../db.js";
-import { nanoid } from "nanoid";
-
-// Router implementing KPI entry CRUD and verification.
 
 export const entriesRouter = express.Router();
 
@@ -198,8 +195,7 @@ entriesRouter.post("/", (req, res) => {
         type: typeOfDeposit,
         status: "Pending",
       };
-    
-      
+
       pool.query("INSERT INTO entries SET ?", entry, (err) => {
         if (err)
           return res.status(500).json({ error: "Failed to insert entry" });
@@ -331,6 +327,7 @@ entriesRouter.post("/monthEntries", (req, res) => {
   });
 });
 
+//Admin give entries delete option
 entriesRouter.delete("/entries/:id", (req, res) => {
   pool.query(
     "DELETE FROM entries WHERE id = ?",
