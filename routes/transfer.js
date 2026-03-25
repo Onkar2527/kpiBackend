@@ -2,6 +2,7 @@ import express from "express";
 import pool from "../db.js";
 import { autoDistributeTargetsOldBranch } from "./allocations.js";
 
+
 export const transferRouter = express.Router();
 
 function updateEmployeeTransferFromAllocations(conn, period, branchId, userId) {

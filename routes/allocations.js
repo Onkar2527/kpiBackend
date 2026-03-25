@@ -187,8 +187,8 @@ function getMonthsWorked(resignedDate, periodEndDate) {
 
   return months < 0 ? 0 : months;
 }
-//This fucction help to calculate total target according totol months of work 
-// and total target of this branch and this total staff members 
+//This fucction help to calculate total target according totol months of work
+// and total target of this branch and this total staff members
 function calculateTargets(
   totalTarget,
   totalStaff,
@@ -271,9 +271,10 @@ export const autoDistributeTargetsResign = async (
         FROM allocations
         WHERE period = ?
           AND user_id IN (?)
-          AND kpi NOT IN ('audit', 'insurance')
+          AND branch_id = ?
+          AND kpi ='insurance'
         `,
-        [period, userIds],
+        [period, userIds,branchId],
         (err, rows) => (err ? reject(err) : resolve(rows)),
       );
     });
@@ -703,7 +704,7 @@ async function getActualMonthsWorked(pool, staffId, userTd, fyStart) {
   return monthDiff(fy, effectiveDb);
 }
 
-// This function help us to calculate target distribution in case Old branch 
+// This function help us to calculate target distribution in case Old branch
 export const autoDistributeTargetsOldBranch = (
   period,
   branchId,
@@ -855,7 +856,7 @@ export const autoDistributeTargetsOldBranch = (
                         );
 
                         totalResignedWorkedTarget += resignedTarget;
-                        
+
                         updates.push([
                           Math.round(resignedTarget),
                           "Transfered",
@@ -988,7 +989,7 @@ export const autoDistributeTargetsOldBranch = (
                         ? remainingTarget / activeStaff.length
                         : 0,
                     );
-                    
+
                     for (const st of activeStaff) {
                       updates.push([
                         perActive,
@@ -1025,7 +1026,7 @@ export const autoDistributeTargetsOldBranch = (
   );
 };
 
-// This function help us to calculate target distribution in case new Branch 
+// This function help us to calculate target distribution in case new Branch
 export const autoDistributeTargetsNewBranch = (period, branchId, callback) => {
   const fy = getFinancialYearRange(period);
 
@@ -1228,6 +1229,129 @@ export const autoDistributeTargetsNewBranch = (period, branchId, callback) => {
     },
   );
 };
+// This function help us to calculate target distribution in case resign BM
+export const autoAdjustBMTransferTargets = (
+  period,
+  branchId,
+  callback
+) => {
+  if (!period || !branchId) {
+    return callback(new Error("period and branchId required"));
+  }
+
+  const periodEnd = getFinancialYearEnd(period);
+
+  function getMonthsWorked(resignedDate, periodEndDate) {
+    const resign = new Date(resignedDate);
+    const periodEnd = new Date(periodEndDate);
+
+    const fyStart = new Date(periodEnd.getFullYear() - 1, 3, 1);
+
+    let months =
+      (resign.getFullYear() - fyStart.getFullYear()) * 12 +
+      (resign.getMonth() - fyStart.getMonth()) +
+      1;
+
+    return Math.max(0, Math.min(months, 12));
+  }
+
+ 
+  pool.query(
+    `SELECT id, resign, resign_date
+     FROM users
+     WHERE branch_id = ?
+  AND role = 'BM'
+  AND resign_date IS NOT NULL`,
+    [branchId],
+    (err, userRows) => {
+      if (err) return callback(err);
+      if (userRows.length === 0)
+        return callback(new Error("BM not found"));
+
+      const bm = userRows[0];
+      const userId = bm.id;
+      
+     
+      pool.query(
+        `SELECT kpi, amount
+         FROM targets
+         WHERE period = ?
+           AND branch_id = ?`,
+        [period, branchId, userId],
+        (err, rows) => {
+          if (err) return callback(err);
+          if (rows.length === 0) return callback(new Error("No target found"));
+
+          const mapping = {
+            deposit: "deposit_target",
+            loan_gen: "loan_gen_target",
+            loan_amulya: "loan_amulya_target",
+            recovery: "recovery_target",
+            audit: "audit_target",
+          };
+
+          const updateData = {};
+
+          rows.forEach((row) => {
+            if (mapping[row.kpi]) {
+              let annualTarget = Number(row.amount);
+
+              const monthsWorked = getMonthsWorked(bm.resign_date, periodEnd);
+              
+              
+              const monthlyTarget = annualTarget / 12;
+              let finalAmount = monthlyTarget * monthsWorked;
+
+              finalAmount = Number(finalAmount.toFixed(2));
+              
+              
+              updateData[mapping[row.kpi]] = finalAmount;
+            }
+          });
+
+          if (Object.keys(updateData).length === 0) {
+            return callback(new Error("No valid KPI data to update"));
+          }
+
+          pool.query(
+            `SELECT id
+             FROM employee_transfer
+             WHERE period = ?
+               AND old_branch_id = ?
+               AND staff_id = ?`,
+            [period, branchId, userId],
+            (err, result) => {
+              if (err) return callback(err);
+              if (result.length === 0)
+                return callback(new Error("No employee_transfer record found"));
+
+              const transferId = result[0].id;
+
+              pool.query(
+                "UPDATE employee_transfer SET ? WHERE id = ?",
+                [updateData, transferId],
+
+                (err) => {
+                  if (err) return callback(err);
+
+                  pool.query(
+                    "UPDATE users SET branch_id = '' WHERE id = ?",
+                    [userId],
+                    (err) => {
+                      if (err) return callback(err);
+
+                      return callback(null);
+                    },
+                  );
+                },
+              );
+            },
+          );
+        }
+      );
+    }
+  );
+};
 
 // across active staff (roles STAFF, ATTENDER, CLERK) in the given branch.
 allocationsRouter.post("/auto-distribute", (req, res) => {
@@ -1265,6 +1389,17 @@ allocationsRouter.post("/auto-distribute-resign", (req, res) => {
   });
 });
 
+//this api for auto distribute for the resign BM
+allocationsRouter.post("/auto-distribute-resign-BM", (req, res) => {
+  const { period, branchId } = req.query;
+  if (!period || !branchId)
+    return res.status(400).json({ error: "period and branchId required" });
+
+  autoAdjustBMTransferTargets(period, branchId, (error) => {
+    if (error) return res.status(500).json({ error: error.message });
+    res.json({ ok: true });
+  });
+});
 //this api for auto distribute for the new joining staff
 allocationsRouter.post("/auto-distribute-new-user", (req, res) => {
   const { period, branchId } = req.query;
@@ -1372,19 +1507,97 @@ allocationsRouter.get("/", (req, res) => {
               return res.status(500).json({ error: "Internal server error" });
 
             const branchTargetsQuery = `
-              SELECT 
-                t.kpi,
-                COALESCE(t.amount,0) AS amount,
-                COALESCE(w.weightage,0) AS weightage
-              FROM targets t
-              LEFT JOIN weightage w ON t.kpi = w.kpi
-              WHERE t.period=? AND t.branch_id=?
+             SELECT 
+    k.kpi,
+
+    CASE 
+        WHEN k.kpi = 'recovery'
+        AND emp.transfer_date IS NULL
+        THEN COALESCE(MAX(t.amount),0)
+
+        WHEN k.kpi = 'recovery'
+        AND emp.transfer_date BETWEEN 
+            STR_TO_DATE(CONCAT(LEFT(?,4),'-04-01'),'%Y-%m-%d')
+            AND
+            STR_TO_DATE(CONCAT(2000 + RIGHT(?,2),'-03-31'),'%Y-%m-%d')
+        THEN COALESCE(MAX(a.amount),0)
+
+        ELSE COALESCE(MAX(a.amount),0)
+    END AS amount,
+
+    COALESCE(MAX(w.weightage), 0) AS weightage,
+    COALESCE(SUM(e.value), 0) AS achieved
+
+FROM (
+    SELECT 'deposit' AS kpi
+    UNION SELECT 'loan_gen'
+    UNION SELECT 'loan_amulya'
+    UNION SELECT 'recovery'
+    UNION SELECT 'insurance'
+    UNION SELECT 'audit'
+) k
+
+JOIN users emp 
+ON emp.id = ?
+
+JOIN users bm 
+ON bm.branch_id = emp.branch_id 
+AND bm.role = 'BM'
+
+LEFT JOIN allocations a 
+ON a.kpi = k.kpi 
+AND a.user_id = emp.id 
+AND a.period = ?
+AND a.state = 'published'
+
+LEFT JOIN targets t
+ON t.kpi = k.kpi
+AND t.branch_id = emp.branch_id
+AND t.period = ?
+
+LEFT JOIN weightage w 
+ON w.kpi = k.kpi
+
+LEFT JOIN entries e 
+ON e.kpi = k.kpi
+AND e.period = ?
+AND e.branch_id = emp.branch_id
+AND e.status = 'Verified'
+AND (
+    (
+        k.kpi IN ('audit','recovery')
+        AND (
+            (
+                emp.transfer_date IS NULL
+                AND e.employee_id = bm.id
+            )
+            OR
+            (
+                emp.transfer_date BETWEEN 
+                STR_TO_DATE(CONCAT(LEFT(?,4),'-04-01'),'%Y-%m-%d')
+                AND
+                STR_TO_DATE(CONCAT(2000 + RIGHT(?,2),'-03-31'),'%Y-%m-%d')
+                AND e.employee_id = emp.id
+            )
+        )
+    )
+    OR
+    (
+        k.kpi NOT IN ('audit','recovery')
+        AND e.employee_id = emp.id
+    )
+)
+
+GROUP BY k.kpi
+ORDER BY k.kpi
             `;
 
             pool.query(
               branchTargetsQuery,
-              [period, branchId],
+              [period, period,employeeId, period, period, period, period,period],
               (errB, branchTargets) => {
+                
+                
                 if (errB)
                   return res
                     .status(500)
@@ -1397,6 +1610,7 @@ allocationsRouter.get("/", (req, res) => {
                     kpi: bt.kpi,
                     amount: Number(bt.amount) || 0,
                     weightage: Number(bt.weightage) || 0,
+                    achieved: Number(bt.achieved) || 0,
                   };
                 });
 
@@ -1428,7 +1642,7 @@ allocationsRouter.get("/", (req, res) => {
                   return {
                     kpi,
                     amount: bt ? Number(bt.amount) : 0,
-                    achieved: Number(branchAch[kpi]) || 0,
+                    achieved: Number(bt.achieved) || 0,
                     weightage: bt ? Number(bt.weightage) : weightMap[kpi] || 0,
                   };
                 });
@@ -1458,7 +1672,7 @@ FROM (
     MAX(period) AS period,
     MAX(branch_id) AS branch_id
   FROM allocations
-  WHERE period = ?
+  WHERE period = ? and state='published'
   GROUP BY user_id, kpi
 ) a
 JOIN users u ON u.id = a.user_id
@@ -1485,7 +1699,7 @@ ${branchId ? "WHERE a.branch_id = ?" : ""}
   });
 });
 
-//BM transfer major part 
+//BM transfer major part
 allocationsRouter.post("/update-prorated-targets", (req, res) => {
   const { staff_id, period, old_branchId, new_branchId } = req.body;
 
@@ -1826,7 +2040,7 @@ allocationsRouter.post("/update-prorated-targets", (req, res) => {
     });
   });
 });
-// this api for the Clerk to BM Target distributrition 
+// this api for the Clerk to BM Target distributrition
 allocationsRouter.post("/CLEARK-TO-BM-Target", (req, res) => {
   const { period, branchId, staff_id } = req.body || {};
 
