@@ -1,0 +1,35 @@
+//main user table setup
+UPDATE users new_u
+JOIN users old_u 
+    ON new_u.username = old_u.username
+    AND old_u.period = '2025-26'
+
+JOIN users old_hod 
+    ON old_u.hod_id = old_hod.id
+
+JOIN users new_hod 
+    ON new_hod.username = old_hod.username
+    AND new_hod.period = '2026-27'
+
+SET new_u.hod_id = new_hod.id
+WHERE new_u.period = '2026-27';
+
+
+///branches UPDATE
+UPDATE branches b
+
+LEFT JOIN users old_u 
+    ON old_u.id = b.incharge_id
+
+LEFT JOIN users new_u 
+    ON new_u.name = old_u.name
+    AND new_u.period = '2026-27'
+
+SET b.incharge_id = new_u.id
+WHERE b.period = '2026-27' 
+AND old_u.period = CONCAT(
+        CAST(LEFT('2026-27',4) AS UNSIGNED) - 1,
+        '-',
+        RIGHT(CAST(LEFT('2026-27',4) AS UNSIGNED),2)
+)
+AND new_u.id IS NOT NULL;

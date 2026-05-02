@@ -127,8 +127,8 @@ entriesRouter.post("/", (req, res) => {
                 });
               }
 
-              const staffQuery = `SELECT id FROM users WHERE branch_id=? AND role IN ('CLERK')`;
-              pool.query(staffQuery, [branchId], (error, staffResults) => {
+              const staffQuery = `SELECT id FROM users WHERE branch_id=? AND period = ? AND role IN ('CLERK')`;
+              pool.query(staffQuery, [branchId,period], (error, staffResults) => {
                 if (error)
                   return res
                     .status(500)
@@ -204,8 +204,8 @@ entriesRouter.post("/", (req, res) => {
     }
 
     function insertCombined() {
-      const query = `SELECT id FROM users WHERE branch_id=? AND role IN ('CLERK')`;
-      pool.query(query, [branchId], (error, results) => {
+      const query = `SELECT id FROM users WHERE branch_id=? AND period = ? AND role IN ('CLERK')`;
+      pool.query(query, [branchId,period], (error, results) => {
         if (error)
           return res.status(500).json({ error: "Internal server error" });
         if (!results || results.length === 0)
@@ -252,13 +252,14 @@ entriesRouter.get("/", (req, res) => {
   const { period, branchId, employeeId, status } = req.query;
   let query = `SELECT e.*, u.name AS staffName 
     FROM entries e 
-    JOIN users u ON e.employee_id = u.id 
+    JOIN users u ON e.employee_id = u.id  
     WHERE 1 = 1
     `;
   const params = [];
 
   if (period) {
-    query += " AND e.period = ?";
+    query += " AND e.period = ? AND u.period = ?";
+    params.push(period);
     params.push(period);
   }
   if (branchId) {
@@ -316,10 +317,10 @@ entriesRouter.post("/monthEntries", (req, res) => {
   }
 
   const query = `
-    SELECT e.*,u.PF_NO,b.name as branchName FROM entries e join users u on e.employee_id=u.id join branches b on e.branch_id=b.code
-    WHERE period = ? 
+    SELECT e.*,u.PF_NO,b.name as branchName FROM entries e join users u on e.employee_id=u.id AND u.period = ? join branches b on e.branch_id=b.code AND b.period = ?
+    WHERE e.period = ? 
   `;
-  pool.query(query, [period], (error, results) => {
+  pool.query(query, [period,period,period], (error, results) => {
     if (error) {
       return res.status(500).json({ error: "Internal server error" });
     }

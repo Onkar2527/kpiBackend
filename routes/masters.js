@@ -97,10 +97,11 @@ mastersRouter.put("/weightages", (req, res) => {
 });
 
 // Users
-mastersRouter.get("/users", (req, res) => {
+mastersRouter.post("/users", (req, res) => {
+  const {period}=req.body;
   pool.query(
-    "SELECT u.id, u.username, u.name, u.role, b.name as branch_name, u.PF_NO, d.name as department_name,u.branch_id,u.hod_id,u.transfer_date,u1.name as hod_name FROM users u left join branches b on u.branch_id=b.code left join departments d on d.id=u.department_id left join users u1 on u.hod_id = u1.id WHERE u.resign=0",
-    (error, results) => {
+    "SELECT u.id, u.username, u.name, u.role, b.name as branch_name, u.PF_NO, d.name as department_name,u.branch_id,u.hod_id,u.transfer_date,u1.name as hod_name FROM users u left join branches b on u.branch_id=b.code AND b.period = ? left join departments d on d.id=u.department_id left join users u1 on u.hod_id = u1.id WHERE u.resign=0 AND u.period = ? ",
+    [period,period],(error, results) => {
       if (error)
         return res.status(500).json({ error: "Internal server error" });
       res.json(results);
@@ -118,6 +119,7 @@ mastersRouter.post("/users", (req, res) => {
     department_id,
     PF_NO,
     hod_id,
+    period
   } = req.body;
   const password_hash = bcrypt.hashSync(password, 10);
 
@@ -130,6 +132,7 @@ mastersRouter.post("/users", (req, res) => {
     department_id,
     PF_NO,
     hod_id,
+    period
   };
   pool.getConnection((err, connection) => {
     if (err) return res.status(500).json({ error: "Internal server error" });
@@ -169,7 +172,7 @@ mastersRouter.put("/users/:id", (req, res) => {
     department_id,
     PF_NO,
     password,
-    hod_id,
+    hod_id,period
   } = req.body;
   const password_hash = bcrypt.hashSync(password, 10);
   const user = {
@@ -180,7 +183,7 @@ mastersRouter.put("/users/:id", (req, res) => {
     department_id,
     PF_NO,
     password_hash,
-    hod_id,
+    hod_id,period
   };
   pool.query(
     "UPDATE users SET ? WHERE id = ?",
@@ -194,11 +197,11 @@ mastersRouter.put("/users/:id", (req, res) => {
 });
 
 mastersRouter.post("/users/:id", (req, res) => {
-  const { resignedDate } = req.body;
+  const { resignedDate,period } = req.body;
 
   pool.query(
-    "UPDATE users SET resign = 1,  resign_date = ?, hod_id = NULL WHERE id = ?",
-    [resignedDate, req.params.id],
+    "UPDATE users SET resign = 1,  resign_date = ?, hod_id = NULL WHERE id = ? AND period = ?",
+    [resignedDate, req.params.id, period],
     (error, result) => {
       if (error) {
         console.error("Error updating user:", error);
@@ -228,9 +231,11 @@ mastersRouter.get("/users/branch/:branchId/role/:role", (req, res) => {
 });
 
 // Branches
-mastersRouter.get("/branches", (req, res) => {
+mastersRouter.post("/branches", (req, res) => {
+  const {period}=req.body;
   pool.query(
-    "SELECT b.*, u.name AS incharge_name FROM branches b left join users u on b.incharge_id=u.id ",
+    "SELECT b.*, u.name AS incharge_name FROM branches b left join users u on b.incharge_id=u.id WHERE u.period = ? and b.period = ?",
+    [period,period],
     (error, results) => {
       if (error)
         return res.status(500).json({ error: "Internal server error" });
@@ -240,8 +245,8 @@ mastersRouter.get("/branches", (req, res) => {
 });
 
 mastersRouter.post("/branches", (req, res) => {
-  const { code, name, incharge_id } = req.body;
-  const branch = { code, name, incharge_id };
+  const { code, name, incharge_id ,period} = req.body;
+  const branch = { code, name, incharge_id ,period};
 
   pool.getConnection((err, connection) => {
     if (err) return res.status(500).json({ error: "Internal server error" });
@@ -273,10 +278,10 @@ mastersRouter.post("/branches", (req, res) => {
 });
 
 mastersRouter.put("/branches/:id", (req, res) => {
-  const { code, name, incharge_id } = req.body;
+  const { code, name, incharge_id ,period} = req.body;
   pool.query(
-    "UPDATE branches SET code = ?, name = ?, incharge_id = ? WHERE id = ?",
-    [code, name, incharge_id, req.params.id],
+    "UPDATE branches SET code = ?, name = ?, incharge_id = ?, period = ? WHERE id = ? AND period = ?",
+    [code, name, incharge_id, period, req.params.id, period],
     (error) => {
       if (error)
         return res.status(500).json({ error: "Internal server error" });
@@ -301,7 +306,8 @@ mastersRouter.delete("/branches/:id", (req, res) => {
 });
 
 //staff Transfers
-mastersRouter.get("/transfers", (req, res) => {
+mastersRouter.post("/transfers", (req, res) => {
+  const {period} = req.body;
   pool.query(
     `SELECT 
     t.id,
@@ -332,7 +338,7 @@ FROM (
     FROM ho_staff_transfer
 ) t
 JOIN users u 
-    ON u.id = t.staff_id
+    ON u.id = t.staff_id AND u.period = ?
 
 LEFT JOIN branches b1 
     ON b1.code COLLATE utf8mb4_unicode_ci = t.old_branch_id COLLATE utf8mb4_unicode_ci
@@ -341,11 +347,11 @@ LEFT JOIN branches b2
     ON b2.code COLLATE utf8mb4_unicode_ci = t.new_branch_id COLLATE utf8mb4_unicode_ci
 
 LEFT JOIN users old_hod 
-    ON old_hod.id = t.old_hod_id
+    ON old_hod.id = t.old_hod_id AND old_hod.period = ?
 
 LEFT JOIN users new_hod 
-    ON new_hod.id = t.hod_id;`,
-    (error, results) => {
+    ON new_hod.id = t.hod_id AND new_hod.period = ?;`,
+    [period,period,period],(error, results) => {
       if (error)
         return res.status(500).json({ error: "Internal server error" });
       res.json(results);
@@ -466,12 +472,12 @@ mastersRouter.delete("/transfers/:id", (req, res) => {
 });
 
 mastersRouter.put("/Transfers_user/:id", (req, res) => {
-  const { branch_id, role, hod_id } = req.body;
+  const { branch_id, role, hod_id,period } = req.body;
   const user = { branch_id, role, transfered: 1, hod_id };
 
   pool.query(
-    "UPDATE users SET ? WHERE id = ?",
-    [user, req.params.id],
+    "UPDATE users SET ? WHERE id = ? AND period = ?",
+    [user, req.params.id,period],
     (error) => {
       if (error)
         return res.status(500).json({ error: "Internal server error" });
@@ -557,10 +563,10 @@ FROM (
 ) e
 JOIN users s 
     ON s.id = e.staff_id
-WHERE e.period = ?
+WHERE e.period = ? AND s.period = ?
 GROUP BY e.staff_id, DATE(e.transfer_date)
 ORDER BY DATE(MIN(e.transfer_date));`;
-  pool.query(query, [period], (error, results) => {
+  pool.query(query, [period,period], (error, results) => {
     if (error) return res.status(500).json({ error: "Internal server error" });
     res.json(results);
   });
@@ -594,14 +600,14 @@ FROM
         ON bi.code COLLATE utf8mb4_unicode_ci = 
            e.new_branch_id COLLATE utf8mb4_unicode_ci       
 WHERE 
-    e.period COLLATE utf8mb4_unicode_ci = ?
+    e.period COLLATE utf8mb4_unicode_ci = ? AND u.period COLLATE utf8mb4_unicode_ci = ?
     AND e.staff_id = ?
 ORDER BY 
     e.staff_id,
     e.transfer_date ASC;
   `;
 
-  pool.query(query, [period, staff_id], (err, transfers) => {
+  pool.query(query, [period,period, staff_id], (err, transfers) => {
     if (err) return res.status(500).json({ error: "Internal server error" });
     if (transfers.length === 0) return res.json([]);
 
@@ -621,15 +627,26 @@ ORDER BY
         if (!target || target === 0) return 0;
 
         const ratio = achieved / target;
+        const auditRatio = kpi === "audit" ? ratio:0;
+        const recoveryRatio = kpi === "recovery" ? ratio : 0;
 
         switch (kpi) {
           case "deposit":
           case "loan_gen":
-            outOf10 = ratio <= 1 ? ratio * 10 : ratio < 1.25 ? 10 : 12.5;
-            break;
-
           case "loan_amulya":
-            outOf10 = ratio <= 1 ? ratio * 10 : ratio < 1.25 ? 10 : 12.5;
+            if (ratio <= 1) {
+              outOf10 = ratio * 10;
+            } else if (ratio > 1 && ratio < 1.25) {
+              outOf10 = 10;
+            } else if (
+              ratio >= 1.25 &&
+              auditRatio >= 0.75 &&
+              recoveryRatio >= 0.75
+            ) {
+              outOf10 = 12.5;
+            } else {
+              outOf10 = 10;
+            }
             break;
 
           case "recovery":
@@ -753,8 +770,8 @@ ORDER BY
 
 //password change API Logic
 mastersRouter.post("/verifyPassword", (req, res) => {
-  const { userId, oldPassword } = req.body;
-  pool.query("SELECT * FROM users WHERE id = ?", [userId], (error, results) => {
+  const { userId, oldPassword,period } = req.body;
+  pool.query("SELECT * FROM users WHERE id = ? AND period = ?", [userId,period], (error, results) => {
     if (error) {
       console.error(error);
       return res.status(500).json({ error: "Internal server error" });
@@ -901,8 +918,8 @@ mastersRouter.post("/update_employee_transfer", (req, res) => {
               const userUpdate = { branch_id: "" };
 
               pool.query(
-                "UPDATE users SET ? WHERE id = ?",
-                [userUpdate, userId],
+                "UPDATE users SET ? WHERE id = ? AND period = ?",
+                [userUpdate, userId,period],
                 (err) => {
                   if (err)
                     return res
@@ -999,8 +1016,8 @@ mastersRouter.post("/update_employee_transfer_Transfered", (req, res) => {
               const userUpdate = { branch_id: "" };
 
               pool.query(
-                "UPDATE users SET ? WHERE id = ?",
-                [userUpdate, userId],
+                "UPDATE users SET ? WHERE id = ? AND period = ?",
+                [userUpdate, userId,period],
                 (err) => {
                   if (err)
                     return res
@@ -1024,10 +1041,11 @@ mastersRouter.post("/update_employee_transfer_Transfered", (req, res) => {
 });
 
 //get All Higher Authority
-mastersRouter.get("/get-AGM", (req, res) => {
+mastersRouter.post("/get-AGM", (req, res) => {
+  const {period}=req.body;
   pool.query(
-    ` select id , username,name from users where role in ('AGM','DGM','AGM_AUDIT','AGM_INSURANCE','AGM_IT','GM')`,
-    (error, results) => {
+    ` select id , username,name from users where role in ('AGM','DGM','AGM_AUDIT','AGM_INSURANCE','AGM_IT','GM') and period = ?`,
+    [period],(error, results) => {
       if (error)
         return res.status(500).json({ error: "Internal server error" });
       res.json(results);

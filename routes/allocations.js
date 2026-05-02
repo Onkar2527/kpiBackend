@@ -15,8 +15,8 @@ export const autoDistributeTargets = (period, branchId, callback) => {
         return callback(new Error("No branch targets found"));
 
       pool.query(
-        "SELECT * FROM users WHERE branch_id = ? AND role IN (?)",
-        [branchId, ["CLERK"]],
+        "SELECT * FROM users WHERE branch_id = ? AND period = ? AND role IN (?) ",
+        [branchId,period, ["CLERK"]],
         (error, staff) => {
           if (error) return callback(error);
           if (staff.length === 0)
@@ -97,6 +97,7 @@ export const autoDistributeTargets = (period, branchId, callback) => {
     },
   );
 };
+
 //This function  help to auto distribute logic for only the transfer staff
 export const autoDistributeTargetsInTransfer = (period, branchId, callback) => {
   pool.query(
@@ -116,8 +117,8 @@ export const autoDistributeTargetsInTransfer = (period, branchId, callback) => {
         return callback(new Error("No branch targets found"));
 
       pool.query(
-        "SELECT * FROM users WHERE branch_id = ? AND role IN (?)",
-        [branchId, ["CLERK"]],
+        "SELECT * FROM users WHERE branch_id = ? AND period = ? AND role IN (?)",
+        [branchId, period, ["CLERK"]],
         (error, staff) => {
           if (error) return callback(error);
           if (staff.length === 0)
@@ -239,10 +240,10 @@ export const autoDistributeTargetsResign = async (
           resign,
           resign_date
         FROM users
-        WHERE branch_id = ?
+        WHERE branch_id = ? AND period = ?
           AND role = 'CLERK'
         `,
-        [branchId],
+        [branchId , period],
         (err, rows) => (err ? reject(err) : resolve(rows)),
       );
     });
@@ -393,8 +394,8 @@ export const autoDistributeTargetsNewUsers = (period, branchId, callback) => {
       if (!targets.length) return callback(new Error("No targets found"));
 
       pool.query(
-        "SELECT id, name, user_add_date, transfer_date FROM users WHERE branch_id = ? AND role IN (?)",
-        [branchId, ["CLERK"]],
+        "SELECT id, name, user_add_date, transfer_date FROM users WHERE branch_id = ? AND period = ? AND role IN (?)",
+        [branchId,period, ["CLERK"]],
         (err, staff) => {
           if (err) return callback(err);
           if (!staff.length) return callback(new Error("No staff found"));
@@ -724,8 +725,8 @@ export const autoDistributeTargetsOldBranch = (
 
       // 2. Fetch staff
       pool.query(
-        "SELECT id, name, transfer_date, user_add_date FROM users WHERE branch_id = ? AND role IN (?)",
-        [branchId, ["CLERK"]],
+        "SELECT id, name, transfer_date, user_add_date FROM users WHERE branch_id = ? AND period = ? AND role IN (?)",
+        [branchId,period, ["CLERK"]],
         (err, staff) => {
           if (err) return callback(err);
           if (!staff.length) return callback(new Error("No staff found"));
@@ -1038,8 +1039,8 @@ export const autoDistributeTargetsNewBranch = (period, branchId, callback) => {
       if (!targets.length) return callback(new Error("No targets found"));
 
       pool.query(
-        "SELECT id, name, transfer_date,user_add_date FROM users WHERE branch_id = ? AND role IN (?)",
-        [branchId, ["CLERK"]],
+        "SELECT id, name, transfer_date,user_add_date FROM users WHERE branch_id = ? AND period = ? AND role IN (?)",
+        [branchId, period ["CLERK"]],
         (err, staff) => {
           if (err) return callback(err);
           if (!staff.length) return callback(new Error("No staff found"));
@@ -1259,10 +1260,10 @@ export const autoAdjustBMTransferTargets = (
   pool.query(
     `SELECT id, resign, resign_date
      FROM users
-     WHERE branch_id = ?
+     WHERE branch_id = ? AND period = ?
   AND role = 'BM'
   AND resign_date IS NOT NULL`,
-    [branchId],
+    [branchId,period],
     (err, userRows) => {
       if (err) return callback(err);
       if (userRows.length === 0)
@@ -1335,8 +1336,8 @@ export const autoAdjustBMTransferTargets = (
                   if (err) return callback(err);
 
                   pool.query(
-                    "UPDATE users SET branch_id = '' WHERE id = ?",
-                    [userId],
+                    "UPDATE users SET branch_id = '' WHERE id = ? AND period = ?",
+                    [userId,period],
                     (err) => {
                       if (err) return callback(err);
 
@@ -1451,16 +1452,19 @@ allocationsRouter.post("/publish", (req, res) => {
 // Query allocations by period/branch or employee.
 allocationsRouter.get("/", (req, res) => {
   const { period, branchId, employeeId } = req.query;
+
   if (!period) return res.status(400).json({ error: "period required" });
 
   const PERSONAL_KPIS = ["deposit", "loan_gen", "loan_amulya"];
   const BRANCH_KPIS = ["insurance", "recovery", "audit"];
 
   pool.query("SELECT kpi, weightage FROM weightage", (err, weightRows) => {
-    if (err) return res.status(500).json({ error: "Internal server error" });
+    if (err) return res.status(500).json({ error: err.message });
 
     const weightMap = {};
-    weightRows.forEach((w) => (weightMap[w.kpi] = Number(w.weightage) || 0));
+    weightRows.forEach((w) => {
+      weightMap[w.kpi] = Number(w.weightage) || 0;
+    });
 
     const branchAggQuery = `
       SELECT kpi, SUM(value) AS total_achieved
@@ -1470,14 +1474,14 @@ allocationsRouter.get("/", (req, res) => {
     `;
 
     pool.query(branchAggQuery, [period, branchId], (errAgg, aggRows) => {
-      if (errAgg)
-        return res.status(500).json({ error: "Internal server error" });
+      if (errAgg) return res.status(500).json({ error: errAgg.message });
 
       const branchAch = {};
-      aggRows.forEach(
-        (x) => (branchAch[x.kpi] = Number(x.total_achieved) || 0),
-      );
+      aggRows.forEach((x) => {
+        branchAch[x.kpi] = Number(x.total_achieved) || 0;
+      });
 
+      // ================= EMPLOYEE FLOW =================
       if (employeeId) {
         const personalQuery = `
           SELECT 
@@ -1495,38 +1499,45 @@ allocationsRouter.get("/", (req, res) => {
             WHERE period = ? AND employee_id = ? AND branch_id = ? AND status='Verified'
             GROUP BY kpi
           ) e ON a.kpi = e.kpi
-          WHERE a.period = ? AND a.user_id = ? AND u.branch_id = ? AND a.state='published'
+          WHERE a.period = ? 
+          AND a.user_id = ? 
+          AND u.branch_id = ? 
+          AND a.state='published' 
+          AND u.period = ?
           GROUP BY a.kpi
         `;
 
         pool.query(
           personalQuery,
-          [period, employeeId, branchId, period, employeeId, branchId],
+          [period, employeeId, branchId, period, employeeId, branchId, period],
           (errP, personalTargets) => {
-            if (errP)
-              return res.status(500).json({ error: "Internal server error" });
+            if (errP) return res.status(500).json({ error: errP.message });
 
-            const branchTargetsQuery = `
-             SELECT 
+            
+          
+const branchTargetsQuery = `
+ SELECT 
     k.kpi,
 
     CASE 
         WHEN k.kpi = 'recovery'
         AND emp.transfer_date IS NULL
+        AND (emp.user_add_date IS NULL OR emp.user_add_date <= ?)
         THEN COALESCE(MAX(t.amount),0)
 
         WHEN k.kpi = 'recovery'
-        AND emp.transfer_date BETWEEN 
-            STR_TO_DATE(CONCAT(LEFT(?,4),'-04-01'),'%Y-%m-%d')
-            AND
-            STR_TO_DATE(CONCAT(2000 + RIGHT(?,2),'-03-31'),'%Y-%m-%d')
+        AND (
+            emp.transfer_date BETWEEN ? AND ?
+            OR
+            emp.user_add_date BETWEEN ? AND ?
+        )
         THEN COALESCE(MAX(a.amount),0)
 
         ELSE COALESCE(MAX(a.amount),0)
     END AS amount,
 
     COALESCE(MAX(w.weightage), 0) AS weightage,
-    COALESCE(SUM(e.value), 0) AS achieved
+    COALESCE(MAX(e_sum.achieved), 0) AS achieved
 
 FROM (
     SELECT 'deposit' AS kpi
@@ -1539,10 +1550,12 @@ FROM (
 
 JOIN users emp 
 ON emp.id = ?
+AND emp.period = ?
 
 JOIN users bm 
 ON bm.branch_id = emp.branch_id 
 AND bm.role = 'BM'
+AND bm.period = ?
 
 LEFT JOIN allocations a 
 ON a.kpi = k.kpi 
@@ -1558,52 +1571,85 @@ AND t.period = ?
 LEFT JOIN weightage w 
 ON w.kpi = k.kpi
 
-LEFT JOIN entries e 
-ON e.kpi = k.kpi
-AND e.period = ?
-AND e.branch_id = emp.branch_id
-AND e.status = 'Verified'
+LEFT JOIN (
+    SELECT 
+        kpi,
+        branch_id,
+        employee_id,
+        period,
+        SUM(value) AS achieved
+    FROM entries
+    WHERE status = 'Verified'
+    GROUP BY kpi, branch_id, employee_id, period
+) e_sum
+ON e_sum.kpi = k.kpi
+AND e_sum.branch_id = emp.branch_id
+AND e_sum.period = ?
+
 AND (
     (
         k.kpi IN ('audit','recovery')
         AND (
             (
                 emp.transfer_date IS NULL
-                AND e.employee_id = bm.id
+                AND (emp.user_add_date IS NULL OR emp.user_add_date <= ?)
+                AND e_sum.employee_id = bm.id
             )
             OR
             (
-                emp.transfer_date BETWEEN 
-                STR_TO_DATE(CONCAT(LEFT(?,4),'-04-01'),'%Y-%m-%d')
-                AND
-                STR_TO_DATE(CONCAT(2000 + RIGHT(?,2),'-03-31'),'%Y-%m-%d')
-                AND e.employee_id = emp.id
+                emp.transfer_date BETWEEN ? AND ?
+                AND e_sum.employee_id = emp.id
+            )
+            OR
+            (
+                emp.user_add_date BETWEEN ? AND ?
+                AND e_sum.employee_id = emp.id
             )
         )
     )
     OR
     (
         k.kpi NOT IN ('audit','recovery')
-        AND e.employee_id = emp.id
+        AND e_sum.employee_id = emp.id
     )
 )
 
 GROUP BY k.kpi
-ORDER BY k.kpi
-            `;
-
+ORDER BY k.kpi;
+`;    
+const startYear = parseInt(period.split('-')[0]);
+const fyStart = `${startYear}-04-01`;
+const fyEnd   = `${startYear + 1}-03-31`;
             pool.query(
               branchTargetsQuery,
-              [period, period,employeeId, period, period, period, period,period],
-              (errB, branchTargets) => {
-                
-                
-                if (errB)
-                  return res
-                    .status(500)
-                    .json({ error: "Internal server error" });
 
-                // Map branch targets
+              [
+                fyStart, // 1
+                fyStart,
+                fyEnd, // 2,3
+                fyStart,
+                fyEnd, // 4,5
+
+                employeeId, // 6
+                period, // 7
+
+                period, // 8 (BM)
+
+                period, // 9 (allocations)
+                period, // 10 (targets)
+                period, // 11 (entries)
+
+                fyStart, // 12
+                fyStart,
+                fyEnd, // 13,14
+                fyStart,
+                fyEnd, // 15,16
+              ],
+              (errB, branchTargets) => {
+                if (errB) return res.status(500).json({ error: errB.message });
+
+                if (!Array.isArray(branchTargets)) branchTargets = [];
+
                 const branchMap = {};
                 branchTargets.forEach((bt) => {
                   branchMap[bt.kpi] = {
@@ -1638,11 +1684,10 @@ ORDER BY k.kpi
 
                 let finalBranch = BRANCH_KPIS.map((kpi) => {
                   const bt = branchMap[kpi];
-
                   return {
                     kpi,
                     amount: bt ? Number(bt.amount) : 0,
-                    achieved: Number(bt.achieved) || 0,
+                    achieved: bt ? Number(bt.achieved) : 0,
                     weightage: bt ? Number(bt.weightage) : weightMap[kpi] || 0,
                   };
                 });
@@ -1655,30 +1700,31 @@ ORDER BY k.kpi
             );
           },
         );
+
         return;
       }
 
+      // ================= ALL USERS =================
       const query = `
-       SELECT 
-  a.*, 
-  u.name AS staffName, 
-  COALESCE(w.weightage, 0) AS weightage
-FROM (
-  SELECT 
-    user_id, 
-    kpi, 
-    MAX(amount) AS amount, 
-    MAX(state) AS state,
-    MAX(period) AS period,
-    MAX(branch_id) AS branch_id
-  FROM allocations
-  WHERE period = ? and state='published'
-  GROUP BY user_id, kpi
-) a
-JOIN users u ON u.id = a.user_id
-LEFT JOIN weightage w ON w.kpi = a.kpi
-${branchId ? "WHERE a.branch_id = ?" : ""}
-
+        SELECT 
+          a.*, 
+          u.name AS staffName, 
+          COALESCE(w.weightage, 0) AS weightage
+        FROM (
+          SELECT 
+            user_id, 
+            kpi, 
+            MAX(amount) AS amount, 
+            MAX(state) AS state,
+            MAX(period) AS period,
+            MAX(branch_id) AS branch_id
+          FROM allocations
+          WHERE period = ? AND state='published'
+          GROUP BY user_id, kpi
+        ) a
+        JOIN users u ON u.id = a.user_id
+        LEFT JOIN weightage w ON w.kpi = a.kpi
+        ${branchId ? "WHERE a.branch_id = ?" : ""}
       `;
 
       const params = branchId ? [period, branchId] : [period];
@@ -1746,8 +1792,8 @@ allocationsRouter.post("/update-prorated-targets", (req, res) => {
 
       //  Get USER transfer date
       conn.query(
-        "SELECT transfer_date FROM users WHERE id=?",
-        [staff_id],
+        "SELECT transfer_date FROM users WHERE id=? AND period = ?",
+        [staff_id,period],
         (err, staffRows) => {
           if (err) return rollback(err);
           if (staffRows.length === 0)
@@ -2078,8 +2124,8 @@ allocationsRouter.post("/CLEARK-TO-BM-Target", (req, res) => {
     }, {});
 
     // Get USER transfer date
-    const userTdQuery = `SELECT transfer_date FROM users WHERE id=?`;
-    pool.query(userTdQuery, [staff_id], (err, staffRows) => {
+    const userTdQuery = `SELECT transfer_date FROM users WHERE id=? AND period = ?`;
+    pool.query(userTdQuery, [staff_id,period], (err, staffRows) => {
       if (err) return res.status(500).json({ error: "Internal server error" });
       if (staffRows.length === 0)
         return res

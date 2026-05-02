@@ -223,10 +223,10 @@ targetsRouter.post("/upload1", upload.single("targetFile"), (req, res) => {
 });
 
 //upload recovery file
-targetsRouter.post("/upload-branch-specific",
+targetsRouter.post(
+  "/upload-branch-specific",
   upload.single("targetFile"),
   (req, res) => {
-
     if (!req.file)
       return res.status(400).json({ error: "targetFile required" });
 
@@ -238,7 +238,6 @@ targetsRouter.post("/upload-branch-specific",
       .pipe(csv())
       .on("data", (data) => results.push(data))
       .on("end", () => {
-
         if (!results.length)
           return res.status(400).json({ error: "CSV empty" });
 
@@ -250,11 +249,10 @@ targetsRouter.post("/upload-branch-specific",
         let rowIndex = 0;
 
         function nextRow() {
-
           if (rowIndex >= results.length) {
             return res.json({
               ok: true,
-              results: output
+              results: output,
             });
           }
 
@@ -262,13 +260,12 @@ targetsRouter.post("/upload-branch-specific",
 
           // 🔹 dynamically detect KPIs from CSV
           const kpis = Object.keys(row).filter(
-            (k) => !["period", "branch_id"].includes(k)
+            (k) => !["period", "branch_id"].includes(k),
           );
 
           let kpiIndex = 0;
 
           function nextKpi() {
-
             if (kpiIndex >= kpis.length) {
               return nextRow();
             }
@@ -283,18 +280,16 @@ targetsRouter.post("/upload-branch-specific",
               processedBranches,
               output,
               nextKpi,
-              kpi
+              kpi,
             );
-
           }
 
           nextKpi();
         }
 
         nextRow();
-
       });
-  }
+  },
 );
 function uploadbranches(
   row,
@@ -304,14 +299,17 @@ function uploadbranches(
   processedBranches,
   output,
   next,
-  kpi
+  kpi,
 ) {
-
   const sheetBranch = row.branch_id?.trim();
   const targetAmount = Number(row[kpi]?.trim() || 0);
-  console.log(targetAmount,sheetBranch);
-  
-  if (!sheetBranch || !targetAmount) return next();
+
+  console.log(targetAmount, sheetBranch);
+
+
+  if (!sheetBranch || targetAmount === null || targetAmount === undefined)
+    return next();
+
   if (processedBranches.has(sheetBranch)) return next();
   processedBranches.add(sheetBranch);
 
@@ -320,16 +318,23 @@ function uploadbranches(
   function countMonths(from, to) {
     const diff =
       (to.getFullYear() - from.getFullYear()) * 12 +
+      (to.getMonth() - from.getMonth()) +
+      1;
+    return diff < 0 ? 0 : diff;
+  }
+
+  function countMonths1(from, to) {
+    const diff =
+      (to.getFullYear() - from.getFullYear()) * 12 +
       (to.getMonth() - from.getMonth());
     return diff < 0 ? 0 : diff;
   }
 
-  // FIND BM + transfer_date
+  // FIND BM
   pool.query(
-    "SELECT id,  transfer_date FROM users WHERE role='BM' AND branch_id=? AND resign=0 LIMIT 1",
-    [sheetBranch],
+    "SELECT id, transfer_date FROM users WHERE role='BM' AND branch_id=? AND period=? AND resign=0 LIMIT 1",
+    [sheetBranch, period],
     (err, bmRows) => {
-
       if (err || !bmRows.length) {
         output.push({
           branch: sheetBranch,
@@ -338,38 +343,26 @@ function uploadbranches(
         return next();
       }
 
-      const bm = bmRows[0];
-
-      const bmTransferDate = bm.transfer_date
-        ? new Date(bm.transfer_date)
-        : null;
-
-      const bmTransferred =
-        bmTransferDate &&
-        bmTransferDate >= fyStart &&
-        bmTransferDate <= fyEnd;
-
       // INSERT TARGET
       pool.query(
         `INSERT INTO targets (period,branch_id,kpi,amount,state)
          VALUES (?, ?, ?, ?, 'published')`,
         [period, sheetBranch, kpi, targetAmount],
         (err) => {
-
           if (err) {
             output.push({ branch: sheetBranch, error: err.message });
             return next();
           }
 
+         
           pool.query(
-            `SELECT id, staff_id, old_branch_id, new_branch_id, transfer_date
+            `SELECT id, staff_id, old_branch_id, new_branch_id, transfer_date, new_designation
              FROM employee_transfer
              WHERE period = ?
              AND (old_branch_id = ? OR new_branch_id = ?)
              ORDER BY staff_id, transfer_date ASC`,
             [period, sheetBranch, sheetBranch],
             (err, transferRows) => {
-
               if (err) {
                 output.push({ branch: sheetBranch, error: err.message });
                 return next();
@@ -392,14 +385,12 @@ function uploadbranches(
               });
 
               pool.getConnection((err, conn) => {
-
                 if (err) {
                   output.push({ branch: sheetBranch, error: err.message });
                   return next();
                 }
 
                 conn.beginTransaction((err) => {
-
                   if (err) {
                     conn.release();
                     output.push({ branch: sheetBranch, error: err.message });
@@ -409,17 +400,17 @@ function uploadbranches(
                   const updates = [];
 
                   for (const staffId in byStaff) {
-
                     const transfers = byStaff[staffId];
                     let currentStart = fyStart;
 
                     for (const tr of transfers) {
-
                       const tDate = new Date(tr.transfer_date);
-                      const months = countMonths(currentStart, tDate);
+                      const months = countMonths1(currentStart, tDate);
 
-                      if (months > 0 && tr.old_branch_id === sheetBranch) {
-
+                      if (
+                        months > 0 &&
+                        Number(tr.old_branch_id) === Number(sheetBranch)
+                      ) {
                         const value = Math.floor(perMonth * months);
 
                         updates.push({
@@ -428,22 +419,22 @@ function uploadbranches(
                           staffId: staffId,
                           value,
                         });
-
                       }
 
                       currentStart = new Date(
-                        Date.UTC(tDate.getFullYear(), tDate.getMonth(), 1)
+                        Date.UTC(tDate.getFullYear(), tDate.getMonth(), 1),
                       );
                     }
 
                     const last = transfers[transfers.length - 1];
 
-                    if (last.new_branch_id === sheetBranch) {
-
+                    if (
+                      last.new_designation !== "BM" &&
+                      Number(last.new_branch_id) === Number(sheetBranch)
+                    ) {
                       const months = countMonths(currentStart, fyEnd);
 
                       if (months > 0) {
-
                         const value = Math.floor(perMonth * months);
 
                         updates.push({
@@ -451,68 +442,61 @@ function uploadbranches(
                           staffId: staffId,
                           value,
                         });
-
                       }
                     }
                   }
 
-                  let pending = updates.length;
+                  // CLERK ENTRY
+                  pool.query(
+                    `SELECT id, user_add_date
+                     FROM users
+                     WHERE branch_id = ?
+                     AND period = ?
+                     AND resign = 0
+                     AND role = 'CLERK'
+                     AND user_add_date IS NOT NULL`,
+                    [sheetBranch, period],
+                    (err, allUsers) => {
+                      if (!err && allUsers.length) {
+                        const existingStaff = new Set(Object.keys(byStaff));
 
-                  if (!pending) {
-                    conn.commit(() => {
-                      conn.release();
-                      next();
-                    });
-                    return;
-                  }
+                        allUsers.forEach((u) => {
+                          if (
+                            !existingStaff.has(String(u.id)) &&
+                            new Date(u.user_add_date) > fyStart
+                          ) {
+                            let start = new Date(
+                              Date.UTC(
+                                new Date(u.user_add_date).getFullYear(),
+                                new Date(u.user_add_date).getMonth(),
+                                1,
+                              ),
+                            );
 
-                  updates.forEach((u) => {
+                            const months = countMonths(start, fyEnd);
 
-                    // If BM transferred → update employee_transfer
-                    if (u.type === "transfer" && bmTransferred) {
+                            if (months > 0) {
+                              const value = Math.floor(perMonth * months);
 
-                      conn.query(
-                        `UPDATE employee_transfer
-                         SET ${kpi}_target = COALESCE(${kpi}_target,0) + ?
-                         WHERE id = ?`,
-                        [u.value, u.id],
-                        done
-                      );
+                              updates.push({
+                                type: "entry",
+                                staffId: u.id,
+                                value,
+                              });
+                            }
+                          }
+                        });
+                      }
 
-                    }
+                      runFinalUpdates();
+                    },
+                  );
 
-                    // Normal transfer
-                    else if (u.type === "transfer") {
+                  function runFinalUpdates() {
+                    let pending = updates.length;
 
-                      conn.query(
-                        `UPDATE employee_transfer
-                         SET ${kpi}_target = COALESCE(${kpi}_target,0) + ?
-                         WHERE id = ?`,
-                        [u.value, u.id],
-                        done
-                      );
-
-                    }
-
-                    // Allocation
-                    else {
-
-                      conn.query(
-                        `INSERT INTO allocations
-                         (period,branch_id,user_id,kpi,amount,state)
-                         VALUES (?, ?, ?, ?, ?, 'published')`,
-                        [period, sheetBranch, u.staffId, kpi, u.value],
-                        done
-                      );
-
-                    }
-
-                  });
-
-                  function done(err) {
-
-                    if (err) {
-                      return conn.rollback(() => {
+                    function rollback(err) {
+                      conn.rollback(() => {
                         conn.release();
                         output.push({
                           branch: sheetBranch,
@@ -522,10 +506,8 @@ function uploadbranches(
                       });
                     }
 
-                    if (--pending === 0) {
-
+                    function commit() {
                       conn.commit((err) => {
-
                         conn.release();
 
                         if (err) {
@@ -544,22 +526,95 @@ function uploadbranches(
 
                         next();
                       });
-
                     }
 
+                    function afterAll() {
+                      conn.query(
+                        `SELECT id, transfer_date
+                         FROM bm_transfer_target
+                         WHERE branch_id = ?
+                         AND period = ?`,
+                        [sheetBranch, period],
+                        (err, bmTransfers) => {
+                          if (err) return rollback(err);
+
+                          if (!bmTransfers.length) return commit();
+
+                          let pendingBM = bmTransfers.length;
+
+                          bmTransfers.forEach((bt) => {
+                            const tDate = new Date(bt.transfer_date);
+
+                            const start = new Date(
+                              Date.UTC(
+                                tDate.getFullYear(),
+                                tDate.getMonth(),
+                                1,
+                              ),
+                            );
+
+                            const months = countMonths(start, fyEnd);
+
+                            if (months <= 0) {
+                              if (--pendingBM === 0) commit();
+                              return;
+                            }
+
+                            const value = Math.floor(perMonth * months);
+
+                            conn.query(
+                              `UPDATE bm_transfer_target
+                               SET ${kpi}_target = ?
+                               WHERE id = ?`,
+                              [value, bt.id],
+                              (err) => {
+                                if (err) return rollback(err);
+                                if (--pendingBM === 0) commit();
+                              },
+                            );
+                          });
+                        },
+                      );
+                    }
+
+                    // NO UPDATES
+                    if (!pending) return afterAll();
+
+                    updates.forEach((u) => {
+                      if (u.type === "transfer") {
+                        conn.query(
+                          `UPDATE employee_transfer
+                           SET ${kpi}_target = COALESCE(${kpi}_target,0) + ?
+                           WHERE id = ?`,
+                          [u.value, u.id],
+                          done,
+                        );
+                      } else {
+                        conn.query(
+                          `INSERT INTO allocations
+                           (period,branch_id,user_id,kpi,amount,state)
+                           VALUES (?, ?, ?, ?, ?, 'published')`,
+                          [period, sheetBranch, u.staffId, kpi, u.value],
+                          done,
+                        );
+                      }
+                    });
+
+                    function done(err) {
+                      if (err) return rollback(err);
+
+                      if (--pending === 0) {
+                        afterAll(); 
+                      }
+                    }
                   }
-
                 });
-
               });
-
-            }
+            },
           );
-
-        }
+        },
       );
-
-    }
+    },
   );
 }
 
@@ -930,13 +985,13 @@ targetsRouter.post(
 
       for (const row of results) {
         const periodKey = Object.keys(row).find(
-          (k) => k.trim().toLowerCase() === "period"
+          (k) => k.trim().toLowerCase() === "period",
         );
         const pfKey = Object.keys(row).find(
-          (k) => k.trim().toLowerCase() === "pf_no"
+          (k) => k.trim().toLowerCase() === "pf_no",
         );
         const insuranceKey = Object.keys(row).find(
-          (k) => k.trim().toLowerCase() === "insurance"
+          (k) => k.trim().toLowerCase() === "insurance",
         );
 
         const period = (row[periodKey] || "").trim();
@@ -947,12 +1002,12 @@ targetsRouter.post(
 
         const user = await new Promise((resolve) => {
           pool.query(
-            `SELECT id,branch_id FROM users WHERE PF_NO = ?`,
-            [PF_NO],
+            `SELECT id,branch_id FROM users WHERE PF_NO = ?  AND period = ?`,
+            [PF_NO, period],
             (err, rs) => {
               if (err || !rs.length) resolve(null);
               else resolve(rs[0]);
-            }
+            },
           );
         });
 
@@ -1011,7 +1066,7 @@ targetsRouter.post(
       console.error(error);
       res.status(500).json({ error: "Internal server error" });
     }
-  }
+  },
 );
 
 export const getFinancialYearRange = (period) => {
@@ -1095,12 +1150,11 @@ function processBranch(
   fyEnd,
   processedBranches,
   output,
-  next
+  next,
 ) {
   const sheetBranch = row.branch_id?.trim();
   const recoveryAmount = Number(row.recovery_amount?.trim() || 0);
-  
-  
+
   if (!sheetBranch || !recoveryAmount) return next();
   if (processedBranches.has(sheetBranch)) return next();
   processedBranches.add(sheetBranch);
@@ -1110,13 +1164,22 @@ function processBranch(
   function countMonths(from, to) {
     const diff =
       (to.getFullYear() - from.getFullYear()) * 12 +
+      (to.getMonth() - from.getMonth()) +
+      1;
+    return diff < 0 ? 0 : diff;
+  }
+
+  function countMonthsStart(from, to) {
+    const diff =
+      (to.getFullYear() - from.getFullYear()) * 12 +
       (to.getMonth() - from.getMonth());
     return diff < 0 ? 0 : diff;
   }
 
+  
   pool.query(
-    "SELECT id FROM users WHERE role='BM' AND branch_id=? AND resign=0 LIMIT 1",
-    [sheetBranch],
+    "SELECT id FROM users WHERE role='BM' AND branch_id=? AND period=? AND resign=0 LIMIT 1",
+    [sheetBranch, period],
     (err, bmRows) => {
       if (err || !bmRows.length) {
         output.push({
@@ -1128,7 +1191,7 @@ function processBranch(
 
       const bmId = bmRows[0].id;
 
-      // GIVE FULL RECOVERY TO BM
+      
       pool.query(
         `INSERT INTO entries (period, branch_id, employee_id, kpi, value, status)
          VALUES (?, ?, ?, 'recovery', ?, 'Verified')`,
@@ -1139,33 +1202,20 @@ function processBranch(
             return next();
           }
 
-          // GET TRANSFERS
+         
           pool.query(
-            `SELECT id, staff_id, old_branch_id, new_branch_id, transfer_date
+            `SELECT id, staff_id, old_branch_id, new_branch_id, transfer_date, old_designation, new_designation
              FROM employee_transfer
              WHERE period = ?
              AND (old_branch_id = ? OR new_branch_id = ?)
              ORDER BY staff_id, transfer_date ASC`,
             [period, sheetBranch, sheetBranch],
             (err, transferRows) => {
-              
-              
               if (err) {
                 output.push({ branch: sheetBranch, error: err.message });
                 return next();
               }
 
-              if (!transferRows.length) {
-                output.push({
-                  branch: sheetBranch,
-                  recovery: recoveryAmount,
-                  bm_given: recoveryAmount,
-                  transferred: [],
-                });
-                return next();
-              }
-
-              // GROUP BY STAFF
               const byStaff = {};
               for (const tr of transferRows) {
                 if (!byStaff[tr.staff_id]) byStaff[tr.staff_id] = [];
@@ -1189,15 +1239,16 @@ function processBranch(
 
                   for (const staffId in byStaff) {
                     const transfers = byStaff[staffId];
-
                     let currentStart = fyStart;
 
                     for (const tr of transfers) {
                       const tDate = new Date(tr.transfer_date);
+                      const months = countMonthsStart(currentStart, tDate);
 
-                      const months = countMonths(currentStart, tDate);
-
-                      if (months > 0 && tr.old_branch_id === sheetBranch) {
+                      if (
+                        months > 0 &&
+                        Number(tr.old_branch_id) === Number(sheetBranch)
+                      ) {
                         const value = Math.floor(perMonth * months);
 
                         updates.push({
@@ -1208,14 +1259,16 @@ function processBranch(
                       }
 
                       currentStart = new Date(
-                        Date.UTC(tDate.getFullYear(), tDate.getMonth(), 1)
+                        Date.UTC(tDate.getFullYear(), tDate.getMonth(), 1),
                       );
                     }
 
-                    // AFTER LAST TRANSFER
                     const last = transfers[transfers.length - 1];
 
-                    if (last.new_branch_id === sheetBranch) {
+                    if (
+                      last.new_designation !== "BM" &&
+                      Number(last.new_branch_id) === Number(sheetBranch)
+                    ) {
                       const months = countMonths(currentStart, fyEnd);
 
                       if (months > 0) {
@@ -1223,52 +1276,136 @@ function processBranch(
 
                         updates.push({
                           type: "entry",
-                          staffId: staffId,
+                          staffId,
                           value,
                         });
                       }
                     }
                   }
 
-                  let pending = updates.length;
+                  
+                  pool.query(
+                    `SELECT id, user_add_date
+                     FROM users
+                     WHERE branch_id = ?
+                     AND period = ?
+                     AND resign = 0
+                     AND role = 'CLERK'
+                     AND user_add_date IS NOT NULL`,
+                    [sheetBranch, period],
+                    (err, allUsers) => {
+                      if (!err && allUsers.length) {
+                        const existingStaff = new Set(Object.keys(byStaff));
 
-                  if (!pending) {
-                    conn.commit(() => {
-                      conn.release();
-                      output.push({
-                        branch: sheetBranch,
-                        recovery: recoveryAmount,
-                        bm_given: recoveryAmount,
-                        transferred: [],
-                      });
-                      next();
-                    });
-                    return;
-                  }
+                        allUsers.forEach((u) => {
+                          if (
+                            !existingStaff.has(String(u.id)) &&
+                            new Date(u.user_add_date) > fyStart
+                          ) {
+                            let start = new Date(
+                              Date.UTC(
+                                new Date(u.user_add_date).getFullYear(),
+                                new Date(u.user_add_date).getMonth(),
+                                1,
+                              ),
+                            );
 
-                  updates.forEach((u) => {
-                    if (u.type === "transfer") {
+                            const months = countMonths(start, fyEnd);
+
+                            if (months > 0) {
+                              const value = Math.floor(perMonth * months);
+
+                              updates.push({
+                                type: "entry",
+                                staffId: u.id,
+                                value,
+                              });
+                            }
+                          }
+                        });
+                      }
+
+                      runFinalUpdates();
+                    },
+                  );
+
+                  function runFinalUpdates() {
+                    let pending = updates.length;
+
+                    function afterAll() {
+                     
                       conn.query(
-                        `UPDATE employee_transfer
-                         SET recovery_achieved = COALESCE(recovery_achieved,0) + ?
-                         WHERE id = ?`,
-                        [u.value, u.id],
-                        done
-                      );
-                    } else {
-                      conn.query(
-                        `INSERT INTO entries
-                         (period, branch_id, employee_id, kpi, value, status)
-                         VALUES (?, ?, ?, 'recovery', ?, 'Verified')`,
-                        [period, sheetBranch, u.staffId, u.value],
-                        done
+                        `SELECT id, transfer_date
+                         FROM bm_transfer_target
+                         WHERE branch_id = ?
+                         AND period = ?`,
+                        [sheetBranch, period],
+                        (err, bmTransfers) => {
+                          if (err) return rollback(err);
+
+                          if (!bmTransfers.length) return commit();
+
+                          let pendingBM = bmTransfers.length;
+
+                          bmTransfers.forEach((bt) => {
+                            const tDate = new Date(bt.transfer_date);
+
+                            const start = new Date(
+                              Date.UTC(
+                                tDate.getFullYear(),
+                                tDate.getMonth(),
+                                1,
+                              ),
+                            );
+
+                            const months = countMonths(start, fyEnd);
+
+                            if (months <= 0) {
+                              if (--pendingBM === 0) commit();
+                              return;
+                            }
+
+                            const value = Math.floor(perMonth * months);
+
+                            conn.query(
+                              `UPDATE bm_transfer_target
+                               SET recovery_achieved = ?
+                               WHERE id = ?`,
+                              [value, bt.id],
+                              (err) => {
+                                if (err) return rollback(err);
+                                if (--pendingBM === 0) commit();
+                              },
+                            );
+                          });
+                        },
                       );
                     }
-                  });
 
-                  function done(err) {
-                    if (err) {
-                      return conn.rollback(() => {
+                    function commit() {
+                      conn.commit((err) => {
+                        conn.release();
+
+                        if (err) {
+                          output.push({
+                            branch: sheetBranch,
+                            error: err.message,
+                          });
+                        } else {
+                          output.push({
+                            branch: sheetBranch,
+                            bm_given: recoveryAmount,
+                            transferred: updates,
+                            bm_transfer_updated: true,
+                          });
+                        }
+
+                        next();
+                      });
+                    }
+
+                    function rollback(err) {
+                      conn.rollback(() => {
                         conn.release();
                         output.push({
                           branch: sheetBranch,
@@ -1278,33 +1415,40 @@ function processBranch(
                       });
                     }
 
-                    if (--pending === 0) {
-                      conn.commit((err) => {
-                        conn.release();
-                        if (err) {
-                          output.push({
-                            branch: sheetBranch,
-                            error: err.message,
-                          });
-                        } else {
-                          output.push({
-                            branch: sheetBranch,
-                            recovery: recoveryAmount,
-                            bm_given: recoveryAmount,
-                            transferred: updates,
-                          });
-                        }
-                        next();
-                      });
+                    if (!pending) return afterAll();
+
+                    updates.forEach((u) => {
+                      if (u.type === "transfer") {
+                        conn.query(
+                          `UPDATE employee_transfer
+                           SET recovery_achieved = COALESCE(recovery_achieved,0) + ?
+                           WHERE id = ? AND period = ?`,
+                          [u.value, u.id, period],
+                          done,
+                        );
+                      } else {
+                        conn.query(
+                          `INSERT INTO entries
+                           (period, branch_id, employee_id, kpi, value, status)
+                           VALUES (?, ?, ?, 'recovery', ?, 'Verified')`,
+                          [period, sheetBranch, u.staffId, u.value],
+                          done,
+                        );
+                      }
+                    });
+
+                    function done(err) {
+                      if (err) return rollback(err);
+                      if (--pending === 0) afterAll();
                     }
                   }
                 });
               });
-            }
+            },
           );
-        }
+        },
       );
-    }
+    },
   );
 }
 
@@ -1369,7 +1513,7 @@ function processRows1(rows, res) {
       output,
       next,
     );
-  }; 
+  };
 
   next();
 }
@@ -1381,7 +1525,7 @@ function processBranch1(
   fyEnd,
   processedBranches,
   output,
-  next
+  next,
 ) {
   const sheetBranch = row.branch_id?.trim();
   const auditAmount = Number(row.audit_amount?.trim() || 0);
@@ -1395,13 +1539,20 @@ function processBranch1(
   function countMonths(from, to) {
     const diff =
       (to.getFullYear() - from.getFullYear()) * 12 +
+      (to.getMonth() - from.getMonth()) +
+      1;
+    return diff < 0 ? 0 : diff;
+  }
+  function countMonthsStart(from, to) {
+    const diff =
+      (to.getFullYear() - from.getFullYear()) * 12 +
       (to.getMonth() - from.getMonth());
     return diff < 0 ? 0 : diff;
   }
 
   pool.query(
-    "SELECT id FROM users WHERE role='BM' AND branch_id=? AND resign=0 LIMIT 1",
-    [sheetBranch],
+    "SELECT id FROM users WHERE role='BM' AND branch_id=? AND period=? AND resign=0 LIMIT 1",
+    [sheetBranch, period],
     (err, bmRows) => {
       if (err || !bmRows.length) {
         output.push({
@@ -1413,7 +1564,6 @@ function processBranch1(
 
       const bmId = bmRows[0].id;
 
-      // INSERT FULL AUDIT FOR BM
       pool.query(
         `INSERT INTO entries (period, branch_id, employee_id, kpi, value, status)
          VALUES (?, ?, ?, 'audit', ?, 'Verified')`,
@@ -1424,9 +1574,8 @@ function processBranch1(
             return next();
           }
 
-          // GET TRANSFER RECORDS
           pool.query(
-            `SELECT id, staff_id, old_branch_id, new_branch_id, transfer_date
+            `SELECT id, staff_id, old_branch_id, new_branch_id, transfer_date,old_designation,new_designation
              FROM employee_transfer
              WHERE period = ?
              AND (old_branch_id = ? OR new_branch_id = ?)
@@ -1438,16 +1587,6 @@ function processBranch1(
                 return next();
               }
 
-              if (!transferRows.length) {
-                output.push({
-                  branch: sheetBranch,
-                  bm_given: auditAmount,
-                  transferred: [],
-                });
-                return next();
-              }
-
-              // GROUP TRANSFERS BY STAFF
               const byStaff = {};
               for (const tr of transferRows) {
                 if (!byStaff[tr.staff_id]) byStaff[tr.staff_id] = [];
@@ -1471,15 +1610,16 @@ function processBranch1(
 
                   for (const staffId in byStaff) {
                     const transfers = byStaff[staffId];
-
                     let currentStart = fyStart;
 
                     for (const tr of transfers) {
                       const tDate = new Date(tr.transfer_date);
+                      const months = countMonthsStart(currentStart, tDate);
 
-                      const months = countMonths(currentStart, tDate);
-
-                      if (months > 0 && tr.old_branch_id === sheetBranch) {
+                      if (
+                        months > 0 &&
+                        Number(tr.old_branch_id) === Number(sheetBranch)
+                      ) {
                         const value = Math.floor(perMonth * months);
 
                         updates.push({
@@ -1490,14 +1630,13 @@ function processBranch1(
                       }
 
                       currentStart = new Date(
-                        Date.UTC(tDate.getFullYear(), tDate.getMonth(), 1)
+                        Date.UTC(tDate.getFullYear(), tDate.getMonth(), 1),
                       );
                     }
 
-                    // AFTER LAST TRANSFER
                     const last = transfers[transfers.length - 1];
 
-                    if (last.new_branch_id === sheetBranch) {
+                    if (last.new_designation !== 'BM' && Number(last.new_branch_id) === Number(sheetBranch)) {
                       const months = countMonths(currentStart, fyEnd);
 
                       if (months > 0) {
@@ -1505,63 +1644,115 @@ function processBranch1(
 
                         updates.push({
                           type: "entry",
-                          staffId: staffId,
+                          staffId,
                           value,
                         });
                       }
                     }
                   }
 
-                  let pending = updates.length;
+                  pool.query(
+                    `SELECT id, user_add_date
+                     FROM users
+                     WHERE branch_id = ?
+                     AND period = ?
+                     AND resign = 0
+                     AND role = 'CLERK'
+                     AND user_add_date IS NOT NULL`,
+                    [sheetBranch, period],
+                    (err, allUsers) => {
+                      if (!err && allUsers.length) {
+                        const existingStaff = new Set(Object.keys(byStaff));
 
-                  if (!pending) {
-                    conn.commit(() => {
-                      conn.release();
-                      output.push({
-                        branch: sheetBranch,
-                        bm_given: auditAmount,
-                        transferred: [],
-                      });
-                      next();
-                    });
-                    return;
-                  }
+                        allUsers.forEach((u) => {
+                          if (
+                            !existingStaff.has(String(u.id)) &&
+                            new Date(u.user_add_date) > fyStart
+                          ) {
+                            let start = new Date(
+                              Date.UTC(
+                                new Date(u.user_add_date).getFullYear(),
+                                new Date(u.user_add_date).getMonth(),
+                                1,
+                              ),
+                            );
 
-                  updates.forEach((u) => {
-                    if (u.type === "transfer") {
-                      conn.query(
-                        `UPDATE employee_transfer
-                         SET audit_achieved = COALESCE(audit_achieved,0) + ?
-                         WHERE id = ?`,
-                        [u.value, u.id],
-                        done
-                      );
-                    } else {
-                      conn.query(
-                        `INSERT INTO entries
-                         (period, branch_id, employee_id, kpi, value, status)
-                         VALUES (?, ?, ?, 'audit', ?, 'Verified')`,
-                        [period, sheetBranch, u.staffId, u.value],
-                        done
-                      );
-                    }
-                  });
+                            const months = countMonths(start, fyEnd);
 
-                  function done(err) {
-                    if (err) {
-                      return conn.rollback(() => {
-                        conn.release();
-                        output.push({
-                          branch: sheetBranch,
-                          error: err.message,
+                            if (months > 0) {
+                              const value = Math.floor(perMonth * months);
+
+                              updates.push({
+                                type: "entry",
+                                staffId: u.id,
+                                value,
+                              });
+                            }
+                          }
                         });
-                        next();
-                      });
+                      }
+
+                      runFinalUpdates();
+                    },
+                  );
+
+                  function runFinalUpdates() {
+                    let pending = updates.length;
+
+                    function afterAll() {
+                      conn.query(
+                        `SELECT id, transfer_date
+                         FROM bm_transfer_target
+                         WHERE branch_id = ?
+                         AND period = ?`,
+                        [sheetBranch, period],
+                        (err, bmTransfers) => {
+                          if (err) return rollback(err);
+
+                          if (!bmTransfers.length) return commit();
+
+                          let pendingBM = bmTransfers.length;
+
+                          bmTransfers.forEach((bt) => {
+                            const tDate = new Date(bt.transfer_date);
+
+                            const start = new Date(
+                              Date.UTC(
+                                tDate.getFullYear(),
+                                tDate.getMonth(),
+                                1,
+                              ),
+                            );
+
+                            const months = countMonths(start, fyEnd);
+
+                            if (months <= 0) {
+                              if (--pendingBM === 0) commit();
+                              return;
+                            }
+
+                            const value = Math.floor(perMonth * months);
+
+                            conn.query(
+                              `UPDATE bm_transfer_target
+                               SET audit_achieved = ?
+                               WHERE id = ?`,
+                              [value, bt.id],
+                              (err) => {
+                                if (err) return rollback(err);
+
+                                if (--pendingBM === 0) commit();
+                              },
+                            );
+                          });
+                        },
+                      );
                     }
 
-                    if (--pending === 0) {
+                    function commit() {
                       conn.commit((err) => {
                         conn.release();
+
                         if (err) {
                           output.push({
                             branch: sheetBranch,
@@ -1572,22 +1763,61 @@ function processBranch1(
                             branch: sheetBranch,
                             bm_given: auditAmount,
                             transferred: updates,
+                            bm_transfer_updated: true,
                           });
                         }
+
                         next();
                       });
+                    }
+
+                    function rollback(err) {
+                      conn.rollback(() => {
+                        conn.release();
+                        output.push({
+                          branch: sheetBranch,
+                          error: err.message,
+                        });
+                        next();
+                      });
+                    }
+
+                    if (!pending) return afterAll();
+
+                    updates.forEach((u) => {
+                      if (u.type === "transfer") {
+                        conn.query(
+                          `UPDATE employee_transfer
+                           SET audit_achieved = COALESCE(audit_achieved,0) + ?
+                           WHERE id = ? AND period = ?`,
+                          [u.value, u.id, period],
+                          done,
+                        );
+                      } else {
+                        conn.query(
+                          `INSERT INTO entries
+                           (period, branch_id, employee_id, kpi, value, status)
+                           VALUES (?, ?, ?, 'audit', ?, 'Verified')`,
+                          [period, sheetBranch, u.staffId, u.value],
+                          done,
+                        );
+                      }
+                    });
+
+                    function done(err) {
+                      if (err) return rollback(err);
+                      if (--pending === 0) afterAll();
                     }
                   }
                 });
               });
-            }
+            },
           );
-        }
+        },
       );
-    }
+    },
   );
 }
-
 function getFinancialYearRange2(period) {
   const [startYear] = period.split("-");
   const s = Number(startYear);
@@ -1597,7 +1827,8 @@ function getFinancialYearRange2(period) {
   };
 }
 //upload deputation staff
-targetsRouter.post("/upload-deputation-staff",
+targetsRouter.post(
+  "/upload-deputation-staff",
   upload.single("deputationFile"),
   (req, res) => {
     if (!req.file)
@@ -1690,101 +1921,96 @@ targetsRouter.post("/upload-deputation-staff",
 );
 
 //upload insurance target
-targetsRouter.post("/upload-insurance-target", upload.single("insuranceTargetFile"), (req, res) => {
+targetsRouter.post(
+  "/upload-insurance-target",
+  upload.single("insuranceTargetFile"),
+  (req, res) => {
+    const { period } = req.body;
+    if (!req.file)
+      return res.status(400).json({ error: "targetFile required" });
 
-  if (!req.file) return res.status(400).json({ error: "targetFile required" });
+    const results = [];
 
-  const results = [];
+    Readable.from(req.file.buffer)
+      .pipe(csv())
+      .on("data", (data) => results.push(data))
+      .on("end", () => {
+        if (!results.length) {
+          return res.status(400).json({ error: "CSV empty" });
+        }
 
-  Readable.from(req.file.buffer)
-    .pipe(csv())
-    .on("data", (data) => results.push(data))
-    .on("end", () => {
+        const allocations = [];
+        const periods = new Set();
 
-      if (!results.length) {
-        return res.status(400).json({ error: "CSV empty" });
-      }
+        pool.query(
+          "SELECT id, PF_NO, branch_id FROM users WHERE period = ?",
+          [period],
+          (err, users) => {
+            if (err) return res.status(500).json(err);
 
-      const allocations = [];
-      const periods = new Set();
+            const userMap = {};
+            users.forEach((u) => {
+              userMap[u.PF_NO] = u;
+            });
 
-      pool.query(
-        "SELECT id, PF_NO, branch_id FROM users",
-        (err, users) => {
+            results.forEach((row) => {
+              const pfNo = (row.PF_NO || "").toString().trim();
+              const amount = parseFloat(row.insurance || 0);
+              const period = (row.period || "").toString().trim();
 
-          if (err) return res.status(500).json(err);
+              if (!pfNo || !amount || !period) return;
 
-          const userMap = {};
-          users.forEach(u => {
-            userMap[u.PF_NO] = u;
-          });
+              const user = userMap[pfNo];
+              if (!user) return;
 
-          results.forEach(row => {
+              periods.add(period);
 
-            const pfNo = (row.PF_NO || "").toString().trim();
-            const amount = parseFloat(row.insurance || 0);
-            const period = (row.period || "").toString().trim();
+              allocations.push([
+                period,
+                user.branch_id,
+                user.id,
+                "insurance",
+                amount,
+                "published",
+              ]);
+            });
 
-            if (!pfNo || !amount || !period) return;
+            const periodList = [...periods];
+            const placeholders = periodList.map(() => "?").join(",");
 
-            const user = userMap[pfNo];
-            if (!user) return;
-
-            periods.add(period);
-
-            allocations.push([
-              period,
-              user.branch_id,
-              user.id,
-              "insurance",
-              amount,
-              "published"
-            ]);
-
-          });
-
-          const periodList = [...periods];
-          const placeholders = periodList.map(() => "?").join(",");
-
-          const deleteQuery = `
+            const deleteQuery = `
             DELETE FROM allocations 
             WHERE period IN (${placeholders}) 
             AND kpi = 'insurance'
           `;
 
-          pool.query(deleteQuery, periodList, (err) => {
+            pool.query(deleteQuery, periodList, (err) => {
+              if (err) {
+                console.error(err);
+                return res.status(500).json({ error: "Delete failed" });
+              }
 
-            if (err) {
-              console.error(err);
-              return res.status(500).json({ error: "Delete failed" });
-            }
-
-            pool.query(
-              `INSERT INTO allocations 
+              pool.query(
+                `INSERT INTO allocations 
               (period, branch_id, user_id, kpi, amount, state)
               VALUES ?`,
-              [allocations],
-              (error) => {
+                [allocations],
+                (error) => {
+                  if (error) {
+                    console.error(error);
+                    return res.status(500).json({ error: "Insert failed" });
+                  }
 
-                if (error) {
-                  console.error(error);
-                  return res.status(500).json({ error: "Insert failed" });
-                }
-
-                res.json({
-                  ok: true,
-                  inserted: allocations.length,
-                  deleted_periods: periodList
-                });
-
-              }
-            );
-
-          });
-
-        }
-      );
-
-    });
-
-});
+                  res.json({
+                    ok: true,
+                    inserted: allocations.length,
+                    deleted_periods: periodList,
+                  });
+                },
+              );
+            });
+          },
+        );
+      });
+  },
+);

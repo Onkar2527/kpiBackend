@@ -86,8 +86,8 @@ function updateProratedTargetsFn(req, res) {
       if (err) return rollback("Transaction start failed");
 
       conn.query(
-        "SELECT transfer_date FROM users WHERE id=?",
-        [staff_id],
+        "SELECT transfer_date FROM users WHERE id=? AND period = ?",
+        [staff_id ,period],
         (err, staffRows) => {
           if (err) return rollback(err);
           if (!staffRows.length)
@@ -402,8 +402,8 @@ transferRouter.post("/transfer-staff-master", (req, res) => {
 
   if (role === "HO_STAFF" || role === "Attender") {
     pool.query(
-      "UPDATE users SET transfer_date = NOW() WHERE id=?",
-      [staff_id],
+      "UPDATE users SET transfer_date = NOW() WHERE id=? AND period = ?",
+      [staff_id ,period],
       (err) => {
         if (err) {
           return res.status(500).json({
@@ -448,8 +448,8 @@ transferRouter.post("/transfer-staff-master", (req, res) => {
   }
 
   pool.query(
-    "UPDATE users SET transfer_date = NOW() WHERE id=?",
-    [staff_id],
+    "UPDATE users SET transfer_date = NOW() WHERE id=? AND period = ?",
+    [staff_id,period],
     (err) => {
       if (err) {
         return res
@@ -570,8 +570,8 @@ transferRouter.post("/transfer-staff-master-update", (req, res) => {
 
   if (role === "HO_STAFF" || role === "Attender") {
     pool.query(
-      "UPDATE users SET transfer_date = NOW() WHERE id=?",
-      [staff_id],
+      "UPDATE users SET transfer_date = NOW() WHERE id=? AND period = ?",
+      [staff_id ,period],
       (err) => {
         if (err) {
           return res.status(500).json({
@@ -616,8 +616,8 @@ transferRouter.post("/transfer-staff-master-update", (req, res) => {
   }
 
   pool.query(
-    "UPDATE users SET transfer_date = NOW() WHERE id=?",
-    [staff_id],
+    "UPDATE users SET transfer_date = NOW() WHERE id=? AND period = ?",
+    [staff_id , period],
     (err) => {
       if (err) {
         return res

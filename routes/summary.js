@@ -1,10 +1,12 @@
 import express from "express";
 import pool from "../db.js";
-import { getHoStaffTransferHistory,getAttenderTransferHistory } from "./performanceMaster.js";
+import {
+  getHoStaffTransferHistory,
+  getAttenderTransferHistory,
+} from "./performanceMaster.js";
 // Router providing summary endpoints for Achieved totals.
 
 export const summaryRouter = express.Router();
-
 
 // Summarises verified entries by KPI for the branch and period.
 summaryRouter.get("/branch", (req, res) => {
@@ -56,7 +58,6 @@ summaryRouter.post("/addAudit", (req, res) => {
   });
 });
 
-
 // Returns computed KPI scores for all staff in the branch.
 summaryRouter.get("/scores", (req, res) => {
   const { period, branchId } = req.query;
@@ -71,7 +72,7 @@ summaryRouter.get("/scores", (req, res) => {
       SUM(a.amount) AS target,
       SUM(e.value) AS achieved
     FROM users u
-    LEFT JOIN allocations a ON u.id = a.user_id AND a.period = ? AND a.branch_id = ?
+    LEFT JOIN allocations a ON u.id = a.user_id AND a.period = ? AND a.branch_id = ? AND u.period = ?
     LEFT JOIN entries e ON u.id = e.employee_id AND e.period = ? AND e.branch_id = ? AND e.status = 'Verified' AND a.kpi = e.kpi
     WHERE u.branch_id = ? AND u.role IN ('ATTENDER', 'CLERK')
     GROUP BY u.id, u.name, a.kpi
@@ -93,7 +94,7 @@ summaryRouter.get("/scores", (req, res) => {
 
   pool.query(
     staffQuery,
-    [period, branchId, period, branchId, branchId],
+    [period, branchId, period, period, branchId, branchId],
     (error, staffResults) => {
       if (error)
         return res.status(500).json({ error: "Internal server error" });
@@ -112,10 +113,11 @@ summaryRouter.get("/scores", (req, res) => {
               row.kpi === "audit" ? row.achieved / row.target : 0;
             const recoveryRatio =
               row.kpi === "recovery" ? row.achieved / row.target : 0;
-            
+
             switch (row.kpi) {
               case "deposit":
               case "loan_gen":
+              case "loan_amulya":
                 if (ratio <= 1) {
                   outOf10 = ratio * 10;
                 } else if (ratio < 1.25) {
@@ -127,15 +129,6 @@ summaryRouter.get("/scores", (req, res) => {
                 }
                 break;
 
-              case "loan_amulya":
-                if (ratio <= 1) {
-                  outOf10 = ratio * 10;
-                } else if (ratio < 1.25) {
-                  outOf10 = 10;
-                } else {
-                  outOf10 = 12.5;
-                }
-                break;
               case "insurance":
                 if (ratio === 0) {
                   outOf10 = -2;
@@ -240,7 +233,6 @@ summaryRouter.get("/scores", (req, res) => {
     },
   );
 });
-
 
 // Returns summary counts for the BM dashboard.
 summaryRouter.get("/bm-dashboard-counts", (req, res) => {
@@ -365,204 +357,6 @@ summaryRouter.get("/bm-dashboard-counts", (req, res) => {
   );
 });
 
-
-// Returns computed KPI scores for the branch manager.
-// summaryRouter.get("/bm-scores", (req, res) => {
-//   const { period, branchId } = req.query;
-//   if (!period || !branchId)
-//     return res.status(400).json({ error: "period and branchId required" });
-
-//   const query = `
-//     SELECT
-//         k.kpi,
-//         CASE WHEN k.kpi = 'audit' THEN 100 ELSE t.amount END AS target,
-//         w.weightage,
-//         e.total_achieved  AS achieved
-//     FROM
-//         (
-//             SELECT 'deposit' as kpi UNION 
-//             SELECT 'loan_gen' UNION 
-//             SELECT 'loan_amulya' UNION 
-//             SELECT 'recovery' UNION 
-//             SELECT 'audit' UNION 
-//             SELECT 'insurance'
-//         ) as k
-//     LEFT JOIN targets t ON k.kpi = t.kpi AND t.period = ? AND t.branch_id = ?
-//     LEFT JOIN (
-//         SELECT kpi, SUM(value) AS total_achieved 
-//         FROM entries 
-//         WHERE period = ? AND branch_id = ? AND status = 'Verified' 
-//         GROUP BY kpi
-//     ) e ON k.kpi = e.kpi
-//     LEFT JOIN weightage w ON k.kpi = w.kpi
-//   `;
-
-//   pool.query(query, [period, branchId, period, branchId], (error, results) => {
-//     if (error) return res.status(500).json({ error: "Internal server error" });
-//     pool.query(
-//       `select id from users where branch_id = ? and role='BM'`,
-//       [branchId],
-//       (err, BMID) => {
-//         const BM = BMID?.[0]?.id || 0;
-
-//         pool.query(
-//           `
-//         SELECT SUM(value) AS achieved
-//                 FROM entries
-//                 WHERE period = ? AND employee_id = ? AND kpi = 'insurance'
-//       `,
-//           [period, BM],
-//           (errIns, insRows) => {
-//             if (errIns)
-//               return res.status(500).json({ error: "Internal server error" });
-
-//             const insuranceAchieved = insRows?.[0]?.achieved || 0;
-
-//             results = results.map((row) => {
-//               if (row.kpi === "insurance") {
-//                 row.achieved = insuranceAchieved;
-//               }
-//               return row;
-//             });
-
-//             const bmKpis = [
-//               "deposit",
-//               "loan_gen",
-//               "loan_amulya",
-//               "recovery",
-//               "audit",
-//               "insurance",
-//             ];
-
-//             const calculateScores = (cap) => {
-//               const scores = {};
-//               bmKpis.forEach((kpi) => {
-//                 scores[kpi] = {
-//                   score: 0,
-//                   target: 0,
-//                   achieved: 0,
-//                   weightage: 0,
-//                   weightageScore: 0,
-//                 };
-//               });
-//               let totalWeightageScore = 0;
-
-//               results.forEach((row) => {
-//                 if (!bmKpis.includes(row.kpi)) return;
-
-//                 let outOf10 = 0;
-
-//                 if (!row.target || row.target === 0) {
-//                   scores[row.kpi] = {
-//                     score: 0,
-//                     target: 0,
-//                     achieved: row.achieved || 0,
-//                     weightage: row.weightage || 0,
-//                     weightageScore: 0,
-//                   };
-//                   return;
-//                 }
-
-//                 const ratio = row.achieved / row.target;
-//                 const auditRatio = row.kpi === "audit" ? ratio : 0;
-//                 const recoveryRatio = row.kpi === "recovery" ? ratio : 0;
-
-//                 switch (row.kpi) {
-//                   case "deposit":
-//                   case "loan_gen":
-//                     if (ratio <= 1) {
-//                       outOf10 = ratio * 10;
-//                     } else if (ratio < 1.25) {
-//                       outOf10 = 10;
-//                     } else if (auditRatio >= 0.75 && recoveryRatio >= 0.75) {
-//                       outOf10 = 12.5;
-//                     } else {
-//                       outOf10 = 10;
-//                     }
-//                     break;
-
-//                   case "loan_amulya":
-//                     if (ratio <= 1) {
-//                       outOf10 = ratio * 10;
-//                     } else if (ratio < 1.25) {
-//                       outOf10 = 10;
-//                     } else {
-//                       outOf10 = 12.5;
-//                     }
-//                     break;
-
-//                   case "insurance":
-//                     if (ratio === 0) {
-//                       outOf10 = -2;
-//                     } else if (ratio <= 1) {
-//                       outOf10 = ratio * 10;
-//                     } else if (ratio < 1.25) {
-//                       outOf10 = 10;
-//                     } else {
-//                       outOf10 = 12.5;
-//                     }
-//                     break;
-
-//                   case "recovery":
-//                   case "audit":
-//                     if (ratio <= 1) {
-//                       outOf10 = ratio * 10;
-//                     } else {
-//                       outOf10 = 12.5;
-//                     }
-//                     break;
-
-//                   default:
-//                     outOf10 = 0;
-//                 }
-
-//                 outOf10 = Math.max(
-//                   0,
-//                   Math.min(cap, isNaN(outOf10) ? 0 : outOf10),
-//                 );
-
-//                 const weightageScore = (outOf10 * (row.weightage || 0)) / 100;
-
-//                 scores[row.kpi] = {
-//                   score: outOf10,
-//                   target: row.target,
-//                   achieved: row.achieved || 0,
-//                   weightage: row.weightage || 0,
-
-//                   weightageScore:
-//                     row.kpi === "insurance" && ratio === 0
-//                       ? -2
-//                       : weightageScore,
-//                 };
-
-//                 totalWeightageScore += scores[row.kpi].weightageScore;
-//               });
-
-//               scores["total"] = totalWeightageScore;
-//               return scores;
-//             };
-
-//             const preliminaryScores = calculateScores(12.5);
-
-//             const insuranceScore = preliminaryScores["insurance"]?.score || 0;
-//             const recoveryScore = preliminaryScores["recovery"]?.score || 0;
-
-//             const cap =
-//               preliminaryScores.total > 10 &&
-//               insuranceScore < 7.5 &&
-//               recoveryScore < 7.5
-//                 ? 10
-//                 : 12.5;
-
-//             const finalScores = calculateScores(cap);
-
-//             res.json(finalScores);
-//           },
-//         );
-//       },
-//     );
-//   });
-// });
 // Returns computed KPI scores for the branch manager. // this old api not existing transfer history //21-02-2026
 summaryRouter.get("/bm-scores", async (req, res) => {
   const { period, branchId } = req.query;
@@ -571,132 +365,134 @@ summaryRouter.get("/bm-scores", async (req, res) => {
     return res.status(400).json({ error: "period and branchId required" });
 
   try {
+    const query = ` 
+    SELECT
+        k.kpi,
 
-    const query = `
-       SELECT
-    k.kpi,
-    CASE 
-        WHEN k.kpi = 'audit' THEN 100
-        WHEN k.kpi = 'insurance' THEN COALESCE(a.amount,0)
-        ELSE COALESCE(t.amount,0)
-    END AS target,
-    w.weightage,
-    COALESCE(e.total_achieved,0) AS achieved
-FROM
-(
-    SELECT 'deposit' AS kpi UNION ALL
-    SELECT 'loan_gen' UNION ALL
-    SELECT 'loan_amulya' UNION ALL
-    SELECT 'recovery' UNION ALL
-    SELECT 'audit' UNION ALL
-    SELECT 'insurance'
-) k
+        CASE 
+            WHEN k.kpi = 'audit' THEN 100
+            WHEN k.kpi = 'insurance' THEN COALESCE(MAX(a.amount),0)
+            ELSE COALESCE(MAX(t.amount),0)
+        END AS target,
 
--- Get BM of branch
-LEFT JOIN users bm
-    ON bm.branch_id = ?
-    AND bm.role = 'BM'
-    AND bm.resign = 0
+        MAX(COALESCE(w.weightage,0)) AS weightage,
+        MAX(COALESCE(e.total_achieved,0)) AS achieved
 
--- Targets
-LEFT JOIN targets t 
-    ON t.kpi = k.kpi
-    AND t.period = ?
-    AND t.branch_id = ?
+    FROM
+    (
+        SELECT 'deposit' AS kpi UNION ALL
+        SELECT 'loan_gen' UNION ALL
+        SELECT 'loan_amulya' UNION ALL
+        SELECT 'recovery' UNION ALL
+        SELECT 'audit' UNION ALL
+        SELECT 'insurance'
+    ) k
 
--- Insurance allocation
-LEFT JOIN allocations a
-    ON k.kpi = 'insurance'
-    AND a.user_id = bm.id
-    AND a.period = ?
-
--- Achieved values
-LEFT JOIN (
-    SELECT 
-        e.kpi,
-        SUM(e.value) AS total_achieved
-    FROM entries e
     LEFT JOIN users bm
         ON bm.branch_id = ?
         AND bm.role = 'BM'
         AND bm.resign = 0
-    WHERE 
-        e.period = ?
-        AND e.status = 'Verified'
-        AND (
-              (e.kpi IN ('insurance','audit','recovery') AND e.employee_id = bm.id)
-              OR
-              (e.kpi NOT IN ('audit','recovery','insurance') AND e.branch_id = ?)
+        AND bm.period = ?
+
+    LEFT JOIN targets t 
+        ON t.kpi = k.kpi
+        AND t.period = ?
+        AND t.branch_id = ?
+
+    LEFT JOIN allocations a
+        ON k.kpi = 'insurance'
+        AND a.user_id = bm.id
+        AND a.period = ?
+
+    LEFT JOIN (
+        SELECT 
+            e.kpi,
+            SUM(e.value) AS total_achieved
+        FROM entries e
+
+        LEFT JOIN users bm
+            ON bm.branch_id = ?
+            AND bm.role = 'BM'
+            AND bm.resign = 0
+            AND bm.period = ?
+
+        WHERE 
+            e.period = ?
+            AND e.status = 'Verified'
+
+            AND (
+                (
+                    e.kpi IN ('audit','recovery')
+                    AND e.employee_id = bm.id
+                )
+                OR
+                (
+                    e.kpi NOT IN ('audit','recovery')
+                    AND e.branch_id = ?
+                )
             )
-    GROUP BY e.kpi
-) e
-ON e.kpi = k.kpi
 
+        GROUP BY e.kpi
+    ) e
+    ON e.kpi = k.kpi
 
-LEFT JOIN weightage w
-    ON w.kpi = k.kpi
+    LEFT JOIN weightage w
+        ON w.kpi = k.kpi
+
+    GROUP BY k.kpi
+    ORDER BY k.kpi;
     `;
 
-    
     const [results, BMID] = await Promise.all([
       new Promise((resolve, reject) => {
         pool.query(
           query,
-          [ branchId,period, branchId,period, branchId,period,branchId],
+          [
+            branchId,
+            period,
+            period,
+            branchId,
+            period,
+            branchId,
+            period,
+            period,
+            branchId,
+          ],
           (err, rows) => {
             if (err) return reject(err);
             resolve(rows);
-          }
+          },
         );
       }),
 
       new Promise((resolve, reject) => {
         pool.query(
-          `SELECT id FROM users WHERE branch_id=? AND role='BM'`,
-          [branchId],
+          `SELECT id FROM users WHERE branch_id=? AND role='BM' AND period = ?`,
+          [branchId, period],
           (err, rows) => {
             if (err) return reject(err);
             resolve(rows);
-          }
+          },
         );
       }),
     ]);
 
     const BM = BMID?.[0]?.id || 0;
 
-    
-    const [insRows, hoHistory, attHistory, transferHistory] =
-      await Promise.all([
-
-        new Promise((resolve, reject) => {
-          pool.query(
-            `
-            SELECT SUM(value) AS achieved
-            FROM entries
-            WHERE period = ? AND employee_id = ? AND kpi = 'insurance'
-            `,
-            [period, BM],
-            (err, rows) => {
-              if (err) return reject(err);
-              resolve(rows);
-            }
-          );
-        }),
-
-        new Promise((resolve) => {
-          getHoStaffTransferHistory(pool, period, BM, (err, data) => {
-            resolve(err ? [] : data);
-          });
-        }),
-
-        new Promise((resolve) => {
-          getAttenderTransferHistory(pool, period, BM, (err, data) => {
-            resolve(err ? [] : data);
-          });
-        }),
-
-        getTransferKpiHistory(pool, period, BM),
-      ]);
+    const [insRows] = await Promise.all([
+      new Promise((resolve, reject) => {
+        pool.query(
+          `SELECT SUM(value) AS achieved
+           FROM entries
+           WHERE period = ? AND employee_id = ? AND kpi = 'insurance'`,
+          [period, BM],
+          (err, rows) => {
+            if (err) return reject(err);
+            resolve(rows);
+          },
+        );
+      }),
+    ]);
 
     const insuranceAchieved = insRows?.[0]?.achieved || 0;
 
@@ -718,29 +514,24 @@ LEFT JOIN weightage w
       const scores = {};
       let totalWeightageScore = 0;
 
+      let auditRatio = 0;
+      let recoveryRatio = 0;
+
+      updatedResults.forEach((r) => {
+        if (r.kpi === "audit") auditRatio = r.achieved / r.target;
+        if (r.kpi === "recovery") recoveryRatio = r.achieved / r.target;
+      });
+
       updatedResults.forEach((row) => {
         if (!bmKpis.includes(row.kpi)) return;
 
         let outOf10 = 0;
-
-        if (!row.target || row.target === 0) {
-          scores[row.kpi] = {
-            score: 0,
-            target: 0,
-            achieved: row.achieved || 0,
-            weightage: row.weightage || 0,
-            weightageScore: 0,
-          };
-          return;
-        }
-
-        const ratio = row.achieved / row.target;
-        const auditRatio = row.kpi === "audit" ? ratio : 0;
-        const recoveryRatio = row.kpi === "recovery" ? ratio : 0;
+        const ratio = row.target ? row.achieved / row.target : 0;
 
         switch (row.kpi) {
           case "deposit":
           case "loan_gen":
+          case "loan_amulya":
             if (ratio <= 1) outOf10 = ratio * 10;
             else if (ratio < 1.25) outOf10 = 10;
             else if (auditRatio >= 0.75 && recoveryRatio >= 0.75)
@@ -748,14 +539,8 @@ LEFT JOIN weightage w
             else outOf10 = 10;
             break;
 
-          case "loan_amulya":
-            if (ratio <= 1) outOf10 = ratio * 10;
-            else if (ratio < 1.25) outOf10 = 10;
-            else outOf10 = 12.5;
-            break;
-
           case "insurance":
-            if (ratio === 0) outOf10 = -2;
+            if (ratio === 0 || isNaN(ratio)) outOf10 = 0;
             else if (ratio <= 1) outOf10 = ratio * 10;
             else if (ratio < 1.25) outOf10 = 10;
             else outOf10 = 12.5;
@@ -763,7 +548,8 @@ LEFT JOIN weightage w
 
           case "recovery":
           case "audit":
-            if (ratio <= 1) outOf10 = ratio * 10;
+            if (isNaN(ratio)) outOf10 = 0;
+            else if (ratio <= 1) outOf10 = ratio * 10;
             else outOf10 = 12.5;
             break;
         }
@@ -771,7 +557,7 @@ LEFT JOIN weightage w
         outOf10 = Math.max(0, Math.min(cap, isNaN(outOf10) ? 0 : outOf10));
 
         const weightageScore =
-          row.kpi === "insurance" && ratio === 0
+          row.kpi === "insurance" && (isNaN(ratio) || ratio === 0)
             ? -2
             : (outOf10 * (row.weightage || 0)) / 100;
 
@@ -804,333 +590,24 @@ LEFT JOIN weightage w
 
     const finalScores = calculateScores(cap);
 
-
-    const previousHoScores =
-      hoHistory?.[0]?.transfers?.map(
-        (t) => t.total_weightage_score
-      ) || [];
-
-    const previousAttenderScores =
-      attHistory?.[0]?.transfers?.map(
-        (t) => t.total_weightage_score
-      ) || [];
-
-    const previousTransferScores =
-      transferHistory?.all_scores || [];
-
-    const allScores = [
-      ...previousHoScores,
-      ...previousAttenderScores,
-      ...previousTransferScores,
-      finalScores.total,
-    ];
-
-    const finalAvg =
-      allScores.length > 0
-        ? allScores.reduce((a, b) => a + b, 0) / allScores.length
-        : 0;
-
-    finalScores.total = Number(finalAvg.toFixed(2));
-
     res.json(finalScores);
-
   } catch (err) {
     console.error("BM API Error:", err);
     res.status(500).json({ error: "Internal server error" });
   }
 });
 
-// Returns computed KPI scores for a specific staff member.
-// summaryRouter.get("/staff-scores", (req, res) => {
-//   const { period, employeeId, branchId } = req.query;
-//   if (!period || !employeeId || !branchId)
-//     return res
-//       .status(400)
-//       .json({ error: "period, employeeId and branchId are required" });
-
-//   const userQuery = "SELECT role, branch_id FROM users WHERE id = ?";
-//   pool.query(userQuery, [employeeId], (error, userResults) => {
-//     if (error) return res.status(500).json({ error: "Internal server error" });
-//     if (userResults.length === 0)
-//       return res.status(404).json({ error: "User not found" });
-
-//     const userRole = userResults[0].role;
-//     const branchId = userResults[0].branch_id;
-
-//     const calculateScore = (kpi, achieved, target) => {
-//       let outOf10;
-//       if (target === 0 && !target) {
-//         outOf10 = 0;
-//         return;
-//       }
-//       const ratio = achieved / target;
-//       const auditRatio = kpi === "audit" ? kpi.achieved / kpi.target : 0;
-//       const recoveryRatio = kpi === "recovery" ? kpi.achieved / kpi.target : 0;
-
-//       switch (kpi) {
-//         case "deposit":
-//         case "loan_gen":
-//           if (ratio <= 1) {
-//             outOf10 = ratio * 10;
-//           } else if (ratio < 1.25) {
-//             outOf10 = 10;
-//           } else if (auditRatio >= 0.75 && recoveryRatio >= 0.75) {
-//             outOf10 = 12.5;
-//           } else {
-//             outOf10 = 10;
-//           }
-//           break;
-
-//         case "loan_amulya":
-//           if (ratio <= 1) {
-//             outOf10 = ratio * 10;
-//           } else if (ratio < 1.25) {
-//             outOf10 = 10;
-//           } else {
-//             outOf10 = 12.5;
-//           }
-//           break;
-//         case "insurance":
-//           if (ratio === 0) {
-//             outOf10 = -2;
-//           } else if (ratio <= 1) {
-//             outOf10 = ratio * 10;
-//           } else if (ratio < 1.25) {
-//             outOf10 = 10;
-//           } else {
-//             outOf10 = 12.5;
-//           }
-//           break;
-
-//         case "recovery":
-//         case "audit":
-//           if (ratio <= 1) {
-//             outOf10 = ratio * 10;
-//           } else {
-//             outOf10 = 12.5;
-//           }
-//           break;
-//         default:
-//           outOf10 = 0;
-//       }
-//       return Math.max(0, Math.min(12.5, isNaN(outOf10) ? 0 : outOf10));
-//     };
-
-//     if (userRole === "attender") {
-//       const roleKpisQuery = "SELECT * FROM role_kpis WHERE role = ?";
-//       pool.query(roleKpisQuery, [userRole], (err, roleKpis) => {
-//         if (err)
-//           return res.status(500).json({ error: "Internal server error" });
-
-//         const evaluationsQuery =
-//           "SELECT * FROM kpi_evaluations WHERE period = ? AND user_id = ?";
-//         pool.query(
-//           evaluationsQuery,
-//           [period, employeeId],
-//           (err, evaluations) => {
-//             if (err)
-//               return res.status(500).json({ error: "Internal server error" });
-
-//             const branchInsuranceQuery = `
-//                         SELECT t.amount AS target, e.total_achieved AS achieved
-//                         FROM (SELECT amount FROM targets WHERE period = ? AND branch_id = ? AND kpi = 'insurance') AS t
-//                         LEFT JOIN (SELECT SUM(value) AS total_achieved FROM entries WHERE period = ? AND branch_id = ? AND status = 'Verified' AND kpi = 'insurance') AS e ON 1=1
-//                     `;
-//             pool.query(
-//               branchInsuranceQuery,
-//               [period, branchId, period, branchId],
-//               (err, branchInsuranceResult) => {
-//                 if (err)
-//                   return res
-//                     .status(500)
-//                     .json({ error: "Internal server error" });
-
-//                 const scores = {};
-//                 let totalWeightageScore = 0;
-//                 const branchInsurance = branchInsuranceResult[0];
-
-//                 roleKpis.forEach((kpi) => {
-//                   if (kpi.kpi_type === "manual") {
-//                     const evaluation = evaluations.find(
-//                       (ev) => ev.role_kpi_id === kpi.id,
-//                     );
-//                     if (evaluation) {
-//                       const score = evaluation.score;
-//                       const weightageScore = (score * kpi.weightage) / 100;
-//                       scores[kpi.kpi_name] = {
-//                         score,
-//                         weightage: kpi.weightage,
-//                         weightageScore,
-//                       };
-//                       totalWeightageScore += weightageScore;
-//                     }
-//                   } else if (kpi.kpi_name === "Insurance Target") {
-//                     if (branchInsurance && branchInsurance.target) {
-//                       const outOf10 = calculateScore(
-//                         "insurance",
-//                         branchInsurance.achieved,
-//                         branchInsurance.target,
-//                       );
-//                       const weightageScore = (outOf10 * kpi.weightage) / 100;
-
-//                       scores["Insurance Target"] = {
-//                         score: outOf10,
-//                         target: branchInsurance.target,
-//                         achieved: branchInsurance.achieved,
-//                         weightage: kpi.weightage,
-//                         weightageScore,
-//                       };
-//                       totalWeightageScore += weightageScore;
-//                     }
-//                   }
-//                 });
-
-//                 scores.total = totalWeightageScore;
-//                 res.json(scores);
-//               },
-//             );
-//           },
-//         );
-//       });
-//     } else {
-//       // Existing logic for other staff roles
-//       const query = `
-//               SELECT a.kpi, a.amount AS target, w.weightage, e.total_achieved AS achieved
-//               FROM (SELECT kpi, amount, user_id FROM allocations WHERE period = ? AND user_id = ?) AS a
-//               LEFT JOIN (SELECT kpi, SUM(value) AS total_achieved FROM entries WHERE period = ? AND employee_id = ? AND status = 'Verified' GROUP BY kpi) AS e ON a.kpi = e.kpi
-//               LEFT JOIN weightage w ON a.kpi = w.kpi
-//             `;
-//       pool.query(
-//         query,
-//         [period, employeeId, period, employeeId],
-//         (error, results) => {
-//           if (error)
-//             return res.status(500).json({ error: "Internal server error" });
-
-//           const branchQuery = `
-//                   SELECT t.kpi, t.amount AS target, w.weightage, e.total_achieved AS achieved
-//                   FROM (SELECT kpi, amount FROM targets WHERE period = ? AND branch_id = ? AND kpi IN ('deposit','loan_gen','loan_amulya','recovery', 'audit', 'insurance')) AS t
-//                   LEFT JOIN (SELECT kpi, SUM(value) AS total_achieved FROM entries WHERE period = ? AND branch_id = ? AND status = 'Verified' GROUP BY kpi) AS e ON t.kpi = e.kpi
-//                   LEFT JOIN weightage w ON t.kpi = w.kpi
-//                 `;
-//           pool.query(
-//             branchQuery,
-//             [period, branchId, period, branchId],
-//             (error, branchResults) => {
-//               if (error)
-//                 return res.status(500).json({ error: "Internal server error" });
-
-//               const branchScores = {};
-
-//               pool.query(
-//                 `
-//         SELECT SUM(value) AS achieved
-//                 FROM entries
-//                 WHERE period = ? AND employee_id = ? AND kpi = 'insurance'
-//       `,
-//                 [period, employeeId],
-//                 (errIns, insRows) => {
-//                   if (errIns)
-//                     return res
-//                       .status(500)
-//                       .json({ error: "Internal server error" });
-
-//                   const insuranceAchieved = insRows?.[0]?.achieved || 0;
-
-//                   branchResults.map((row) => {
-//                     if (row.kpi === "insurance") {
-//                       row.achieved = insuranceAchieved;
-//                     }
-//                     return row;
-//                   });
-
-//                   branchResults.forEach((row) => {
-//                     const score = calculateScore(
-//                       row.kpi,
-//                       row.achieved,
-//                       row.target,
-//                     );
-//                     const weightageScore = (score * (row.weightage || 0)) / 100;
-//                     branchScores[row.kpi] = {
-//                       score,
-//                       target: row.target || 0,
-//                       achieved: row.achieved || 0,
-//                       weightage: row.weightage || 0,
-//                       weightageScore:
-//                         row.kpi === "insurance" && score === 0
-//                           ? -2
-//                           : isNaN(weightageScore)
-//                             ? 0
-//                             : weightageScore,
-//                     };
-//                   });
-
-//                   const scores = {};
-//                   let totalWeightageScore = 0;
-//                   results.forEach((row) => {
-//                     if (row.kpi) {
-//                       if (row.kpi === "recovery") {
-//                         const branchRecovery = branchResults.find(
-//                           (b) => b.kpi === "recovery",
-//                         );
-
-//                         if (branchRecovery) {
-//                           row.target = branchRecovery.target;
-//                           row.achieved = branchRecovery.achieved;
-//                         }
-//                       }
-//                       const score = calculateScore(
-//                         row.kpi,
-//                         row.achieved,
-//                         row.target,
-//                       );
-//                       const weightageScore = (score * row.weightage) / 100;
-//                       scores[row.kpi] = {
-//                         score,
-//                         target: row.target || 0,
-//                         achieved: row.achieved || 0,
-//                         weightage: row.weightage || 0,
-//                         weightageScore:
-//                           row.kpi === "insurance" && score === 0
-//                             ? -2
-//                             : isNaN(weightageScore)
-//                               ? 0
-//                               : weightageScore,
-//                       };
-//                       totalWeightageScore += scores[row.kpi].weightageScore;
-//                     }
-//                   });
-
-//                   // scores.deposit = branchScores.deposit;
-//                   // scores.loan_gen = branchScores.loan_gen;
-//                   // scores.loan_amulya = branchScores.loan_amulya;
-//                   scores.recovery = branchScores.recovery;
-//                   // scores.audit = branchScores.audit;
-//                   // scores.insurance = branchScores.insurance;
-
-//                   scores["total"] = totalWeightageScore;
-
-//                   res.json(scores);
-//                 },
-//               );
-//             },
-//           );
-//         },
-//       );
-//     }
-//   });
-// });
-
 // Returns computed KPI scores for a specific staff member.// this old api not existing transfer history //21-02-2026
-summaryRouter.get("/staff-scores", async(req, res) => {
+summaryRouter.get("/staff-scores", async (req, res) => {
   const { period, employeeId, branchId } = req.query;
   if (!period || !employeeId || !branchId)
     return res
       .status(400)
       .json({ error: "period, employeeId and branchId are required" });
 
-  const userQuery = "SELECT role, branch_id FROM users WHERE id = ?";
-  pool.query(userQuery, [employeeId], (error, userResults) => {
+  const userQuery =
+    "SELECT role, branch_id FROM users WHERE id = ? AND period = ?";
+  pool.query(userQuery, [employeeId, period], (error, userResults) => {
     if (error) return res.status(500).json({ error: "Internal server error" });
     if (userResults.length === 0)
       return res.status(404).json({ error: "User not found" });
@@ -1139,18 +616,29 @@ summaryRouter.get("/staff-scores", async(req, res) => {
     const branchId = userResults[0].branch_id;
 
     const calculateScore = (kpi, achieved, target) => {
-      let outOf10;
-      if (target === 0 && !target) {
-        outOf10 = 0;
-        return;
-      }
+      let outOf10 = 0;
+      if (!target) return 0;
+
       const ratio = achieved / target;
-      const auditRatio = kpi === "audit" ? kpi.achieved / kpi.target : 0;
-      const recoveryRatio = kpi === "recovery" ? kpi.achieved / kpi.target : 0;
+
+      if (!calculateScore._auditRatio) calculateScore._auditRatio = 0;
+      if (!calculateScore._recoveryRatio) calculateScore._recoveryRatio = 0;
+
+      if (kpi === "audit") {
+        calculateScore._auditRatio = ratio;
+      }
+
+      if (kpi === "recovery") {
+        calculateScore._recoveryRatio = ratio;
+      }
+
+      const auditRatio = calculateScore._auditRatio;
+      const recoveryRatio = calculateScore._recoveryRatio;
 
       switch (kpi) {
         case "deposit":
         case "loan_gen":
+        case "loan_amulya":
           if (ratio <= 1) {
             outOf10 = ratio * 10;
           } else if (ratio < 1.25) {
@@ -1162,15 +650,6 @@ summaryRouter.get("/staff-scores", async(req, res) => {
           }
           break;
 
-        case "loan_amulya":
-          if (ratio <= 1) {
-            outOf10 = ratio * 10;
-          } else if (ratio < 1.25) {
-            outOf10 = 10;
-          } else {
-            outOf10 = 12.5;
-          }
-          break;
         case "insurance":
           if (ratio === 0) {
             outOf10 = -2;
@@ -1191,9 +670,11 @@ summaryRouter.get("/staff-scores", async(req, res) => {
             outOf10 = 12.5;
           }
           break;
+
         default:
           outOf10 = 0;
       }
+
       return Math.max(0, Math.min(12.5, isNaN(outOf10) ? 0 : outOf10));
     };
 
@@ -1274,24 +755,28 @@ summaryRouter.get("/staff-scores", async(req, res) => {
         );
       });
     } else {
-      // Existing logic for other staff roles
       const query = `
 SELECT 
     k.kpi,
 
-    CASE 
-        WHEN k.kpi = 'recovery'
-        AND emp.transfer_date BETWEEN fy.fy_start AND fy.fy_end
-        THEN COALESCE(a.amount,0)
+    MAX(
+        CASE 
+            WHEN k.kpi = 'recovery'
+            AND (
+                emp.transfer_date BETWEEN fy.fy_start AND fy.fy_end
+                OR emp.user_add_date BETWEEN fy.fy_start AND fy.fy_end
+            )
+            THEN COALESCE(a.amount,0)
 
-        WHEN k.kpi = 'recovery'
-        THEN COALESCE(t.amount,0)
+            WHEN k.kpi = 'recovery'
+            THEN COALESCE(t.amount,0)
 
-        ELSE COALESCE(a.amount,0)
-    END AS target,
+            ELSE COALESCE(a.amount,0)
+        END
+    ) AS target,
 
-    COALESCE(w.weightage,0) AS weightage,
-    COALESCE(e.total_achieved,0) AS achieved
+    MAX(COALESCE(w.weightage,0)) AS weightage,
+    MAX(COALESCE(e.total_achieved,0)) AS achieved
 
 FROM (
     SELECT 'deposit' AS kpi
@@ -1304,6 +789,7 @@ FROM (
 
 JOIN users emp 
     ON emp.id = ?
+    AND emp.period = ?
 
 CROSS JOIN (
     SELECT 
@@ -1330,32 +816,45 @@ LEFT JOIN (
         e.kpi,
         SUM(e.value) AS total_achieved
     FROM entries e
+
     JOIN users emp2 
         ON emp2.id = ?
+        AND emp2.period = ?
+
     JOIN users bm 
         ON bm.branch_id = emp2.branch_id 
-        AND bm.role = 'BM'
+        AND bm.role = 'BM' 
+        AND bm.period = ?
+
     CROSS JOIN (
         SELECT 
             STR_TO_DATE(CONCAT(LEFT(?,4),'-04-01'),'%Y-%m-%d') AS fy_start,
             STR_TO_DATE(CONCAT(2000 + RIGHT(?,2),'-03-31'),'%Y-%m-%d') AS fy_end
     ) fy2
+
     WHERE 
         e.period = ?
         AND e.status = 'Verified'
         AND e.branch_id = emp2.branch_id
+
         AND (
             (
                 e.kpi IN ('audit','recovery')
                 AND (
                     (
-                        emp2.transfer_date IS NULL
-                        AND e.employee_id = bm.id
+                        emp2.user_add_date BETWEEN fy2.fy_start AND fy2.fy_end
+                        AND e.employee_id = emp2.id
                     )
                     OR
                     (
                         emp2.transfer_date BETWEEN fy2.fy_start AND fy2.fy_end
                         AND e.employee_id = emp2.id
+                    )
+                    OR
+                    (
+                        emp2.transfer_date IS NULL
+                        AND (emp2.user_add_date IS NULL OR emp2.user_add_date <= fy2.fy_start)
+                        AND e.employee_id = bm.id
                     )
                 )
             )
@@ -1365,16 +864,36 @@ LEFT JOIN (
                 AND e.employee_id = emp2.id
             )
         )
+
     GROUP BY e.kpi
 ) e 
-ON k.kpi = e.kpi `;
+ON k.kpi = e.kpi
+
+GROUP BY k.kpi
+ORDER BY k.kpi;
+ `;
       pool.query(
         query,
-        [ employeeId,  period, period, period, period,employeeId, period, period,period],
+        [
+          employeeId,
+          period,
+
+          period,
+          period,
+
+          period,
+          period,
+          employeeId,
+          period,
+          period,
+
+          period,
+          period,
+
+          period,
+        ],
         (error, results) => {
-         
-         
-           results
+          results;
           if (error)
             return res.status(500).json({ error: "Internal server error" });
 
@@ -1470,6 +989,7 @@ ON k.kpi = e.kpi `;
                               ? 0
                               : weightageScore,
                       };
+
                       totalWeightageScore += scores[row.kpi].weightageScore;
                     }
                   });
@@ -1536,7 +1056,6 @@ ON k.kpi = e.kpi `;
 
                       scores.originalTotal = scores.total;
                       scores.total = Number(finalAvg.toFixed(2));
-                      
 
                       res.json(scores);
                     })
@@ -1564,17 +1083,17 @@ export async function getTransferKpiHistory(pool, period, staff_id) {
         b.name AS branch_name,
         u.resign AS resigned
       FROM employee_transfer e
-      INNER JOIN users u ON u.id = e.staff_id
+      INNER JOIN users u ON u.id = e.staff_id  AND u.period = ?
       INNER JOIN branches b 
         ON b.code COLLATE utf8mb4_unicode_ci = 
-           e.old_branch_id COLLATE utf8mb4_unicode_ci
+           e.old_branch_id COLLATE utf8mb4_unicode_ci AND  b.period COLLATE utf8mb4_unicode_ci = ?
       WHERE 
         e.period COLLATE utf8mb4_unicode_ci = ?
         AND e.staff_id = ?
       ORDER BY e.transfer_date ASC;
     `;
 
-    pool.query(query, [period, staff_id], (err, transfers) => {
+    pool.query(query, [period, period, period, staff_id], (err, transfers) => {
       if (err) return reject("Error fetching transfer data");
       if (!transfers.length) return resolve([]);
 
@@ -1632,7 +1151,7 @@ export async function getTransferKpiHistory(pool, period, staff_id) {
           transfers: [],
           avg_kpi: 0,
           branch_avg_kpi: {},
-           all_scores: []
+          all_scores: [],
         };
 
         let allBranchKpiScores = [];
@@ -1643,13 +1162,32 @@ export async function getTransferKpiHistory(pool, period, staff_id) {
           const branchScores = {};
           let totalWeightageScore = 0;
 
-       
           const kpis = [
-            { key: "deposit", achieved: t.deposit_achieved, target: t.deposit_target },
-            { key: "loan_gen", achieved: t.loan_gen_achieved, target: t.loan_gen_target },
-            { key: "loan_amulya", achieved: t.loan_amulya_achieved, target: t.loan_amulya_target },
-            { key: "recovery", achieved: t.recovery_achieved, target: t.recovery_target },
-            { key: "audit", achieved: t.audit_achieved, target: t.audit_target }
+            {
+              key: "deposit",
+              achieved: t.deposit_achieved,
+              target: t.deposit_target,
+            },
+            {
+              key: "loan_gen",
+              achieved: t.loan_gen_achieved,
+              target: t.loan_gen_target,
+            },
+            {
+              key: "loan_amulya",
+              achieved: t.loan_amulya_achieved,
+              target: t.loan_amulya_target,
+            },
+            {
+              key: "recovery",
+              achieved: t.recovery_achieved,
+              target: t.recovery_target,
+            },
+            {
+              key: "audit",
+              achieved: t.audit_achieved,
+              target: t.audit_target,
+            },
           ];
 
           kpis.forEach((row) => {
@@ -1724,299 +1262,55 @@ export async function getTransferKpiHistory(pool, period, staff_id) {
   });
 }
 
-// get all staff score in give branch id // this old api not existing transfer history //21-02-2026
-// summaryRouter.get("/staff-scores-all", async (req, res) => {
-//   const { period, branchId } = req.query;
+function getFinancialYearDates(period) {
+  const startYear = parseInt(period.split("-")[0]); // 2025
+  const endYear = startYear + 1; // 2026
 
-//   if (!period || !branchId)
-//     return res.status(400).json({ error: "period and branchId required" });
-
-//   try {
-//     // ------------------ BRANCH QUERY ------------------
-
-//     const branchQuery = `
-//       SELECT
-//           k.kpi,
-//           CASE WHEN k.kpi = 'audit' THEN 100 ELSE COALESCE(t.amount, 0) END AS target,
-//           COALESCE(w.weightage, 0) AS weightage,
-//           COALESCE(e.total_achieved, 0) AS achieved
-//       FROM (SELECT 'recovery' as kpi UNION SELECT 'audit' UNION SELECT 'insurance') k
-//       LEFT JOIN targets t ON k.kpi = t.kpi AND t.period = ? AND t.branch_id = ?
-//       LEFT JOIN (
-//           SELECT kpi, SUM(value) AS total_achieved 
-//           FROM entries 
-//           WHERE period = ? AND branch_id = ? AND status='Verified'
-//           GROUP BY kpi
-//       ) e ON k.kpi = e.kpi
-//       LEFT JOIN weightage w ON k.kpi = w.kpi
-//     `;
-
-//     const branchResults = await new Promise((resolve, reject) => {
-//       pool.query(
-//         branchQuery,
-//         [period, branchId, period, branchId],
-//         (err, rows) => {
-//           if (err) return reject(err);
-//           resolve(rows);
-//         }
-//       );
-//     });
-
-//     const calculateScore = (kpi, achieved = 0, target = 0) => {
-//       if (!target) return 0;
-
-//       const ratio = achieved / target;
-//       let outOf10 = 0;
-
-//       switch (kpi) {
-//         case "deposit":
-//         case "loan_gen":
-//           if (ratio <= 1) outOf10 = ratio * 10;
-//           else if (ratio < 1.25) outOf10 = 10;
-//           else outOf10 = 10;
-//           break;
-
-//         case "loan_amulya":
-//           if (ratio <= 1) outOf10 = ratio * 10;
-//           else if (ratio < 1.25) outOf10 = 10;
-//           else outOf10 = 12.5;
-//           break;
-
-//         case "insurance":
-//           if (achieved === 0) return 0;
-//           if (ratio <= 1) outOf10 = ratio * 10;
-//           else if (ratio < 1.25) outOf10 = 10;
-//           else outOf10 = 12.5;
-//           break;
-
-//         case "recovery":
-//         case "audit":
-//           if (ratio <= 1) outOf10 = ratio * 10;
-//           else outOf10 = 12.5;
-//           break;
-
-//         default:
-//           outOf10 = 0;
-//       }
-
-//       return Math.max(0, Math.min(12.5, outOf10));
-//     };
-
-//     const branchScores = {};
-//     branchResults.forEach((row) => {
-//       const score = calculateScore(row.kpi, row.achieved, row.target);
-//       const weighted = (score * row.weightage) / 100;
-
-//       branchScores[row.kpi] = {
-//         score,
-//         target: Number(row.target),
-//         achieved: Number(row.achieved),
-//         weightage: Number(row.weightage),
-//         weightageScore: weighted,
-//       };
-//     });
-
-//     // ------------------ STAFF QUERY ------------------
-
-//     const staffQuery = `
-//       SELECT 
-//         u.id AS staffId,
-//         u.name AS staffName,
-//         k.kpi,
-//         COALESCE(a.amount, 0) AS target,
-//         COALESCE(w.weightage, 0) AS weightage,
-//         COALESCE(e.total_achieved, 0) AS achieved
-//       FROM users u
-//       CROSS JOIN (
-//           SELECT 'deposit' AS kpi
-//           UNION SELECT 'loan_gen'
-//           UNION SELECT 'loan_amulya'
-//           UNION SELECT 'recovery'
-//           UNION SELECT 'insurance'
-//           UNION SELECT 'audit'
-//       ) k
-//       LEFT JOIN (
-//           SELECT user_id, kpi, MAX(amount) AS amount
-//           FROM allocations
-//           WHERE period = ? AND branch_id = ?
-//           GROUP BY user_id, kpi
-//       ) a ON a.user_id = u.id AND a.kpi = k.kpi
-//       LEFT JOIN (
-//           SELECT employee_id, kpi, SUM(value) AS total_achieved
-//           FROM entries
-//           WHERE period = ? AND status='Verified' AND branch_id = ?
-//           GROUP BY employee_id, kpi
-//       ) e ON e.employee_id = u.id AND e.kpi = k.kpi
-//       LEFT JOIN weightage w ON w.kpi = k.kpi
-//       WHERE u.branch_id = ?
-//       AND u.role = 'CLERK'
-//       ORDER BY u.id, k.kpi
-//     `;
-
-//     const results = await new Promise((resolve, reject) => {
-//       pool.query(
-//         staffQuery,
-//         [period, branchId, period, branchId, branchId],
-//         (err, rows) => {
-//           if (err) return reject(err);
-//           resolve(rows);
-//         }
-//       );
-//     });
-
-//     const staffScores = {};
-
-//     results.forEach((row) => {
-//       const id = row.staffId;
-
-//       if (!staffScores[id]) {
-//         staffScores[id] = {
-//           staffId: id,
-//           staffName: row.staffName,
-//           total: 0,
-//         };
-//       }
-
-//       const score = calculateScore(row.kpi, row.achieved, row.target);
-//       const weighted = (score * row.weightage) / 100;
-
-//       staffScores[id][row.kpi] = {
-//         score,
-//         target: Number(row.target),
-//         achieved: Number(row.achieved),
-//         weightage: Number(row.weightage),
-//         weightageScore:
-//           row.kpi === "insurance" && score === 0 ? -2 : weighted,
-//       };
-//     });
-
-//     const staffArray = Object.values(staffScores);
-
-//     // ------------------ FINAL CALCULATION ------------------
-
-//     for (const staff of staffArray) {
-//       let total = 0;
-
-//       [
-//         "deposit",
-//         "loan_gen",
-//         "loan_amulya",
-//         "recovery",
-//         "audit",
-//         "insurance",
-//       ].forEach((kpi) => {
-//         total += Number(staff[kpi]?.weightageScore || 0);
-//       });
-
-//       staff.originalTotal = total;
-
-//       // -------- HISTORY AVERAGE LOGIC --------
-
-//       const hoHistory = await new Promise((resolve) => {
-//         getHoStaffTransferHistory(pool, period, staff.staffId, (err, data) => {
-//           if (err) return resolve([]);
-//           resolve(data);
-//         });
-//       });
-
-//       const previousHoScores =
-//         hoHistory?.[0]?.transfers?.map(
-//           (t) => t.total_weightage_score
-//         ) || [];
-
-//       const attHistory = await new Promise((resolve) => {
-//         getAttenderTransferHistory(pool, period, staff.staffId, (err, data) => {
-//           if (err) return resolve([]);
-//           resolve(data);
-//         });
-//       });
-
-//       const previousAttenderScores =
-//         attHistory?.[0]?.transfers?.map(
-//           (t) => t.total_weightage_score
-//         ) || [];
-
-//       const transferHistory = await getTransferKpiHistory(
-//         pool,
-//         period,
-//         staff.staffId
-//       );
-
-//       const previousTransferScores =
-//         transferHistory?.all_scores || [];
-
-//       const allScores = [
-//         ...previousHoScores,
-//         ...previousAttenderScores,
-//         ...previousTransferScores,
-//         total,
-//       ];
-
-//       const finalAvg =
-//         allScores.length > 0
-//           ? allScores.reduce((a, b) => a + b, 0) / allScores.length
-//           : 0;
-
-//       total = Number(finalAvg.toFixed(2));
-
-//       // Penalty Rule
-//       if (
-//         staff.insurance?.score < 7.5 &&
-//         staff.recovery?.score < 7.5 &&
-//         total > 10
-//       )
-//         total = 10;
-
-//       staff.total = total;
-//     }
-
-//     res.json(staffArray);
-//   } catch (err) {
-//     console.error("API Error:", err);
-//     res.status(500).json({ error: "Internal server error" });
-//   }
-// });
+  return {
+    startDate: `${startYear}-04-01`,
+    endDate: `${endYear}-03-31`,
+  };
+}
 // get all staff score in give branch id
 summaryRouter.get("/staff-scores-all", async (req, res) => {
   const { period, branchId } = req.query;
 
-  if (!period || !branchId)
+  if (!period || !branchId) {
     return res.status(400).json({ error: "period and branchId required" });
+  }
 
   try {
-
-    
-
-    const calculateScore = (kpi, achieved = 0, target = 0) => {
+    const calculateScore = (
+      kpi,
+      achieved = 0,
+      target = 0,
+      auditScore = 0,
+      recoveryScore = 0,
+    ) => {
       if (!target) return 0;
 
       const ratio = achieved / target;
+      const auditRatio = auditScore / 10;
+      const recoveryRatio = recoveryScore / 10;
+
       let outOf10 = 0;
 
       switch (kpi) {
         case "deposit":
         case "loan_gen":
-          if (ratio <= 1) outOf10 = ratio * 10;
-          else if (ratio < 1.25) outOf10 = 10;
-          else outOf10 = 10;
-          break;
-
         case "loan_amulya":
           if (ratio <= 1) outOf10 = ratio * 10;
-          else if (ratio < 1.25) outOf10 = 10;
-          else outOf10 = 12.5;
-          break;
-
-        case "insurance":
-          if (achieved === 0) return 0;
-          if (ratio <= 1) outOf10 = ratio * 10;
-          else if (ratio < 1.25) outOf10 = 10;
-          else outOf10 = 12.5;
-          break;
-
+            else if (ratio < 1.25) outOf10 = 10;
+            else if (auditRatio >= 0.75 && recoveryRatio >= 0.75)
+              outOf10 = 12.5;
+            else outOf10 = 10;
+            break;
+ 
         case "recovery":
         case "audit":
+        case "insurance": 
           if (ratio <= 1) outOf10 = ratio * 10;
+          else if (ratio < 1.25) outOf10 = 10;
           else outOf10 = 12.5;
           break;
 
@@ -2027,54 +1321,8 @@ summaryRouter.get("/staff-scores-all", async (req, res) => {
       return Math.max(0, Math.min(12.5, outOf10));
     };
 
-   
-
-    const branchQuery = `
-      SELECT
-          k.kpi,
-          CASE WHEN k.kpi = 'audit' THEN 100 ELSE COALESCE(t.amount, 0) END AS target,
-          COALESCE(w.weightage, 0) AS weightage,
-          COALESCE(e.total_achieved, 0) AS achieved
-      FROM (SELECT 'recovery' as kpi UNION SELECT 'audit' UNION SELECT 'insurance') k
-      LEFT JOIN targets t ON k.kpi = t.kpi AND t.period = ? AND t.branch_id = ?
-      LEFT JOIN (
-          SELECT kpi, SUM(value) AS total_achieved 
-          FROM entries 
-          WHERE period = ? AND branch_id = ? AND status='Verified'
-          GROUP BY kpi
-      ) e ON k.kpi = e.kpi
-      LEFT JOIN weightage w ON k.kpi = w.kpi
-    `;
-
-    const branchResults = await new Promise((resolve, reject) => {
-      pool.query(
-        branchQuery,
-        [period, branchId, period, branchId],
-        (err, rows) => {
-          if (err) return reject(err);
-          resolve(rows);
-        }
-      );
-    });
-
-    const branchScores = {};
-    branchResults.forEach((row) => {
-      const score = calculateScore(row.kpi, row.achieved, row.target);
-      const weighted = (score * row.weightage) / 100;
-
-      branchScores[row.kpi] = {
-        score,
-        target: Number(row.target),
-        achieved: Number(row.achieved),
-        weightage: Number(row.weightage),
-        weightageScore: weighted,
-      };
-    });
-
-  
-
     const staffQuery = `
-     SELECT 
+SELECT 
     u.id AS staffId,
     u.name AS staffName,
     k.kpi,
@@ -2082,12 +1330,20 @@ summaryRouter.get("/staff-scores-all", async (req, res) => {
     CASE 
         WHEN k.kpi = 'recovery'
         AND u.transfer_date IS NULL
+        AND (u.user_add_date IS NULL OR u.user_add_date <= 
+            STR_TO_DATE(CONCAT(LEFT(?,4),'-04-01'),'%Y-%m-%d'))
         THEN COALESCE(t.amount,0)
 
         WHEN k.kpi = 'recovery'
-        AND u.transfer_date BETWEEN 
-            STR_TO_DATE(CONCAT(LEFT(?,4),'-04-01'),'%Y-%m-%d')
-            AND STR_TO_DATE(CONCAT(2000 + RIGHT(?,2),'-03-31'),'%Y-%m-%d')
+        AND (
+            u.transfer_date BETWEEN 
+                STR_TO_DATE(CONCAT(LEFT(?,4),'-04-01'),'%Y-%m-%d')
+                AND STR_TO_DATE(CONCAT(2000 + RIGHT(?,2),'-03-31'),'%Y-%m-%d')
+            OR
+            u.user_add_date BETWEEN 
+                STR_TO_DATE(CONCAT(LEFT(?,4),'-04-01'),'%Y-%m-%d')
+                AND STR_TO_DATE(CONCAT(2000 + RIGHT(?,2),'-03-31'),'%Y-%m-%d')
+        )
         THEN COALESCE(a.amount,0)
 
         ELSE COALESCE(a.amount,0)
@@ -2142,19 +1398,28 @@ ON (
         k.kpi IN ('audit','recovery')
         AND (
             (
+                u.user_add_date BETWEEN 
+                STR_TO_DATE(CONCAT(LEFT(?,4),'-04-01'),'%Y-%m-%d')
+                AND STR_TO_DATE(CONCAT(2000 + RIGHT(?,2),'-03-31'),'%Y-%m-%d')
+                AND e.employee_id = u.id
+            )
+            OR
+            (
                 u.transfer_date BETWEEN 
                 STR_TO_DATE(CONCAT(LEFT(?,4),'-04-01'),'%Y-%m-%d')
-                AND
-                STR_TO_DATE(CONCAT(2000 + RIGHT(?,2),'-03-31'),'%Y-%m-%d')
+                AND STR_TO_DATE(CONCAT(2000 + RIGHT(?,2),'-03-31'),'%Y-%m-%d')
                 AND e.employee_id = u.id
             )
             OR
             (
                 u.transfer_date IS NULL
+                AND (u.user_add_date IS NULL OR u.user_add_date <= 
+                    STR_TO_DATE(CONCAT(LEFT(?,4),'-04-01'),'%Y-%m-%d'))
                 AND e.employee_id = (
                     SELECT id 
                     FROM users 
                     WHERE role = 'BM' 
+                    AND period = ? 
                     AND branch_id = u.branch_id
                     LIMIT 1
                 )
@@ -2165,18 +1430,43 @@ ON (
 AND e.kpi = k.kpi
 AND e.branch_id = u.branch_id
 
-LEFT JOIN weightage w 
-ON w.kpi = k.kpi
+LEFT JOIN weightage w ON w.kpi = k.kpi
 
 WHERE u.branch_id = ?
 AND u.role = 'CLERK'
+AND u.period = ?
 
-ORDER BY u.id, k.kpi`;
+ORDER BY u.id, k.kpi;
+`;
 
     const results = await new Promise((resolve, reject) => {
       pool.query(
         staffQuery,
-        [period,period,period, branchId, period,period,period ,period,branchId],
+        [
+          period,
+          period,
+
+          period,
+          period,
+
+          period,
+          period,
+          branchId,
+          period,
+
+          period,
+          period,
+
+          period,
+          period,
+
+          period,
+
+          period,
+          period,
+          branchId,
+          period,
+        ],
         (err, rows) => {
           if (err) return reject(err);
           resolve(rows);
@@ -2187,16 +1477,41 @@ ORDER BY u.id, k.kpi`;
     const staffScores = {};
 
     results.forEach((row) => {
-      const id = row.staffId;
+      if (row.kpi === "audit" || row.kpi === "recovery") {
+        const id = row.staffId;
 
-      if (!staffScores[id]) {
-        staffScores[id] = {
-          staffId: id,
-          staffName: row.staffName,
+        if (!staffScores[id]) {
+          staffScores[id] = {
+            staffId: id,
+            staffName: row.staffName,
+          };
+        }
+
+        const score = calculateScore(row.kpi, row.achieved, row.target);
+
+        staffScores[id][row.kpi] = {
+          score,
+          target: Number(row.target),
+          achieved: Number(row.achieved),
+          weightage: Number(row.weightage),
+          weightageScore: (score * row.weightage) / 100,
         };
       }
+    });
 
-      const score = calculateScore(row.kpi, row.achieved, row.target);
+    results.forEach((row) => {
+      if (row.kpi === "audit" || row.kpi === "recovery") return;
+
+      const id = row.staffId;
+
+      const score = calculateScore(
+        row.kpi,
+        row.achieved,
+        row.target,
+        staffScores[id]?.audit?.score || 0,
+        staffScores[id]?.recovery?.score || 0,
+      );
+
       const weighted = (score * row.weightage) / 100;
 
       staffScores[id][row.kpi] = {
@@ -2204,60 +1519,13 @@ ORDER BY u.id, k.kpi`;
         target: Number(row.target),
         achieved: Number(row.achieved),
         weightage: Number(row.weightage),
-        weightageScore:
-          row.kpi === "insurance" && score === 0 ? -2 : weighted,
+        weightageScore: row.kpi === "insurance" && score === 0 ? -2 : weighted,
       };
     });
 
     const staffArray = Object.values(staffScores);
-    const staffIds = staffArray.map((s) => s.staffId);
-
-    
-
-    const hoHistoryMap = {};
-    const attHistoryMap = {};
-    const transferHistoryMap = {};
-
-    await Promise.all(
-      staffIds.map(async (id) => {
-
-        const hoHistory = await new Promise((resolve) => {
-          getHoStaffTransferHistory(pool, period, id, (err, data) => {
-            resolve(err ? [] : data);
-          });
-        });
-
-        hoHistoryMap[id] =
-          hoHistory?.[0]?.transfers?.map(
-            (t) => t.total_weightage_score
-          ) || [];
-
-        const attHistory = await new Promise((resolve) => {
-          getAttenderTransferHistory(pool, period, id, (err, data) => {
-            resolve(err ? [] : data);
-          });
-        });
-
-        attHistoryMap[id] =
-          attHistory?.[0]?.transfers?.map(
-            (t) => t.total_weightage_score
-          ) || [];
-
-        const transferHistory = await getTransferKpiHistory(
-          pool,
-          period,
-          id
-        );
-
-        transferHistoryMap[id] =
-          transferHistory?.all_scores || [];
-      })
-    );
-
-    
 
     for (const staff of staffArray) {
-
       let total = 0;
 
       [
@@ -2273,32 +1541,18 @@ ORDER BY u.id, k.kpi`;
 
       staff.originalTotal = total;
 
-      const allScores = [
-        ...(hoHistoryMap[staff.staffId] || []),
-        ...(attHistoryMap[staff.staffId] || []),
-        ...(transferHistoryMap[staff.staffId] || []),
-        total,
-      ];
-
-      const finalAvg =
-        allScores.length > 0
-          ? allScores.reduce((a, b) => a + b, 0) / allScores.length
-          : 0;
-
-      total = Number(finalAvg.toFixed(2));
-
       if (
         staff.insurance?.score < 7.5 &&
         staff.recovery?.score < 7.5 &&
         total > 10
-      )
+      ) {
         total = 10;
+      }
 
-      staff.total = total;
+      staff.total = Number(total.toFixed(2));
     }
 
     res.json(staffArray);
-
   } catch (err) {
     console.error("API Error:", err);
     res.status(500).json({ error: "Internal server error" });
@@ -2508,9 +1762,9 @@ summaryRouter.get("/get-salary-all-staff", (req, res) => {
   const { period, branch_id } = req.query;
   if (!period || !branch_id)
     return res.status(400).json({ error: "period and branch_id are required" });
-  const query = `select u.id,b.salary ,b.increment from base_salary b join users u on u.PF_NO=b.PF_NO where b.period=? and b.branch_id=?`;
+  const query = `select u.id,b.salary ,b.increment from base_salary b join users u on u.PF_NO=b.PF_NO where b.period=? and b.branch_id=? and u.period = ?`;
 
-  pool.query(query, [period, branch_id], (error, result) => {
+  pool.query(query, [period, branch_id, period], (error, result) => {
     if (error) {
       return res.status(500).json({ error: "Internal server error" });
     }
@@ -2522,9 +1776,9 @@ summaryRouter.get("/get-salary-all-agms", (req, res) => {
   const { period, hod_id } = req.query;
   if (!period || !hod_id)
     return res.status(400).json({ error: "period and hod_id are required" });
-  const query = `select u.id,b.salary ,b.increment from base_salary b join users u on u.PF_NO=b.PF_NO where b.period=? and u.id=?`;
+  const query = `select u.id,b.salary ,b.increment from base_salary b join users u on u.PF_NO=b.PF_NO where b.period=? and u.id=? and u.period=?`;
 
-  pool.query(query, [period, hod_id], (error, result) => {
+  pool.query(query, [period, hod_id, period], (error, result) => {
     if (error) {
       return res.status(500).json({ error: "Internal server error" });
     }
@@ -2544,6 +1798,7 @@ function getMonthStartDate(dateInput) {
 //get trasfer BM score
 summaryRouter.get("/transfer-bm-scores", (req, res) => {
   const { period, branchId } = req.query;
+
   if (!period || !branchId)
     return res.status(400).json({ error: "period and branchId required" });
 
@@ -2551,6 +1806,7 @@ summaryRouter.get("/transfer-bm-scores", (req, res) => {
     const [s, e] = period.split("-");
     const sy = parseInt(s);
     const ey = sy - (sy % 100) + parseInt(e);
+
     return {
       start: new Date(Date.UTC(sy, 3, 1)),
       end: new Date(Date.UTC(ey, 2, 31)),
@@ -2560,8 +1816,10 @@ summaryRouter.get("/transfer-bm-scores", (req, res) => {
   const fy = getFY(period);
 
   pool.query(
-    `SELECT id FROM users WHERE branch_id=? AND role='BM' order by transfer_date desc`,
-    [branchId],
+    `SELECT id FROM users 
+     WHERE branch_id=? AND period=? AND role='BM' 
+     ORDER BY transfer_date DESC`,
+    [branchId, period],
     (err, BMRows) => {
       if (err) return res.status(500).json({ error: "Internal server error" });
 
@@ -2577,8 +1835,7 @@ summaryRouter.get("/transfer-bm-scores", (req, res) => {
           if (err)
             return res.status(500).json({ error: "Internal server error" });
 
-          if (!bmRows.length)
-            return res.status(200).json([]);
+          if (!bmRows.length) return res.status(200).json([]);
 
           const bm = bmRows[0] || {};
           const transferDate = new Date(bm.transfer_date);
@@ -2602,6 +1859,7 @@ summaryRouter.get("/transfer-bm-scores", (req, res) => {
             recovery: bm.recovery_target || 0,
             insurance: bm.insurance_target || 0,
           };
+
           const mouthStart = getMonthStartDate(transferDate);
 
           const entriesQuery = `
@@ -2623,6 +1881,11 @@ summaryRouter.get("/transfer-bm-scores", (req, res) => {
 
               const achievedMap = {};
               entryRows.forEach((r) => (achievedMap[r.kpi] = r.achieved || 0));
+
+              achievedMap["audit"] =
+                (achievedMap["audit"] || 0) + (bm.audit_achieved || 0);
+              achievedMap["recovery"] =
+                (achievedMap["recovery"] || 0) + (bm.recovery_achieved || 0);
 
               pool.query(
                 `
@@ -2650,7 +1913,6 @@ summaryRouter.get("/transfer-bm-scores", (req, res) => {
                     const weightageMap = {};
                     wRows.forEach((w) => (weightageMap[w.kpi] = w.weightage));
 
-                    // KPIs
                     const bmKpis = [
                       "deposit",
                       "loan_gen",
@@ -2670,6 +1932,7 @@ summaryRouter.get("/transfer-bm-scores", (req, res) => {
                         const weight = weightageMap[kpi] || 0;
 
                         let outOf10 = 0;
+
                         if (target === 0) {
                           outOf10 = 0;
                         } else {
@@ -2680,7 +1943,7 @@ summaryRouter.get("/transfer-bm-scores", (req, res) => {
                           switch (kpi) {
                             case "deposit":
                             case "loan_gen":
-                            case "loan_amulya":  
+                            case "loan_amulya":
                               if (ratio <= 1) outOf10 = ratio * 10;
                               else if (ratio < 1.25) outOf10 = 10;
                               else if (
@@ -2691,7 +1954,6 @@ summaryRouter.get("/transfer-bm-scores", (req, res) => {
                               else outOf10 = 10;
                               break;
 
-                            
                             case "recovery":
                             case "audit":
                               if (ratio <= 1) outOf10 = ratio * 10;
@@ -2708,18 +1970,22 @@ summaryRouter.get("/transfer-bm-scores", (req, res) => {
                         }
 
                         outOf10 = Math.max(0, Math.min(cap, outOf10));
+
                         let weightScore = (outOf10 * weight) / 100;
-                        if (kpi === "insurance" && outOf10 === 0){
+
+                        if (kpi === "insurance" && outOf10 === 0) {
                           weightScore = -2;
                         }
-                        
 
                         scores[kpi] = {
                           score: outOf10,
                           target,
                           achieved,
                           weightage: weight,
-                          weightageScore: kpi === 'insurance' && outOf10 === 0 ? -2 : weightScore,
+                          weightageScore:
+                            kpi === "insurance" && outOf10 === 0
+                              ? -2
+                              : weightScore,
                         };
 
                         total += weightScore;
@@ -2739,6 +2005,7 @@ summaryRouter.get("/transfer-bm-scores", (req, res) => {
                         : 12.5;
 
                     const finalScores = calculateScores(cap);
+
                     res.json({
                       ...finalScores,
                       totalMonthsWorked: totalMonths,
@@ -2753,204 +2020,6 @@ summaryRouter.get("/transfer-bm-scores", (req, res) => {
     },
   );
 });
-// all branch or gm  all attender api and also for get specific attender score
-// summaryRouter.get("/branch-attenders", async (req, res) => {
-//   const { period, branchId, hod_id, staff_id } = req.query;
-
-//   if (!period) {
-//     return res.status(400).json({ error: "period is required" });
-//   }
-
-//   try {
-//     const attenderKpis = await new Promise((resolve, reject) => {
-//       pool.query(
-//         `
-//         SELECT k.kpi_name, r.id AS role_kpi_mapping_id, r.weightage
-//         FROM role_kpi_mapping r
-//         JOIN kpi_master k ON r.kpi_id = k.id
-//         WHERE r.role = 'Attender'
-//         `,
-//         (err, rows) => {
-//           if (err) return reject(err);
-//           resolve(rows);
-//         },
-//       );
-//     });
-
-//     if (!attenderKpis.length) return res.json([]);
-
-//     const kpiMap = {};
-//     attenderKpis.forEach((k) => {
-//       kpiMap[k.kpi_name] = k;
-//     });
-
-//     const normalizedBranchId2 =
-//       branchId && branchId !== "null" && branchId !== "undefined"
-//         ? branchId
-//         : null;
-//     const normalizedStaffId =
-//       staff_id && staff_id !== "null" && staff_id !== "undefined"
-//         ? staff_id
-//         : null;
-
-//     const users = await new Promise((resolve, reject) => {
-//       let sql, params;
-//       if (normalizedStaffId) {
-//         sql =
-//           "SELECT id, branch_id, name FROM users WHERE id=? AND role='Attender'";
-//         params = [staff_id];
-//       } else if (normalizedBranchId2) {
-//         sql =
-//           "SELECT id, branch_id, name FROM users WHERE branch_id=? AND role='Attender'";
-//         params = [normalizedBranchId2];
-//       } else {
-//         sql = "SELECT id, hod_id, name FROM users WHERE hod_id=? AND role='Attender'";
-//         params = [hod_id];
-//       }
-
-//       pool.query(sql, params, (err, rows) => {
-//         if (err) return reject(err);
-//         resolve(rows);
-//       });
-//     });
-
-//     if (!users.length) return res.json([]);
-
-   
-//     let masterUserId = null;
-//     if (normalizedStaffId) {
-      
-//       const staffUser = users[0];
-//       if (staffUser && staffUser.branch_id) {
-        
-//         const bmUser = await new Promise((resolve, reject) => {
-//           pool.query(
-//             "SELECT id FROM users WHERE branch_id=? AND role='BM' LIMIT 1",
-//             [staffUser.branch_id],
-//             (err, rows) => {
-//               if (err) return reject(err);
-//               resolve(rows[0] || null);
-//             }
-//           );
-//         });
-//         masterUserId = bmUser ? bmUser.id : normalizedStaffId;
-//       } else {
-//         masterUserId = normalizedStaffId;
-//       }
-//     } else if (normalizedBranchId2) {
-      
-//       const bmUser = await new Promise((resolve, reject) => {
-//         pool.query(
-//           "SELECT id FROM users WHERE branch_id=? AND role='BM' LIMIT 1",
-//           [normalizedBranchId2],
-//           (err, rows) => {
-//             if (err) return reject(err);
-//             resolve(rows[0] || null);
-//           }
-//         );
-//       });
-//       masterUserId = bmUser ? bmUser.id : null;
-//     } else if (hod_id) {
-//       masterUserId = hod_id;
-//     }
-
-//     const response = await Promise.all(
-//       users.map(async (user) => {
-//         const [userKpis, insuranceRow] = await Promise.all([
-//           new Promise((resolve, reject) => {
-//             pool.query(
-//               `
-//               SELECT role_kpi_mapping_id, SUM(value) AS total
-//               FROM user_kpi_entry
-//               WHERE user_id=? AND period=? AND master_user_id=?
-//               GROUP BY role_kpi_mapping_id
-//               `,
-//               [user.id, period, masterUserId],
-//               (err, rows) => {
-//                 if (err) return reject(err);
-//                 const map = {};
-//                 rows.forEach(
-//                   (r) => (map[r.role_kpi_mapping_id] = Number(r.total || 0)),
-//                 );
-//                 resolve(map);
-//               },
-//             );
-//           }),
-//           new Promise((resolve, reject) => {
-//             pool.query(
-//               `
-//               SELECT SUM(value) AS total
-//               FROM entries
-//               WHERE kpi='insurance' AND employee_id=? AND period=?
-//               `,
-//               [user.id, period],
-//               (err, rows) => {
-//                 if (err) return reject(err);
-//                 resolve(Number(rows[0]?.total || 0));
-//               },
-//             );
-//           }),
-//         ]);
-
-//         const finalKpis = {};
-//         let totalScore = 0;
-
-//         for (const kpi of attenderKpis) {
-//           let achieved = 0;
-//           let target = kpi.weightage;
-
-//           if (kpi.kpi_name === "Cleanliness") {
-//             achieved = userKpis[kpi.role_kpi_mapping_id] || 0;
-//           }
-
-//           if (kpi.kpi_name === "Attitude, Behavior & Discipline") {
-//             achieved = userKpis[kpi.role_kpi_mapping_id] || 0;
-//           }
-
-//           if (kpi.kpi_name.toLowerCase().includes("insurance")) {
-//             achieved = insuranceRow;
-//             target = 40000;
-//           }
-
-//           let score = 0;
-//           if (achieved > 0) {
-//             const ratio = achieved / target;
-//             if (ratio <= 1) score = ratio * 10;
-//             else if (ratio <= 1.25) score = 10;
-//             else score = 12.5;
-//           }
-
-//           const weightageScore =
-//             kpi.kpi_name.toLowerCase().includes("insurance") && achieved === 0
-//               ? -2
-//               : (score * kpi.weightage) / 100;
-
-//           finalKpis[kpi.kpi_name] = {
-//             target,
-//             achieved,
-//             weightage: kpi.weightage,
-//             score,
-//             weightageScore,
-//           };
-
-//           totalScore += weightageScore;
-//         }
-
-//         return {
-//           staffId: user.id,
-//           staffName: user.name,
-//           total: Number(totalScore.toFixed(2)),
-//           kpis: finalKpis,
-//         };
-//       }),
-//     );
-
-//     res.json(response);
-//   } catch (err) {
-//     console.error(err);
-//     res.status(500).json({ error: "Internal server error" });
-//   }
-// });
 
 // all branch or gm  all attender api and also for get specific attender score /// this old api not existing transfer history //21-02-2026
 summaryRouter.get("/branch-attenders", async (req, res) => {
@@ -2996,16 +2065,16 @@ summaryRouter.get("/branch-attenders", async (req, res) => {
       let sql, params;
       if (normalizedStaffId) {
         sql =
-          "SELECT id, branch_id, name FROM users WHERE id=? AND role='Attender'";
-        params = [staff_id];
+          "SELECT id, branch_id, name FROM users WHERE id=? AND period=? AND role='Attender'";
+        params = [staff_id, period];
       } else if (normalizedBranchId2) {
         sql =
-          "SELECT id, branch_id, name FROM users WHERE branch_id=? AND role='Attender'";
-        params = [normalizedBranchId2];
+          "SELECT id, branch_id, name FROM users WHERE branch_id=? AND period=? AND role='Attender'";
+        params = [normalizedBranchId2, period];
       } else {
         sql =
-          "SELECT id, hod_id, name FROM users WHERE hod_id=? AND role='Attender'";
-        params = [hod_id];
+          "SELECT id, hod_id, name FROM users WHERE hod_id=? AND period=? AND role='Attender'";
+        params = [hod_id, period];
       }
 
       pool.query(sql, params, (err, rows) => {
@@ -3022,8 +2091,8 @@ summaryRouter.get("/branch-attenders", async (req, res) => {
       if (staffUser && staffUser.branch_id) {
         const bmUser = await new Promise((resolve, reject) => {
           pool.query(
-            "SELECT id FROM users WHERE branch_id=? AND role='BM' LIMIT 1",
-            [staffUser.branch_id],
+            "SELECT id FROM users WHERE branch_id=? AND period=? AND role='BM' LIMIT 1",
+            [staffUser.branch_id, period],
             (err, rows) => {
               if (err) return reject(err);
               resolve(rows[0] || null);
@@ -3037,8 +2106,8 @@ summaryRouter.get("/branch-attenders", async (req, res) => {
     } else if (normalizedBranchId2) {
       const bmUser = await new Promise((resolve, reject) => {
         pool.query(
-          "SELECT id FROM users WHERE branch_id=? AND role='BM' LIMIT 1",
-          [normalizedBranchId2],
+          "SELECT id FROM users WHERE branch_id=? AND period=? AND role='BM' LIMIT 1",
+          [normalizedBranchId2, period],
           (err, rows) => {
             if (err) return reject(err);
             resolve(rows[0] || null);
@@ -3112,7 +2181,7 @@ summaryRouter.get("/branch-attenders", async (req, res) => {
           if (achieved > 0) {
             const ratio = achieved / target;
             if (ratio <= 1) score = ratio * 10;
-            else if (ratio <= 1.25) score = 10;
+            else if (ratio < 1.25) score = 10;
             else score = 12.5;
           }
 
@@ -3133,8 +2202,7 @@ summaryRouter.get("/branch-attenders", async (req, res) => {
         }
 
         const currentTotal = Number(totalScore.toFixed(2));
-        
-        
+
         const [hoHistory, attHistory, transferHistory] = await Promise.all([
           new Promise((resolve) => {
             getHoStaffTransferHistory(pool, period, user.id, (err, data) =>
@@ -3168,14 +2236,13 @@ summaryRouter.get("/branch-attenders", async (req, res) => {
           allScores.length > 0
             ? allScores.reduce((a, b) => a + b, 0) / allScores.length
             : 0;
-      
-         
+
         return {
           staffId: user.id,
           staffName: user.name,
           total: Number(totalScore.toFixed(2)),
-          kpis: finalKpis, 
-          avgTotal:Number(finalAvg.toFixed(2))
+          kpis: finalKpis,
+          avgTotal: Number(finalAvg.toFixed(2)),
         };
       }),
     );
