@@ -174,7 +174,7 @@ performanceMasterRouter.get("/specfic-ALLstaff-scores", async (req, res) => {
   }
 
   try {
-   
+
     const kpiWeightage = await new Promise((resolve, reject) => {
       pool.query(
         `
@@ -236,7 +236,7 @@ performanceMasterRouter.get("/specfic-ALLstaff-scores", async (req, res) => {
     let totalWeightageScore = 0;
     const scores = {};
 
-    
+
     for (const row of kpiWeightage) {
       const { role_kpi_mapping_id, kpi_name, weightage } = row;
 
@@ -254,16 +254,16 @@ performanceMasterRouter.get("/specfic-ALLstaff-scores", async (req, res) => {
       let score = 0;
       if (achieved > 0) {
         if (kpi_name.toLowerCase() === "insurance") {
-         const ratio = achieved / target;
-        if (ratio <= 1) score = ratio * 10;
-        else if (ratio < 1.25) score = 10;
+          const ratio = achieved / target;
+          if (ratio <= 1) score = ratio * 10;
+          else if (ratio < 1.25) score = 10;
         } else {
-        const ratio = achieved / target;
-        if (ratio <= 1) score = ratio * 10;
-        else if (ratio < 1.25) score = 10;
-        else score = 12.5;
+          const ratio = achieved / target;
+          if (ratio <= 1) score = ratio * 10;
+          else if (ratio < 1.25) score = 10;
+          else score = 12.5;
+        }
       }
-    }
 
       let weightageScore = (score * weightage) / 100;
 
@@ -283,7 +283,7 @@ performanceMasterRouter.get("/specfic-ALLstaff-scores", async (req, res) => {
 
     const currentTotal = Number(totalWeightageScore.toFixed(2));
 
-   
+
     const [hoHistory, attHistory, transferHistory] = await Promise.all([
       new Promise((resolve) => {
         getHoStaffTransferHistory(
@@ -330,9 +330,9 @@ performanceMasterRouter.get("/specfic-ALLstaff-scores", async (req, res) => {
       allScores.length > 0
         ? allScores.reduce((a, b) => a + b, 0) / allScores.length
         : 0;
-    scores.originalTotal=Number(totalWeightageScore.toFixed(2));
+    scores.originalTotal = Number(totalWeightageScore.toFixed(2));
     scores.total = Number(finalAvg.toFixed(2));
-    
+
 
     return res.json(scores);
   } catch (error) {
@@ -345,7 +345,6 @@ performanceMasterRouter.get("/specfic-ALLstaff-scores", async (req, res) => {
 //function to get single - single staff score calculation
 async function calculateStaffScores(period, staffId, role) {
   try {
-    //  Fetch KPI weightage
     const kpiWeightage = await new Promise((resolve, reject) => {
       pool.query(
         `
@@ -358,11 +357,10 @@ async function calculateStaffScores(period, staffId, role) {
         (err, rows) => {
           if (err) return reject(err);
           resolve(rows);
-        },
+        }
       );
     });
 
-    //  Fetch user KPI entries
     const userEntries = await new Promise((resolve, reject) => {
       pool.query(
         `
@@ -374,44 +372,74 @@ async function calculateStaffScores(period, staffId, role) {
         (err, rows) => {
           if (err) return reject(err);
           resolve(rows);
-        },
+        }
       );
     });
+    const allInsuranceEntries = await new Promise((resolve) => {
+      pool.query(
+        `
+        SELECT  value AS achieved
+        FROM entries
+        WHERE kpi = 'insurance'
+        AND employee_id = ?
+        `,
+        [staffId],
+        (err, rows) => resolve(rows || [])
+      );
+    });
+   
+    
 
-    // Map achieved values
     const achievedMap = {};
+    allInsuranceEntries.forEach((e) => {
+     kpiWeightage.forEach((k) => {
+        if (k.kpi_name.toLowerCase() === "insurance") {
+          userEntries.push({
+            role_kpi_mapping_id: k.role_kpi_mapping_id,
+            achieved: Number(e.achieved || 0)
+          });
+        }
+      });
+    });
+   
     userEntries.forEach(
-      (e) => (achievedMap[e.role_kpi_mapping_id] = Number(e.achieved || 0)),
+      (e) => (achievedMap[e.role_kpi_mapping_id] = Number(e.achieved || 0))
     );
 
     let totalWeightageScore = 0;
+    
+
     const scores = {};
 
-    //  SAME scoring logic
     for (const row of kpiWeightage) {
       const { role_kpi_mapping_id, kpi_name, weightage } = row;
+
       const achieved = achievedMap[role_kpi_mapping_id] || 0;
-      const target = kpi_name.toLowerCase() === "insurance" ? 40000 : weightage;
+      const isInsurance = kpi_name.toLowerCase() === "insurance";
+
+      const target = isInsurance ? 40000 : weightage;
 
       let score = 0;
+
       if (achieved > 0) {
-        if (kpi_name.toLowerCase() === "insurance") {
-          const ratio = achieved / target;
-        if (ratio <= 1) score = ratio * 10;
-        else if (ratio < 1.25) score = 10;
-        }else{
         const ratio = achieved / target;
-        if (ratio <= 1) score = ratio * 10;
-        else if (ratio < 1.25) score = 10;
-        else score = 12.5;
+
+       
+          if (ratio <= 1) score = ratio * 10;
+          else if (ratio < 1.25) score = 10;
+          else score = 12.5;
+        
       }
-    }
 
       let weightageScore = (score * weightage) / 100;
-      if (kpi_name.toLowerCase() === "insurance" && score === 0)
+
+      if (isInsurance && score === 0) {
         weightageScore = -2;
+      }
 
       totalWeightageScore += weightageScore;
+
+      
 
       scores[kpi_name] = {
         score: Number(score.toFixed(2)),
@@ -422,6 +450,8 @@ async function calculateStaffScores(period, staffId, role) {
     }
 
     scores.total = Number(totalWeightageScore.toFixed(2));
+
+
     return scores;
   } catch (err) {
     throw err;
@@ -508,7 +538,7 @@ async function calculateBMScores(period, branchId) {
       );
     });
 
-    
+
     const insuranceAchieved = await new Promise((resolve, reject) => {
       pool.query(
         `
@@ -538,12 +568,12 @@ async function calculateBMScores(period, branchId) {
     const calculateScores = (cap) => {
       const scores = {};
       let totalWeightageScore = 0;
-
+     
       bmKpis.forEach((kpi) => {
         scores[kpi] = { score: 0, target: 0, achieved: 0, weightage: 0, weightageScore: 0 };
       });
 
-      
+
       const auditRow = results.find(r => r.kpi === "audit");
       const recoveryRow = results.find(r => r.kpi === "recovery");
 
@@ -606,9 +636,16 @@ async function calculateBMScores(period, branchId) {
         };
 
         totalWeightageScore += weightageScore;
+        
       });
 
+
+      
+
       scores.total = totalWeightageScore;
+
+      
+
       return scores;
     };
 
@@ -618,8 +655,8 @@ async function calculateBMScores(period, branchId) {
 
     const cap =
       preliminaryScores.total > 10 &&
-      insuranceScore < 7.5 &&
-      recoveryScore < 7.5
+        insuranceScore < 7.5 &&
+        recoveryScore < 7.5
         ? 10
         : 12.5;
 
@@ -740,7 +777,7 @@ async function calculateBMScoresFortrasfer(period, branchId) {
       }
     });
 
-    const bmKpis = ["deposit","loan_gen","loan_amulya","recovery","audit","insurance"];
+    const bmKpis = ["deposit", "loan_gen", "loan_amulya", "recovery", "audit", "insurance"];
 
     const calculateScores = (cap) => {
       const scores = {};
@@ -838,8 +875,8 @@ async function calculateBMScoresFortrasfer(period, branchId) {
 
     const cap =
       preliminaryScores.total > 10 &&
-      insuranceScore < 7.5 &&
-      recoveryScore < 7.5
+        insuranceScore < 7.5 &&
+        recoveryScore < 7.5
         ? 10
         : 12.5;
 
@@ -880,7 +917,7 @@ performanceMasterRouter.get("/ho-Allhod-scores", async (req, res) => {
     const staffIds = await new Promise((resolve, reject) => {
       pool.query(
         `SELECT id FROM users WHERE hod_id = ? AND period = ?`,
-        [hod_id,period],
+        [hod_id, period],
         (err, rows) => {
           if (err) return reject(err);
           resolve(rows.map((r) => r.id));
@@ -896,6 +933,7 @@ performanceMasterRouter.get("/ho-Allhod-scores", async (req, res) => {
       ),
     );
 
+
     const fixedAvg = Number(
       (
         staffScores.reduce((s, v) => s + (v.total || 0), 0) /
@@ -906,7 +944,7 @@ performanceMasterRouter.get("/ho-Allhod-scores", async (req, res) => {
     const branchCodes = await new Promise((resolve, reject) => {
       pool.query(
         `SELECT code FROM branches WHERE incharge_id = ? AND period = ?`,
-        [hod_id,period],
+        [hod_id, period],
         (err, rows) => {
           if (err) return reject(err);
           resolve(rows.map((r) => r.code));
@@ -921,12 +959,13 @@ performanceMasterRouter.get("/ho-Allhod-scores", async (req, res) => {
           .catch(() => 0),
       ),
     );
-
+    
     const branchAvgScore = Number(
       (
         branchTotals.reduce((s, v) => s + v, 0) / (branchTotals.length || 1)
       ).toFixed(2),
     );
+    
 
     const kpiMap = {};
     hodKpis.forEach((k) => {
@@ -958,7 +997,7 @@ performanceMasterRouter.get("/ho-Allhod-scores", async (req, res) => {
 
 
     const insuranceValue = await new Promise((resolve, reject) => {
-     if (!Object.keys(kpiMap).some((k) => k.toLowerCase() === "insurance"))
+      if (!Object.keys(kpiMap).some((k) => k.toLowerCase() === "insurance"))
         return resolve(0);
       pool.query(
         `
@@ -973,8 +1012,8 @@ performanceMasterRouter.get("/ho-Allhod-scores", async (req, res) => {
         },
       );
     });
-    
-    
+
+
 
     const getVal = (name) => userKpiValues[kpiMap[name]?.id] || 0;
 
@@ -996,6 +1035,7 @@ performanceMasterRouter.get("/ho-Allhod-scores", async (req, res) => {
       let avg = 0;
       let result = 0;
       let weightageScore = 0;
+      let rangeCovert = 0;
 
       if (name.toLowerCase().includes("section")) avg = fixedAvg;
       else if (
@@ -1010,16 +1050,30 @@ performanceMasterRouter.get("/ho-Allhod-scores", async (req, res) => {
       else if (name.toLowerCase().includes("business development"))
         avg = InsuranceBusinessDevelopment;
 
-      // INSURANCE SPECIAL
+      rangeCovert = (avg / 10) * weightage;
+      
       if (name.toLowerCase().includes("insurance")) {
         const target = 40000;
         avg = insuranceValue;
 
         if (avg <= target) result = (avg / target) * 10;
         else if (avg / target < 1.25) result = 10;
-      
+
 
         weightageScore = avg === 0 ? -2 : (result / 100) * weightage;
+      }else if (
+        name.toLowerCase().includes("section") ||
+        name.toLowerCase().includes("branch") ||
+        name.toLowerCase().includes("visits")
+      ) {
+        if (rangeCovert === 0) result = 0;
+        else if (rangeCovert <= weightage)
+          result = (rangeCovert / weightage) * 10;
+        else if (rangeCovert / weightage < 1.25) result = 12.5;
+        else result = 0;
+
+        weightageScore = (result / 100) * weightage;
+
       } else {
         if (avg === 0) result = 0;
         else if (avg <= weightage) result = (avg / weightage) * 10;
@@ -1033,7 +1087,11 @@ performanceMasterRouter.get("/ho-Allhod-scores", async (req, res) => {
 
       finalKpis[name] = {
         score: Number(result.toFixed(2)),
-        achieved: avg || 0,
+        achieved: name.toLowerCase().includes("section") ||
+          name.toLowerCase().includes("branch") ||
+          name.toLowerCase().includes("visits")
+            ? Number(rangeCovert.toFixed(2)) 
+            : avg || 0,
         weightage,
         weightageScore: Number(weightageScore.toFixed(2)),
       };
@@ -1255,7 +1313,7 @@ performanceMasterRouter.get("/ho-staff-scores-all", async (req, res) => {
   }
 
   try {
-   
+
     const kpiList = await new Promise((resolve, reject) => {
       pool.query(
         `
@@ -1280,7 +1338,7 @@ performanceMasterRouter.get("/ho-staff-scores-all", async (req, res) => {
       return res.status(404).json({ error: "No KPI found for role" });
     }
 
-   
+
     const staffRows = await new Promise((resolve, reject) => {
       pool.query(
         `
@@ -1288,7 +1346,7 @@ performanceMasterRouter.get("/ho-staff-scores-all", async (req, res) => {
         FROM users
         WHERE role = 'HO_staff' AND hod_id = ? AND period = ?
         `,
-        [hod_id,period],
+        [hod_id, period],
         (err, rows) => {
           if (err) return reject(err);
           resolve(rows);
@@ -1302,7 +1360,7 @@ performanceMasterRouter.get("/ho-staff-scores-all", async (req, res) => {
 
     const staffIds = staffRows.map((s) => s.staffId);
 
-  
+
     const allUserEntries = await new Promise((resolve) => {
       pool.query(
         `
@@ -1317,7 +1375,7 @@ performanceMasterRouter.get("/ho-staff-scores-all", async (req, res) => {
       );
     });
 
- 
+
     const allInsuranceEntries = await new Promise((resolve) => {
       pool.query(
         `
@@ -1348,7 +1406,7 @@ performanceMasterRouter.get("/ho-staff-scores-all", async (req, res) => {
 
     const result = [];
 
-   
+
     for (const staff of staffRows) {
       const staffId = staff.staffId;
 
@@ -1383,15 +1441,15 @@ performanceMasterRouter.get("/ho-staff-scores-all", async (req, res) => {
 
         if (achieved > 0) {
           if (kpi_name.toLowerCase() === "insurance") {
-          const ratio = achieved / target;
-          if (ratio <= 1) score = ratio * 10;
-          else if (ratio < 1.25) score = 10;
-      
-          }else{
-          const ratio = achieved / target;
-          if (ratio <= 1) score = ratio * 10;
-          else if (ratio < 1.25) score = 10;
-          else score = 12.5;
+            const ratio = achieved / target;
+            if (ratio <= 1) score = ratio * 10;
+            else if (ratio < 1.25) score = 10;
+
+          } else {
+            const ratio = achieved / target;
+            if (ratio <= 1) score = ratio * 10;
+            else if (ratio < 1.25) score = 10;
+            else score = 12.5;
           }
         }
 
@@ -1409,13 +1467,13 @@ performanceMasterRouter.get("/ho-staff-scores-all", async (req, res) => {
           weightage,
           weightageScore:
             kpi_name.toLowerCase() === "insurance" &&
-            weightageScore === 0
+              weightageScore === 0
               ? -2
               : Number(weightageScore.toFixed(2)),
         };
       }
 
-      
+
       const finalScores = {
         total: Number(totalWeightageScore.toFixed(2)),
       };
@@ -1473,9 +1531,9 @@ performanceMasterRouter.get("/ho-staff-scores-all", async (req, res) => {
       const finalAvg =
         allScores.length > 0
           ? allScores.reduce((a, b) => a + b, 0) /
-            allScores.length
+          allScores.length
           : 0;
-      staffObj.originalTotal= Number(totalWeightageScore.toFixed(2));
+      staffObj.originalTotal = Number(totalWeightageScore.toFixed(2));
       staffObj.total = Number(finalAvg.toFixed(2));
 
       result.push(staffObj);
@@ -1536,7 +1594,7 @@ performanceMasterRouter.post("/save-or-update-ho-staff-kpi", (req, res) => {
         const periodVal = String(period).trim();
         const masterId = Number(master_user_id);
 
-        
+
         conn.query(
           `UPDATE user_kpi_entry 
            SET value = ?, master_user_id = ?, updated_at = CURRENT_TIMESTAMP
@@ -1551,7 +1609,7 @@ performanceMasterRouter.post("/save-or-update-ho-staff-kpi", (req, res) => {
               updated.push(`${s.kpi_name} updated`);
               done();
             } else {
-              
+
               conn.query(
                 `INSERT INTO user_kpi_entry 
                  (user_id, role_kpi_mapping_id, period, value, master_user_id)
@@ -1626,7 +1684,7 @@ performanceMasterRouter.post(
           FROM users
           WHERE role='HO_STAFF' AND hod_id = ? AND period = ?
           `,
-          [hod_id,period],
+          [hod_id, period],
           (err, rows) => {
             if (err) return reject(err);
             resolve(rows);
@@ -1644,7 +1702,7 @@ performanceMasterRouter.post(
           FROM branches
           WHERE incharge_id = ? AND period = ?
           `,
-          [hod_id,period],
+          [hod_id, period],
           (err, rows) => {
             if (err) return reject(err);
             resolve(rows);
@@ -1678,7 +1736,7 @@ performanceMasterRouter.post(
           SELECT username, name, role
           FROM users
           WHERE role IN ('AGM','DGM','AGM_IT','AGM_INSURANCE','AGM_AUDIT') AND period = ?
-          `,[period],
+          `, [period],
           (err, rows) => {
             if (err) return reject(err);
             resolve(rows);
@@ -1738,7 +1796,7 @@ const calculateHodAllScores = async (
     const staffIds = await new Promise((resolve, reject) => {
       pool.query(
         "SELECT id FROM users WHERE hod_id = ? AND period = ?",
-        [hod_id,period],
+        [hod_id, period],
         (err, rows) => {
           if (err) return reject(err);
           resolve(rows.map((r) => r.id));
@@ -1764,7 +1822,7 @@ const calculateHodAllScores = async (
     const branchCodes = await new Promise((resolve, reject) => {
       pool.query(
         "SELECT code FROM branches WHERE incharge_id = ? AND period = ?",
-        [hod_id,period],
+        [hod_id, period],
         (err, rows) => {
           if (err) return reject(err);
           resolve(rows.map((r) => r.code));
@@ -1841,6 +1899,7 @@ const calculateHodAllScores = async (
       let avg = 0;
       let result = 0;
       let weightageScore = 0;
+      let rangeCovert = 0;
 
       if (name.toLowerCase().includes("section")) avg = staffAvgScore;
       else if (
@@ -1855,7 +1914,8 @@ const calculateHodAllScores = async (
       else if (name.toLowerCase().includes("business development"))
         avg = InsuranceBusinessDevelopment;
 
-      // INSURANCE SPECIAL LOGIC (UNCHANGED)
+       rangeCovert = (avg / 10) * weightage;
+
       if (name.toLowerCase().includes("insurance")) {
         const target = 40000;
         avg = insuranceValue;
@@ -1864,6 +1924,19 @@ const calculateHodAllScores = async (
         else if (avg / target < 1.25) result = 10;
 
         weightageScore = avg === 0 ? -2 : (result / 100) * weightage;
+      }else if (
+        name.toLowerCase().includes("section") ||
+        name.toLowerCase().includes("branch") ||
+        name.toLowerCase().includes("visits")
+      ) {
+        if (rangeCovert === 0) result = 0;
+        else if (rangeCovert <= weightage)
+          result = (rangeCovert / weightage) * 10;
+        else if (rangeCovert / weightage < 1.25) result = 12.5;
+        else result = 0;
+
+        weightageScore = (result / 100) * weightage;
+
       } else {
         if (avg === 0) result = 0;
         else if (avg <= weightage) result = (avg / weightage) * 10;
@@ -1877,7 +1950,11 @@ const calculateHodAllScores = async (
 
       finalKpis[name] = {
         score: Number(result.toFixed(2)),
-        achieved: avg || 0,
+        achieved: name.toLowerCase().includes("section") ||
+          name.toLowerCase().includes("branch") ||
+          name.toLowerCase().includes("visits")
+            ? Number(rangeCovert.toFixed(2)) 
+            : avg || 0,
         weightage,
         weightageScore: Number(weightageScore.toFixed(2)),
       };
@@ -1909,7 +1986,7 @@ performanceMasterRouter.get("/AGM-DGM-Scores", async (req, res) => {
         SELECT id AS hod_id, role, name
         FROM users
         WHERE role IN ('AGM','DGM','AGM_AUDIT','AGM_INSURANCE','AGM_IT') AND period = ?
-        `,[period],
+        `, [period],
         (err, rows) => {
           if (err) return reject(err);
           resolve(rows);
@@ -1993,7 +2070,7 @@ performanceMasterRouter.post("/getAllBranchesScore", async (req, res) => {
     const branchReportData = {};
 
     const branches = await new Promise((resolve, reject) => {
-      pool.query(`SELECT code, name FROM branches where period = ?`,[period], (err, rows) => {
+      pool.query(`SELECT code, name FROM branches where period = ?`, [period], (err, rows) => {
         if (err) return reject(err);
         resolve(rows);
       });
@@ -2006,7 +2083,7 @@ performanceMasterRouter.post("/getAllBranchesScore", async (req, res) => {
           const bmRows = await new Promise((resolve, reject) => {
             pool.query(
               `SELECT PF_NO, name FROM users WHERE role='BM' AND branch_id = ? AND period = ?`,
-              [branch.code,period],
+              [branch.code, period],
               (err, rows) => {
                 if (err) return reject(err);
                 resolve(rows);
@@ -2159,26 +2236,26 @@ ON k.kpi = e.kpi
 GROUP BY k.kpi
 ORDER BY k.kpi
   `,
- [
-  employeeId, 
-  period,     
+    [
+      employeeId,
+      period,
 
-  period,     
-  period,     
+      period,
+      period,
 
-  employeeId, 
-  period,     
-  period,     
+      employeeId,
+      period,
+      period,
 
-  period,     
+      period,
 
-  period, period,
-  period, period, 
-  period          
-],
+      period, period,
+      period, period,
+      period
+    ],
     (err, results) => {
-     
-      
+
+
       if (err) return callback(err);
 
       pool.query(
@@ -2285,12 +2362,12 @@ ORDER BY k.kpi
                           const finalAvg =
                             allScores.length > 0
                               ? allScores.reduce((a, b) => a + b, 0) /
-                                allScores.length
+                              allScores.length
                               : 0;
 
                           scores.total = Number(finalAvg.toFixed(2));
-                         
-                          
+
+
                           callback(null, scores);
                         })
                         .catch(callback);
@@ -2421,15 +2498,15 @@ function calculateSpecificAllStaffScoresCb(
 
           let score = 0;
           if (achieved > 0) {
-            if(kpi_name.toLowerCase() === "insurance"){
-               const ratio = achieved / target;
-            if (ratio <= 1) score = ratio * 10;
-            else if (ratio < 1.25) score = 10;
-            }else{
-               const ratio = achieved / target;
-            if (ratio <= 1) score = ratio * 10;
-            else if (ratio < 1.25) score = 10;
-            else score = 12.5;
+            if (kpi_name.toLowerCase() === "insurance") {
+              const ratio = achieved / target;
+              if (ratio <= 1) score = ratio * 10;
+              else if (ratio < 1.25) score = 10;
+            } else {
+              const ratio = achieved / target;
+              if (ratio <= 1) score = ratio * 10;
+              else if (ratio < 1.25) score = 10;
+              else score = 12.5;
             }
           }
 
@@ -2487,7 +2564,7 @@ function calculateSpecificAllStaffScoresCb(
                     const finalAvg =
                       allScores.length > 0
                         ? allScores.reduce((a, b) => a + b, 0) /
-                          allScores.length
+                        allScores.length
                         : 0;
 
                     scores.total = Number(finalAvg.toFixed(2));
@@ -2532,13 +2609,13 @@ function getTransferBmScores(pool, period, branchId, callback) {
     `SELECT id FROM users 
      WHERE branch_id=? AND role='BM' AND period = ?
      ORDER BY transfer_date DESC`,
-    [branchId,period],
+    [branchId, period],
     (err, BMRows) => {
       if (err) return callback(err);
 
       const BMID = BMRows?.[0]?.id || BMRows?.[1]?.id || 0;
-      
-      
+
+
       if (!BMID) return callback(null, []);
 
       pool.query(
@@ -2548,12 +2625,12 @@ function getTransferBmScores(pool, period, branchId, callback) {
         [BMID, period],
         (err, bmRows) => {
           if (err) return callback(err);
-         
+
           if (!bmRows.length) return callback(null, []);
 
           const bm = bmRows[0];
-          
-          
+
+
           const transferDate = new Date(bm.transfer_date);
           const totalMonths = monthDiffStart(transferDate, fy.end);
 
@@ -2588,10 +2665,10 @@ function getTransferBmScores(pool, period, branchId, callback) {
               entryRows.forEach(
                 (r) => (achievedMap[r.kpi] = r.achieved || 0)
               );
-              
+
               achievedMap["audit"] =
                 (achievedMap["audit"] || 0) + (bm.audit_achieved || 0);
-               achievedMap["recovery"] =
+              achievedMap["recovery"] =
                 (achievedMap["recovery"] || 0) + (bm.recovery_achieved || 0);
               pool.query(
                 `SELECT SUM(value) AS achieved
@@ -2644,18 +2721,18 @@ function getTransferBmScores(pool, period, branchId, callback) {
                             switch (kpi) {
                               case "deposit":
                               case "loan_gen":
-                              case "loan_amulya":  
-                              if (ratio <= 1) outOf10 = ratio * 10;
-                              else if (ratio < 1.25) outOf10 = 10;
-                              else if (
-                                auditRatio >= 0.75 &&
-                                recoveryRatio >= 0.75
-                              )
-                                outOf10 = 12.5;
-                              else outOf10 = 10;
-                              break;
+                              case "loan_amulya":
+                                if (ratio <= 1) outOf10 = ratio * 10;
+                                else if (ratio < 1.25) outOf10 = 10;
+                                else if (
+                                  auditRatio >= 0.75 &&
+                                  recoveryRatio >= 0.75
+                                )
+                                  outOf10 = 12.5;
+                                else outOf10 = 10;
+                                break;
 
-                             
+
                               case "recovery":
                               case "audit":
                                 outOf10 = ratio <= 1 ? ratio * 10 : 12.5;
@@ -2675,8 +2752,8 @@ function getTransferBmScores(pool, period, branchId, callback) {
                             kpi === "insurance" && outOf10 === 0
                               ? -2
                               : (outOf10 * weight) / 100;
-                             
-                              
+
+
 
                           scores[kpi] = {
                             score: outOf10,
@@ -2697,15 +2774,15 @@ function getTransferBmScores(pool, period, branchId, callback) {
 
                       const cap =
                         prelim.total > 10 &&
-                        prelim.insurance.score < 7.5 &&
-                        prelim.recovery.score < 7.5
+                          prelim.insurance.score < 7.5 &&
+                          prelim.recovery.score < 7.5
                           ? 10
                           : 12.5;
 
                       const finalScores = calculateScores(cap);
                       const totalWeightageScore = finalScores.total;
 
-                      
+
 
                       getHoStaffTransferHistory(pool, period, BMID, (errHo, hoHistory) => {
                         if (errHo) return callback(errHo);
@@ -2735,19 +2812,19 @@ function getTransferBmScores(pool, period, branchId, callback) {
                                 ...previousTransferScores,
                                 totalWeightageScore,
                               ];
-                              
-                              
+
+
 
                               const finalAvg =
                                 allScores.length > 0
                                   ? allScores.reduce((a, b) => a + b, 0) /
-                                    allScores.length
+                                  allScores.length
                                   : 0;
-                                  
-                                  
-                               finalScores.total=finalAvg;
-                              
-                               
+
+
+                              finalScores.total = finalAvg;
+
+
                               return callback(null, {
                                 ...finalScores,
                                 totalMonthsWorked: totalMonths,
@@ -2806,10 +2883,10 @@ async function getBranchAttendersScores(period, branchId, hod_id) {
 
     if (normalizedBranchId) {
       sql = "SELECT id, name FROM users WHERE branch_id=? AND period = ? AND role='Attender'";
-      params = [normalizedBranchId,period];
+      params = [normalizedBranchId, period];
     } else {
       sql = "SELECT id, name FROM users WHERE hod_id=? AND period = ? AND role='Attender'";
-      params = [hod_id,period];
+      params = [hod_id, period];
     }
 
     pool.query(sql, params, (err, rows) => {
@@ -2883,14 +2960,15 @@ async function getBranchAttendersScores(period, branchId, hod_id) {
         if (achieved > 0) {
           if (kpi.kpi_name.toLowerCase().includes("insurance")) {
             const ratio = achieved / target;
-          if (ratio <= 1) score = ratio * 10;
-          else if (ratio < 1.25) score = 10;
-           else score = 12.5;
-          }else{
-          const ratio = achieved / target;
-          if (ratio <= 1) score = ratio * 10;
-          else if (ratio < 1.25) score = 10;
-          else score = 12.5;}
+            if (ratio <= 1) score = ratio * 10;
+            else if (ratio < 1.25) score = 10;
+            else score = 12.5;
+          } else {
+            const ratio = achieved / target;
+            if (ratio <= 1) score = ratio * 10;
+            else if (ratio < 1.25) score = 10;
+            else score = 12.5;
+          }
         }
 
         const weightageScore =
@@ -2909,7 +2987,7 @@ async function getBranchAttendersScores(period, branchId, hod_id) {
         totalScore += weightageScore;
       }
 
-      
+
 
       const hoHistory = await new Promise((resolve) => {
         getHoStaffTransferHistory(pool, period, user.id, (err, data) => {
@@ -2964,11 +3042,11 @@ async function getBranchAttendersScores(period, branchId, hod_id) {
 function getAllUser(pool, period, cb) {
 
   const startYear = parseInt(period.substring(0, 4));
-  
-  
+
+
 
   const startDate = `${startYear}-04-01`;
-  const endDate = `${startYear + 1}-03-31`;  
+  const endDate = `${startYear + 1}-03-31`;
 
 
   const query = `
@@ -2999,9 +3077,9 @@ function getAllUser(pool, period, cb) {
     AND (u.resign IS NULL OR u.resign != 1) AND u.period = ? 
   `;
 
-  pool.query(query, [startDate, endDate ,period, period], cb);
+  pool.query(query, [startDate, endDate, period, period], cb);
 }
-function getAllUsers(pool,period, cb) {
+function getAllUsers(pool, period, cb) {
   pool.query(
     `
     SELECT u.id, u.username, u.name, u.role,
@@ -3015,7 +3093,7 @@ function getAllUsers(pool,period, cb) {
       "Attender"
     ) AND u.period = ?
     `,
-    [period,period], cb
+    [period, period], cb
   );
 }
 //give the BM Data only form this api
@@ -3036,12 +3114,12 @@ performanceMasterRouter.post("/usersBM", async (req, res) => {
 
           let score;
           if (u.transfer_flag === 1) {
-           
-            
+
+
             const scoreTransfer = await new Promise((resolve, reject) => {
               getTransferBmScores(pool, period, branchId, (err, data) => {
                 if (err) return reject(err);
-          
+
                 resolve(data);
               });
             });
@@ -3055,7 +3133,7 @@ performanceMasterRouter.post("/usersBM", async (req, res) => {
             score = await calculateBMScores(String(period), branchId);
           }
 
-          
+
           return {
             ...u,
             bmTotalScore: score?.total ?? 0,
@@ -3075,7 +3153,7 @@ performanceMasterRouter.post("/usersBM", async (req, res) => {
 performanceMasterRouter.post("/usersClerk/part1", (req, res) => {
   const { period } = req.body;
 
-  getAllUsers(pool,period, async (err, users) => {
+  getAllUsers(pool, period, async (err, users) => {
     if (err) {
       return res.status(500).json({ error: "Failed to load users" });
     }
@@ -3111,7 +3189,7 @@ performanceMasterRouter.post("/usersClerk/part1", (req, res) => {
 performanceMasterRouter.post("/usersClerk/part2", (req, res) => {
   const { period } = req.body;
 
-  getAllUsers(pool,period, async (err, users) => {
+  getAllUsers(pool, period, async (err, users) => {
     if (err) {
       return res.status(500).json({ error: "Failed to load users" });
     }
@@ -3147,7 +3225,7 @@ performanceMasterRouter.post("/usersClerk/part2", (req, res) => {
 performanceMasterRouter.post("/usersClerk/part3", (req, res) => {
   const { period } = req.body;
 
-  getAllUsers(pool,period, async (err, users) => {
+  getAllUsers(pool, period, async (err, users) => {
     if (err) {
       return res.status(500).json({ error: "Failed to load users" });
     }
@@ -3183,7 +3261,7 @@ performanceMasterRouter.post("/usersClerk/part3", (req, res) => {
 performanceMasterRouter.post("/usersClerk/part4", (req, res) => {
   const { period } = req.body;
 
-  getAllUsers(pool,period, async (err, users) => {
+  getAllUsers(pool, period, async (err, users) => {
     if (err) {
       return res.status(500).json({ error: "Failed to load users" });
     }
@@ -3220,7 +3298,7 @@ performanceMasterRouter.post("/usersClerk/part4", (req, res) => {
 performanceMasterRouter.post("/usersHOStaff", (req, res) => {
   const { period } = req.body;
 
-  getAllUsers(pool,period, async (err, users) => {
+  getAllUsers(pool, period, async (err, users) => {
     if (err) {
       return res.status(500).json({ error: "Failed to load users" });
     }
@@ -3253,7 +3331,7 @@ performanceMasterRouter.post("/usersHOStaff", (req, res) => {
 performanceMasterRouter.post("/usersAttender", (req, res) => {
   const { period } = req.body;
 
-  getAllUsers(pool,period, async (err, users) => {
+  getAllUsers(pool, period, async (err, users) => {
     if (err) {
       return res.status(500).json({ error: "Failed to load users" });
     }
@@ -3291,7 +3369,7 @@ performanceMasterRouter.post("/usersAttender", (req, res) => {
 performanceMasterRouter.post("/usersAgmGm", (req, res) => {
   const { period } = req.body;
 
-  getAllUsers(pool,period, async (err, users) => {
+  getAllUsers(pool, period, async (err, users) => {
     if (err) {
       return res.status(500).json({ error: "Failed to load users" });
     }
@@ -3359,7 +3437,7 @@ export function getHoStaffTransferHistory(pool, period, ho_staff_id, callback) {
     WHERE id = ? AND period = ?
   `;
 
-  pool.query(staffQuery, [ho_staff_id,period], (err0, staffRows) => {
+  pool.query(staffQuery, [ho_staff_id, period], (err0, staffRows) => {
     if (err0 || !staffRows.length) {
       return callback("Staff fetch failed");
     }
@@ -3490,7 +3568,7 @@ export function getAttenderTransferHistory(pool, period, staff_id, callback) {
     WHERE id = ? AND period = ?
   `;
 
-  pool.query(staffQuery, [staff_id,period], (err0, staffRows) => {
+  pool.query(staffQuery, [staff_id, period], (err0, staffRows) => {
     if (err0 || !staffRows.length) {
       return callback("Staff fetch failed");
     }
@@ -3527,7 +3605,7 @@ export function getAttenderTransferHistory(pool, period, staff_id, callback) {
         ORDER BY ho.transfer_date ASC;
       `;
 
-      pool.query(transferQuery, [period, period,staff_id, period, period, period], (err2, rows) => {
+      pool.query(transferQuery, [period, period, staff_id, period, period, period], (err2, rows) => {
         if (err2) {
           return callback("Transfer fetch failed");
         }
@@ -3639,7 +3717,7 @@ performanceMasterRouter.get("/ho_staff_transfer_history", (req, res) => {
     WHERE id = ? AND period = ?
   `;
 
-  pool.query(staffQuery, [ho_staff_id,period], (err0, staffRows) => {
+  pool.query(staffQuery, [ho_staff_id, period], (err0, staffRows) => {
     if (err0 || !staffRows.length) {
       return res.status(500).json({ error: "Staff fetch failed" });
     }
@@ -3767,7 +3845,7 @@ performanceMasterRouter.post(
       const branchReportData = {};
 
       const branches = await new Promise((resolve, reject) => {
-        pool.query(`SELECT code, name FROM branches where period = ?`,[period], (err, rows) => {
+        pool.query(`SELECT code, name FROM branches where period = ?`, [period], (err, rows) => {
           if (err) return reject(err);
           resolve(rows);
         });
@@ -3780,7 +3858,7 @@ performanceMasterRouter.post(
             const bmRows = await new Promise((resolve, reject) => {
               pool.query(
                 `SELECT PF_NO, name FROM users WHERE role='BM' AND branch_id = ? AND period = ?`,
-                [branch.code,period],
+                [branch.code, period],
                 (err, rows) => {
                   if (err) return reject(err);
                   resolve(rows);
@@ -3851,7 +3929,7 @@ performanceMasterRouter.get("/attender_transfer_history", (req, res) => {
     WHERE id = ? AND period = ?
   `;
 
-  pool.query(staffQuery, [staff_id,period], (err0, staffRows) => {
+  pool.query(staffQuery, [staff_id, period], (err0, staffRows) => {
     if (err0 || !staffRows.length) {
       return res.status(500).json({ error: "Staff fetch failed" });
     }
@@ -3888,7 +3966,7 @@ performanceMasterRouter.get("/attender_transfer_history", (req, res) => {
         ORDER BY ho.transfer_date ASC;
         `;
 
-      pool.query(transferQuery, [period,period,staff_id, period,period,period], (err2, rows) => {
+      pool.query(transferQuery, [period, period, staff_id, period, period, period], (err2, rows) => {
         if (err2) {
           return res.status(500).json({ error: "Transfer fetch failed" });
         }
@@ -3923,8 +4001,8 @@ performanceMasterRouter.get("/attender_transfer_history", (req, res) => {
 
             const weightageScore = (score * weightage) / 100;
             total += weightageScore;
-            
-            
+
+
             scores[kpi_name] = {
               achieved,
               weightage,
@@ -3979,7 +4057,7 @@ performanceMasterRouter.get("/attender_transfer_history", (req, res) => {
 
 //get last transfer data according passing peroid
 performanceMasterRouter.get('/getLasttransfer', (req, res) => {
-  const { period ,staff_id } = req.query;
+  const { period, staff_id } = req.query;
 
   if (!period) {
     return res.status(400).json({ error: "Period is required" });
