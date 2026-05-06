@@ -257,6 +257,7 @@ performanceMasterRouter.get("/specfic-ALLstaff-scores", async (req, res) => {
           const ratio = achieved / target;
           if (ratio <= 1) score = ratio * 10;
           else if (ratio < 1.25) score = 10;
+          else score = 12.5;
         } else {
           const ratio = achieved / target;
           if (ratio <= 1) score = ratio * 10;
