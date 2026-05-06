@@ -2132,9 +2132,25 @@ function calculateStaffScoresCb(period, employeeId, branchId, callback) {
 SELECT 
     k.kpi,
 
-    MAX(COALESCE(a.amount, t.amount, 0)) AS target,
+    MAX(
+        CASE 
+            WHEN k.kpi = 'recovery'
+            AND (
+                emp.transfer_date BETWEEN fy.fy_start AND fy.fy_end
+                OR emp.user_add_date BETWEEN fy.fy_start AND fy.fy_end
+            )
+            THEN COALESCE(a.amount,0)
+
+            WHEN k.kpi = 'recovery'
+            THEN COALESCE(t.amount,0)
+
+            ELSE COALESCE(a.amount,0)
+        END
+    ) AS target,
+
     MAX(COALESCE(w.weightage, 0)) AS weightage,
-    COALESCE(e.total_achieved, 0) AS achieved
+
+    MAX(COALESCE(e.total_achieved, 0)) AS achieved
 
 FROM (
     SELECT 'deposit' AS kpi
@@ -2146,13 +2162,20 @@ FROM (
 ) k
 
 JOIN users emp 
-ON emp.id = ? 
-AND emp.period = ?
+    ON emp.id = ?
+    AND emp.period = ?
+
+CROSS JOIN (
+    SELECT 
+        STR_TO_DATE(CONCAT(LEFT(?,4),'-04-01'),'%Y-%m-%d') AS fy_start,
+        STR_TO_DATE(CONCAT(2000 + RIGHT(?,2),'-03-31'),'%Y-%m-%d') AS fy_end
+) fy
 
 LEFT JOIN allocations a 
     ON k.kpi = a.kpi
     AND a.period = ?
     AND a.user_id = emp.id
+    AND a.branch_id = emp.branch_id
 
 LEFT JOIN targets t
     ON k.kpi = t.kpi
@@ -2162,97 +2185,126 @@ LEFT JOIN targets t
 LEFT JOIN weightage w 
     ON k.kpi = w.kpi
 
-
 LEFT JOIN (
     SELECT 
         e.kpi,
         SUM(e.value) AS total_achieved
+
     FROM entries e
 
     JOIN users emp2 
         ON emp2.id = ?
         AND emp2.period = ?
 
-    JOIN users bm 
-        ON bm.branch_id = emp2.branch_id 
-        AND bm.role = 'BM' 
-        AND bm.period = ?
+    CROSS JOIN (
+        SELECT 
+            STR_TO_DATE(CONCAT(LEFT(?,4),'-04-01'),'%Y-%m-%d') AS fy_start,
+            STR_TO_DATE(CONCAT(2000 + RIGHT(?,2),'-03-31'),'%Y-%m-%d') AS fy_end
+    ) fy2
 
     WHERE 
         e.period = ?
         AND e.status = 'Verified'
 
         AND (
+
+            -------------------------------------------------
+            -- AUDIT & RECOVERY
+            -------------------------------------------------
             (
                 e.kpi IN ('audit','recovery')
+
                 AND (
-                    -- NEW JOINER → OWN
+
+                    -------------------------------------------------
+                    -- NEW JOINER / TRANSFER → OWN ENTRY
+                    -------------------------------------------------
                     (
-                        emp2.user_add_date BETWEEN 
-                            STR_TO_DATE(CONCAT(LEFT(?,4),'-04-01'),'%Y-%m-%d')
-                        AND 
-                            STR_TO_DATE(CONCAT(2000 + RIGHT(?,2),'-03-31'),'%Y-%m-%d')
-                        AND e.employee_id = emp2.id
-                    )
-
-                    OR
-
-                    -- TRANSFER → OWN
-                    (
-                        emp2.transfer_date BETWEEN 
-                            STR_TO_DATE(CONCAT(LEFT(?,4),'-04-01'),'%Y-%m-%d')
-                        AND 
-                            STR_TO_DATE(CONCAT(2000 + RIGHT(?,2),'-03-31'),'%Y-%m-%d')
-                        AND e.employee_id = emp2.id
-                    )
-
-                    OR
-
-                    -- NORMAL → BM
-                    (
-                        emp2.transfer_date IS NULL
-                        AND (
-                            emp2.user_add_date IS NULL 
-                            OR emp2.user_add_date <= 
-                                STR_TO_DATE(CONCAT(LEFT(?,4),'-04-01'),'%Y-%m-%d')
+                        (
+                            emp2.user_add_date BETWEEN fy2.fy_start AND fy2.fy_end
+                            OR
+                            emp2.transfer_date BETWEEN fy2.fy_start AND fy2.fy_end
                         )
-                        AND e.employee_id = bm.id
+
+                        AND e.employee_id = emp2.id
+                        AND e.branch_id = emp2.branch_id
+                    )
+
+                    OR
+
+                    -------------------------------------------------
+                    -- OLD EMPLOYEE → BM ENTRY
+                    -------------------------------------------------
+                    (
+                        (
+                            emp2.user_add_date IS NULL
+                            OR emp2.user_add_date < fy2.fy_start
+                        )
+
+                        AND
+
+                        (
+                            emp2.transfer_date IS NULL
+                            OR emp2.transfer_date < fy2.fy_start
+                        )
+
+                        AND e.employee_id IN (
+                            SELECT id
+                            FROM users
+                            WHERE branch_id = emp2.branch_id
+                            AND role = 'BM'
+                            AND period = emp2.period
+                        )
+
+                        AND e.branch_id = emp2.branch_id
                     )
                 )
             )
 
             OR
 
-            -- OTHER KPI → OWN
+            -------------------------------------------------
+            -- DEPOSIT / LOAN / INSURANCE → OWN ENTRY ONLY
+            -------------------------------------------------
             (
-                e.kpi NOT IN ('audit','recovery')
+                e.kpi IN (
+                    'deposit',
+                    'loan_gen',
+                    'loan_amulya',
+                    'insurance'
+                )
+
                 AND e.employee_id = emp2.id
+                AND e.branch_id = emp2.branch_id
             )
         )
 
     GROUP BY e.kpi
+
 ) e 
 ON k.kpi = e.kpi
 
 GROUP BY k.kpi
+
 ORDER BY k.kpi
   `,
     [
-      employeeId,
-      period,
+      employeeId, // emp.id
+    period,     // emp.period
 
-      period,
-      period,
+    period,     // fy start
+    period,     // fy end
 
-      employeeId,
-      period,
-      period,
+    period,     // allocations
+    period,     // targets
 
-      period,
+    employeeId, // emp2.id
+    period,     // emp2.period
 
-      period, period,
-      period, period,
-      period
+    period,     // fy2 start
+    period,     // fy2 end
+
+    period      
     ],
     (err, results) => {
 

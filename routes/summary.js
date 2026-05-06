@@ -821,17 +821,6 @@ LEFT JOIN (
         ON emp2.id = ?
         AND emp2.period = ?
 
-    JOIN users bm 
-        ON bm.branch_id = emp2.branch_id 
-        AND bm.role = 'BM' 
-        AND bm.period = ?
-
-    CROSS JOIN (
-        SELECT 
-            STR_TO_DATE(CONCAT(LEFT(?,4),'-04-01'),'%Y-%m-%d') AS fy_start,
-            STR_TO_DATE(CONCAT(2000 + RIGHT(?,2),'-03-31'),'%Y-%m-%d') AS fy_end
-    ) fy2
-
     WHERE 
         e.period = ?
         AND e.status = 'Verified'
@@ -840,25 +829,61 @@ LEFT JOIN (
         AND (
             (
                 e.kpi IN ('audit','recovery')
+
                 AND (
+                    -- NEW JOINED EMPLOYEE
                     (
-                        emp2.user_add_date BETWEEN fy2.fy_start AND fy2.fy_end
+                        emp2.user_add_date BETWEEN 
+                            STR_TO_DATE(CONCAT(LEFT(?,4),'-04-01'),'%Y-%m-%d')
+                        AND
+                            STR_TO_DATE(CONCAT(2000 + RIGHT(?,2),'-03-31'),'%Y-%m-%d')
+
                         AND e.employee_id = emp2.id
                     )
+
                     OR
+
+                    -- TRANSFERRED EMPLOYEE
                     (
-                        emp2.transfer_date BETWEEN fy2.fy_start AND fy2.fy_end
+                        emp2.transfer_date BETWEEN 
+                            STR_TO_DATE(CONCAT(LEFT(?,4),'-04-01'),'%Y-%m-%d')
+                        AND
+                            STR_TO_DATE(CONCAT(2000 + RIGHT(?,2),'-03-31'),'%Y-%m-%d')
+
                         AND e.employee_id = emp2.id
                     )
+
                     OR
+
+                    -- OLD EMPLOYEE → TAKE BM ENTRY
                     (
-                        emp2.transfer_date IS NULL
-                        AND (emp2.user_add_date IS NULL OR emp2.user_add_date <= fy2.fy_start)
-                        AND e.employee_id = bm.id
+                        (
+                            emp2.user_add_date IS NULL 
+                            OR emp2.user_add_date <
+                                STR_TO_DATE(CONCAT(LEFT(?,4),'-04-01'),'%Y-%m-%d')
+                        )
+
+                        AND
+
+                        (
+                            emp2.transfer_date IS NULL 
+                            OR emp2.transfer_date <
+                                STR_TO_DATE(CONCAT(LEFT(?,4),'-04-01'),'%Y-%m-%d')
+                        )
+
+                        AND e.employee_id IN (
+                            SELECT id 
+                            FROM users 
+                            WHERE branch_id = emp2.branch_id
+                            AND role = 'BM'
+                            AND period = ?
+                        )
                     )
                 )
             )
+
             OR
+
             (
                 e.kpi NOT IN ('audit','recovery')
                 AND e.employee_id = emp2.id
@@ -870,27 +895,36 @@ LEFT JOIN (
 ON k.kpi = e.kpi
 
 GROUP BY k.kpi
-ORDER BY k.kpi;
+ORDER BY k.kpi
  `;
       pool.query(
         query,
         [
           employeeId,
-          period,
+    period,
 
-          period,
-          period,
+    period,
+    period,
 
-          period,
-          period,
-          employeeId,
-          period,
-          period,
+    period,
+    period,
 
-          period,
-          period,
+    employeeId,
+    period,
 
-          period,
+    period,
+
+    period,
+    period,
+
+    period,
+    period,
+
+    period,
+
+    period,
+
+    period
         ],
         (error, results) => {
           results;
