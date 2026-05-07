@@ -1157,13 +1157,27 @@ export async function getTransferKpiHistory(pool, period, staff_id) {
 
           let outOf10;
           const ratio = achieved / target;
+           const auditRatio = kpi === "audit" ? ratio:0;
+            const recoveryRatio = kpi === "recovery" ? ratio : 0;
 
           switch (kpi) {
             case "deposit":
             case "loan_gen":
             case "loan_amulya":
-              outOf10 = ratio < 1 ? ratio * 10 : ratio < 1.25 ? 10 : 12.5;
-              break;
+              if (ratio <= 1) {
+              outOf10 = ratio * 10;
+            } else if (ratio > 1 && ratio < 1.25) {
+              outOf10 = 10;
+            } else if (
+              ratio >= 1.25 &&
+              auditRatio >= 0.75 &&
+              recoveryRatio >= 0.75
+            ) {
+              outOf10 = 12.5;
+            } else {
+              outOf10 = 10;
+            }
+            break;
 
             case "recovery":
             case "audit":
@@ -1242,6 +1256,9 @@ export async function getTransferKpiHistory(pool, period, staff_id) {
             totalWeightageScore += weightageScore;
           });
 
+          if(staff_id===2866){
+            console.log("Staff Transfer KPI Result:",branchScores, "Total Weightage Score:", totalWeightageScore);
+          }
           allBranchKpiScores.push(totalWeightageScore);
 
           if (!branchWiseKpi[t.branch_name]) {
@@ -1289,7 +1306,7 @@ export async function getTransferKpiHistory(pool, period, staff_id) {
             months,
           };
         });
-
+     
         resolve(staffResult);
       });
     });

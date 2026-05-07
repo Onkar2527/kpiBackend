@@ -2135,21 +2135,20 @@ SELECT
     MAX(
         CASE 
             WHEN k.kpi = 'recovery'
-            AND (
-                emp.transfer_date BETWEEN fy.fy_start AND fy.fy_end
-                OR emp.user_add_date BETWEEN fy.fy_start AND fy.fy_end
-            )
-            THEN COALESCE(a.amount,0)
+                AND (
+                    emp.transfer_date BETWEEN fy.fy_start AND fy.fy_end
+                    OR emp.user_add_date BETWEEN fy.fy_start AND fy.fy_end
+                )
+            THEN COALESCE(a.amount, 0)
 
             WHEN k.kpi = 'recovery'
-            THEN COALESCE(t.amount,0)
+            THEN COALESCE(t.amount, 0)
 
-            ELSE COALESCE(a.amount,0)
+            ELSE COALESCE(a.amount, 0)
         END
     ) AS target,
 
     MAX(COALESCE(w.weightage, 0)) AS weightage,
-
     MAX(COALESCE(e.total_achieved, 0)) AS achieved
 
 FROM (
@@ -2167,58 +2166,60 @@ JOIN users emp
 
 CROSS JOIN (
     SELECT 
-        STR_TO_DATE(CONCAT(LEFT(?,4),'-04-01'),'%Y-%m-%d') AS fy_start,
-        STR_TO_DATE(CONCAT(2000 + RIGHT(?,2),'-03-31'),'%Y-%m-%d') AS fy_end
+        STR_TO_DATE(CONCAT(LEFT(?,4),'-04-01'), '%Y-%m-%d') AS fy_start,
+        STR_TO_DATE(CONCAT(2000 + RIGHT(?,2),'-03-31'), '%Y-%m-%d') AS fy_end
 ) fy
 
 LEFT JOIN allocations a 
-    ON k.kpi = a.kpi
+    ON a.kpi = k.kpi
     AND a.period = ?
     AND a.user_id = emp.id
     AND a.branch_id = emp.branch_id
 
 LEFT JOIN targets t
-    ON k.kpi = t.kpi
+    ON t.kpi = k.kpi
     AND t.period = ?
     AND t.branch_id = emp.branch_id
 
 LEFT JOIN weightage w 
-    ON k.kpi = w.kpi
+    ON w.kpi = k.kpi
 
 LEFT JOIN (
+
     SELECT 
         e.kpi,
         SUM(e.value) AS total_achieved
 
     FROM entries e
 
-    JOIN users emp2 
+    JOIN users emp2
         ON emp2.id = ?
         AND emp2.period = ?
 
     CROSS JOIN (
         SELECT 
-            STR_TO_DATE(CONCAT(LEFT(?,4),'-04-01'),'%Y-%m-%d') AS fy_start,
-            STR_TO_DATE(CONCAT(2000 + RIGHT(?,2),'-03-31'),'%Y-%m-%d') AS fy_end
+            STR_TO_DATE(CONCAT(LEFT(?,4),'-04-01'), '%Y-%m-%d') AS fy_start,
+            STR_TO_DATE(CONCAT(2000 + RIGHT(?,2),'-03-31'), '%Y-%m-%d') AS fy_end
     ) fy2
 
     WHERE 
         e.period = ?
         AND e.status = 'Verified'
+        AND e.branch_id = emp2.branch_id
 
         AND (
 
-            -------------------------------------------------
-            -- AUDIT & RECOVERY
-            -------------------------------------------------
+            ------------------------------------------------
+            -- AUDIT / RECOVERY
+            ------------------------------------------------
             (
-                e.kpi IN ('audit','recovery')
+                e.kpi IN ('audit', 'recovery')
 
                 AND (
 
-                    -------------------------------------------------
-                    -- NEW JOINER / TRANSFER → OWN ENTRY
-                    -------------------------------------------------
+                    ------------------------------------------------
+                    -- NEW JOINER / TRANSFER
+                    ------------------------------------------------
                     (
                         (
                             emp2.user_add_date BETWEEN fy2.fy_start AND fy2.fy_end
@@ -2227,14 +2228,13 @@ LEFT JOIN (
                         )
 
                         AND e.employee_id = emp2.id
-                        AND e.branch_id = emp2.branch_id
                     )
 
                     OR
 
-                    -------------------------------------------------
+                    ------------------------------------------------
                     -- OLD EMPLOYEE → BM ENTRY
-                    -------------------------------------------------
+                    ------------------------------------------------
                     (
                         (
                             emp2.user_add_date IS NULL
@@ -2248,24 +2248,23 @@ LEFT JOIN (
                             OR emp2.transfer_date < fy2.fy_start
                         )
 
-                        AND e.employee_id IN (
-                            SELECT id
-                            FROM users
-                            WHERE branch_id = emp2.branch_id
-                            AND role = 'BM'
-                            AND period = emp2.period
+                        AND e.employee_id = (
+                            SELECT bm.id
+                            FROM users bm
+                            WHERE bm.branch_id = emp2.branch_id
+                            AND bm.role = 'BM'
+                            AND bm.period = emp2.period
+                            LIMIT 1
                         )
-
-                        AND e.branch_id = emp2.branch_id
                     )
                 )
             )
 
             OR
 
-            -------------------------------------------------
-            -- DEPOSIT / LOAN / INSURANCE → OWN ENTRY ONLY
-            -------------------------------------------------
+            ------------------------------------------------
+            -- OTHER KPI → OWN ENTRY
+            ------------------------------------------------
             (
                 e.kpi IN (
                     'deposit',
@@ -2275,18 +2274,17 @@ LEFT JOIN (
                 )
 
                 AND e.employee_id = emp2.id
-                AND e.branch_id = emp2.branch_id
             )
         )
 
     GROUP BY e.kpi
 
 ) e 
-ON k.kpi = e.kpi
+ON e.kpi = k.kpi
 
 GROUP BY k.kpi
-
 ORDER BY k.kpi
+
   `,
     [
       employeeId, // emp.id
@@ -2304,7 +2302,7 @@ ORDER BY k.kpi
     period,     // fy2 start
     period,     // fy2 end
 
-    period      
+    period   
     ],
     (err, results) => {
 
@@ -2417,10 +2415,13 @@ ORDER BY k.kpi
                               ? allScores.reduce((a, b) => a + b, 0) /
                               allScores.length
                               : 0;
-
+                          if(employeeId === 2866){
+                            console.log("All Scores =>", allScores);
+                            console.log("Final Avg =>", finalAvg);
+                          }
                           scores.total = Number(finalAvg.toFixed(2));
 
-
+                         
                           callback(null, scores);
                         })
                         .catch(callback);
@@ -3127,7 +3128,7 @@ function getAllUser(pool, period, cb) {
         "AGM","DGM","AGM_IT","AGM_AUDIT","AGM_INSURANCE",
         "Attender"
     )
-    AND (u.resign IS NULL OR u.resign != 1) AND u.period = ? 
+    AND (u.resign IS NULL OR u.resign != 1) AND u.period = ? AND u.resign = 0
   `;
 
   pool.query(query, [startDate, endDate, period, period], cb);
@@ -3144,7 +3145,7 @@ function getAllUsers(pool, period, cb) {
       "BM","Clerk","HO_STAFF","GM",
       "AGM","DGM","AGM_IT","AGM_AUDIT","AGM_INSURANCE",
       "Attender"
-    ) AND u.period = ?
+    ) AND u.period = ? and u.resign=0
     `,
     [period, period], cb
   );
@@ -3641,27 +3642,42 @@ export function getAttenderTransferHistory(pool, period, staff_id, callback) {
       }
 
       const transferQuery = `
-        SELECT ho.*, 
-            u.name AS hod_name, 
-            s.name AS old_hod_name,
-            b1.name AS new_branch,
-            b2.name AS old_branch
-        FROM attender_transfer ho
-        LEFT JOIN users u ON ho.hod_id = u.id
-        LEFT JOIN users s ON ho.old_hod_id = s.id
-        LEFT JOIN branches b1 
-          ON ho.branch_id COLLATE utf8mb4_unicode_ci = b1.code AND b1.period COLLATE utf8mb4_unicode_ci = ?
-        LEFT JOIN branches b2  
-          ON ho.old_branch_id COLLATE utf8mb4_unicode_ci = b2.code AND b2.period COLLATE utf8mb4_unicode_ci = ?
-        WHERE ho.staff_id = ?
-        AND ho.period COLLATE utf8mb4_unicode_ci = ? AND u.period COLLATE utf8mb4_unicode_ci = ? AND s.period COLLATE utf8mb4_unicode_ci = ?
-        ORDER BY ho.transfer_date ASC;
+       SELECT 
+    ho.*, 
+    u.name AS hod_name, 
+    s.name AS old_hod_name,
+    b1.name AS new_branch,
+    b2.name AS old_branch
+
+FROM attender_transfer ho
+
+LEFT JOIN users u 
+    ON ho.hod_id = u.hod_id COLLATE utf8mb4_unicode_ci
+    AND u.period COLLATE utf8mb4_unicode_ci = ?
+
+LEFT JOIN users s 
+    ON ho.old_hod_id = s.hod_id COLLATE utf8mb4_unicode_ci
+    AND s.period COLLATE utf8mb4_unicode_ci = ?
+
+LEFT JOIN branches b1 
+    ON ho.branch_id COLLATE utf8mb4_unicode_ci = b1.code
+    AND b1.period COLLATE utf8mb4_unicode_ci = ?
+
+LEFT JOIN branches b2  
+    ON ho.old_branch_id COLLATE utf8mb4_unicode_ci = b2.code
+    AND b2.period COLLATE utf8mb4_unicode_ci = ?
+
+WHERE ho.staff_id = ?
+AND ho.period COLLATE utf8mb4_unicode_ci = ?
+
+ORDER BY ho.transfer_date ASC
       `;
 
-      pool.query(transferQuery, [period, period, staff_id, period, period, period], (err2, rows) => {
+      pool.query(transferQuery, [period, period,  period, period,  staff_id, period], (err2, rows) => {
         if (err2) {
           return callback("Transfer fetch failed");
         }
+        
 
         const transfers = [];
         const branch_avg_kpi = {};
@@ -3679,6 +3695,8 @@ export function getAttenderTransferHistory(pool, period, staff_id, callback) {
 
           let total = 0;
           const scores = {};
+
+
 
           kpiWeightage.forEach((row) => {
             const { kpi_name, weightage } = row;
@@ -3746,7 +3764,7 @@ export function getAttenderTransferHistory(pool, period, staff_id, callback) {
             avg_kpi: Number(avg_kpi.toFixed(2)),
           },
         ];
-
+       
         callback(null, response);
       });
     });
@@ -4002,24 +4020,38 @@ performanceMasterRouter.get("/attender_transfer_history", (req, res) => {
       }
 
       const transferQuery = `
-          SELECT ho.*, 
-              u.name AS hod_name, 
-              s.name AS old_hod_name,
-              b1.name AS new_branch,
-              b2.name AS old_branch
-        FROM attender_transfer ho
-        LEFT JOIN users u ON ho.hod_id = u.id
-        LEFT JOIN users s ON ho.old_hod_id = s.id
-        LEFT JOIN branches b1 
-          ON ho.branch_id COLLATE utf8mb4_unicode_ci = b1.code AND b1.period COLLATE utf8mb4_unicode_ci = ?
-        LEFT JOIN branches b2 
-          ON ho.old_branch_id COLLATE utf8mb4_unicode_ci = b2.code AND b2.period COLLATE utf8mb4_unicode_ci = ?
-        WHERE ho.staff_id = ?
-        AND ho.period COLLATE utf8mb4_unicode_ci = ? AND u.period COLLATE utf8mb4_unicode_ci = ? AND s.period COLLATE utf8mb4_unicode_ci = ?
-        ORDER BY ho.transfer_date ASC;
+            SELECT 
+    ho.*, 
+    u.name AS hod_name, 
+    s.name AS old_hod_name,
+    b1.name AS new_branch,
+    b2.name AS old_branch
+
+FROM attender_transfer ho
+
+LEFT JOIN users u 
+    ON ho.hod_id = u.hod_id COLLATE utf8mb4_unicode_ci
+    AND u.period COLLATE utf8mb4_unicode_ci = ?
+
+LEFT JOIN users s 
+    ON ho.old_hod_id = s.hod_id COLLATE utf8mb4_unicode_ci
+    AND s.period COLLATE utf8mb4_unicode_ci = ?
+
+LEFT JOIN branches b1 
+    ON ho.branch_id COLLATE utf8mb4_unicode_ci = b1.code
+    AND b1.period COLLATE utf8mb4_unicode_ci = ?
+
+LEFT JOIN branches b2  
+    ON ho.old_branch_id COLLATE utf8mb4_unicode_ci = b2.code
+    AND b2.period COLLATE utf8mb4_unicode_ci = ?
+
+WHERE ho.staff_id = ?
+AND ho.period COLLATE utf8mb4_unicode_ci = ?
+
+ORDER BY ho.transfer_date ASC
         `;
 
-      pool.query(transferQuery, [period, period, staff_id, period, period, period], (err2, rows) => {
+      pool.query(transferQuery, [period, period, period, period,staff_id, period], (err2, rows) => {
         if (err2) {
           return res.status(500).json({ error: "Transfer fetch failed" });
         }
