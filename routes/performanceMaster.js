@@ -2347,17 +2347,32 @@ ORDER BY k.kpi
               const scores = {};
               let totalWeightageScore = 0;
 
+               const auditRow = results.find(
+                r => r.kpi === "audit"
+              );
+
+              const recoveryRow = results.find(
+                r => r.kpi === "recovery"
+              );
+
+              const auditRatio =
+                Number(auditRow?.achieved || 0) /
+                Number(auditRow?.target || 1);
+
+              const recoveryRatio =
+                Number(recoveryRow?.achieved || 0) /
+                Number(recoveryRow?.target || 1);
+
+              
               results.forEach((row) => {
-                // if (row.kpi === "recovery") {
-                //   const br = branchResults.find((b) => b.kpi === "recovery");
-                //   if (br) {
-                //     row.target = br.target;
-                //     row.achieved = br.achieved;
-                //   }
-                // }
 
-                const score = calculateScore(row.kpi, row.achieved, row.target);
-
+                const score = calculateScore(
+                  row.kpi,
+                  row.achieved,
+                  row.target,
+                  auditRatio,
+                  recoveryRatio
+                );
                 const weightageScore =
                   row.kpi === "insurance" && score === 0
                     ? -2
@@ -2440,50 +2455,114 @@ ORDER BY k.kpi
   );
 }
 // helper function for the calculateScore accroding to the kpis
-function calculateScore(kpi, achieved, target) {
+function calculateScore(
+  kpi,
+  achieved,
+  target,
+  auditRatio = 0,
+  recoveryRatio = 0
+) {
+
   let outOf10 = 0;
+
+  achieved = Number(achieved) || 0;
+  target = Number(target) || 0;
+
   if (!target) return 0;
 
   const ratio = achieved / target;
 
-
-  if (!calculateScore._map) {
-    calculateScore._map = {};
-  }
-
-  calculateScore._map[kpi] = ratio;
-
-
-  const auditRatio = calculateScore._map["audit"] || 0;
-  const recoveryRatio = calculateScore._map["recovery"] || 0;
-
   switch (kpi) {
+
+   
     case "deposit":
     case "loan_gen":
     case "loan_amulya":
-      if (ratio <= 1) outOf10 = ratio * 10;
-      else if (ratio < 1.25) outOf10 = 10;
-      else if (auditRatio >= 0.75 && recoveryRatio >= 0.75)
+
+      if (ratio <= 1) {
+
+        outOf10 = ratio * 10;
+
+      }
+      else if (ratio < 1.25) {
+
+        outOf10 = 10;
+
+      }
+      else if (
+        auditRatio >= 0.75 &&
+        recoveryRatio >= 0.75
+      ) {
+
         outOf10 = 12.5;
-      else outOf10 = 10;
+
+      }
+      else {
+
+        outOf10 = 10;
+      }
+
       break;
+
 
     case "insurance":
-      if (ratio === 0) outOf10 = -2;
-      else if (ratio <= 1) outOf10 = ratio * 10;
-      else if (ratio < 1.25) outOf10 = 10;
-      else outOf10 = 12.5;
+
+      if (ratio === 0) {
+
+        outOf10 = -2;
+
+      }
+      else if (ratio <= 1) {
+
+        outOf10 = ratio * 10;
+
+      }
+      else if (ratio < 1.25) {
+
+        outOf10 = 10;
+
+      }
+      else {
+
+        outOf10 = 12.5;
+      }
+
       break;
 
-    case "recovery":
+
     case "audit":
-      if (ratio <= 1) outOf10 = ratio * 10;
-      else if (ratio < 1.25) outOf10 = 10;
-      else outOf10 = 12.5;
+    case "recovery":
+
+      if (ratio <= 1) {
+
+        outOf10 = ratio * 10;
+
+      }
+      else if (ratio < 1.25) {
+
+        outOf10 = 10;
+
+      }
+      else {
+
+        outOf10 = 12.5;
+      }
+
       break;
+
+    default:
+      outOf10 = 0;
   }
 
-  return Math.max(0, Math.min(12.5, isNaN(outOf10) ? 0 : outOf10));
+  return Math.max(
+    0,
+    Math.min(
+      12.5,
+      isNaN(outOf10)
+        ? 0
+        : Number(outOf10.toFixed(2))
+    )
+  );
 }
 
 //single hostaff
