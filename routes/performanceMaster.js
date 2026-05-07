@@ -2373,7 +2373,10 @@ ORDER BY k.kpi
 
                 totalWeightageScore += weightageScore;
               });
-
+           if(employeeId === 2947){
+                            console.log("score=>", scores);
+                            console.log("Final  =>", totalWeightageScore);
+                          }
               getHoStaffTransferHistory(
                 pool,
                 period,
@@ -2415,7 +2418,7 @@ ORDER BY k.kpi
                               ? allScores.reduce((a, b) => a + b, 0) /
                               allScores.length
                               : 0;
-                          if(employeeId === 2866){
+                          if(employeeId === 2947){
                             console.log("All Scores =>", allScores);
                             console.log("Final Avg =>", finalAvg);
                           }
@@ -2475,6 +2478,7 @@ function calculateScore(kpi, achieved, target) {
     case "recovery":
     case "audit":
       if (ratio <= 1) outOf10 = ratio * 10;
+      else if (ratio < 1.25) outOf10 = 10;
       else outOf10 = 12.5;
       break;
   }

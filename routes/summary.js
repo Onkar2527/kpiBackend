@@ -1256,9 +1256,7 @@ export async function getTransferKpiHistory(pool, period, staff_id) {
             totalWeightageScore += weightageScore;
           });
 
-          if(staff_id===2866){
-            console.log("Staff Transfer KPI Result:",branchScores, "Total Weightage Score:", totalWeightageScore);
-          }
+         
           allBranchKpiScores.push(totalWeightageScore);
 
           if (!branchWiseKpi[t.branch_name]) {
