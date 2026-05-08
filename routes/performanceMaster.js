@@ -914,7 +914,8 @@ performanceMasterRouter.get("/ho-Allhod-scores", async (req, res) => {
         },
       );
     });
-
+ 
+    
     const staffIds = await new Promise((resolve, reject) => {
       pool.query(
         `SELECT id FROM users WHERE hod_id = ? AND period = ?`,
@@ -1048,12 +1049,15 @@ performanceMasterRouter.get("/ho-Allhod-scores", async (req, res) => {
       else if (name.toLowerCase().includes("management")) avg = Management;
       else if (name.toLowerCase().includes("audit")) avg = InternalAudit;
       else if (name.toLowerCase().includes("it")) avg = IT;
-      else if (name.toLowerCase().includes("business development"))
+      else if (name.toLowerCase().includes("insurance business development"))
+        
+        
+
         avg = InsuranceBusinessDevelopment;
 
       rangeCovert = (avg / 10) * weightage;
       
-      if (name.toLowerCase().includes("insurance")) {
+      if (name.toLowerCase()===("insurance")) {
         const target = 40000;
         avg = insuranceValue;
 
@@ -1912,12 +1916,12 @@ const calculateHodAllScores = async (
       else if (name.toLowerCase().includes("management")) avg = Management;
       else if (name.toLowerCase().includes("audit")) avg = InternalAudit;
       else if (name.toLowerCase().includes("it")) avg = IT;
-      else if (name.toLowerCase().includes("business development"))
+      else if (name.toLowerCase().includes("insurance business development"))
         avg = InsuranceBusinessDevelopment;
 
        rangeCovert = (avg / 10) * weightage;
 
-      if (name.toLowerCase().includes("insurance")) {
+      if (name.toLowerCase()===("insurance")) {
         const target = 40000;
         avg = insuranceValue;
 
