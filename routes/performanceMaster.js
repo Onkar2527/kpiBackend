@@ -2707,7 +2707,7 @@ async function calculateStaffScoresCb(
   try {
 
     const query = `
-    SELECT 
+     SELECT 
         emp.id AS employee_id,
         emp.branch_id,
         emp.role,
@@ -2768,12 +2768,19 @@ async function calculateStaffScoresCb(
     (
         SELECT 
             STR_TO_DATE(
-                '2025-04-01',
+                CONCAT(
+                    SUBSTRING(?,1,4),
+                    '-04-01'
+                ),
                 '%Y-%m-%d'
             ) AS fy_start,
 
             STR_TO_DATE(
-                '2026-03-31',
+                CONCAT(
+                    '20',
+                    SUBSTRING(?,6,2),
+                    '-03-31'
+                ),
                 '%Y-%m-%d'
             ) AS fy_end
     ) fy
@@ -2814,12 +2821,50 @@ async function calculateStaffScoresCb(
 
             FROM users emp2
 
-            LEFT JOIN users bm
-                ON bm.branch_id =
+            CROSS JOIN
+            (
+                SELECT 
+                    STR_TO_DATE(
+                        CONCAT(
+                            SUBSTRING(?,1,4),
+                            '-04-01'
+                        ),
+                        '%Y-%m-%d'
+                    ) AS fy_start,
+
+                    STR_TO_DATE(
+                        CONCAT(
+                            '20',
+                            SUBSTRING(?,6,2),
+                            '-03-31'
+                        ),
+                        '%Y-%m-%d'
+                    ) AS fy_end
+            ) fy
+
+            LEFT JOIN
+            (
+                SELECT
+                    branch_id,
+                    MIN(id) AS id,
+                    period
+
+                FROM users
+
+                WHERE role = 'BM'
+
+                GROUP BY
+                    branch_id,
+                    period
+
+            ) bmMap
+                ON bmMap.branch_id =
                     emp2.branch_id
-                AND bm.role = 'BM'
-                AND bm.period =
+                AND bmMap.period =
                     emp2.period
+
+            LEFT JOIN users bm
+                ON bm.id = bmMap.id
 
             JOIN entries e
                 ON e.period = ?
@@ -2837,14 +2882,14 @@ async function calculateStaffScoresCb(
                     (
                         (
                             emp2.user_add_date 
-                                BETWEEN '2025-04-01'
-                                AND '2026-03-31'
+                                BETWEEN fy.fy_start 
+                                AND fy.fy_end
 
                             OR
 
                             emp2.transfer_date 
-                                BETWEEN '2025-04-01'
-                                AND '2026-03-31'
+                                BETWEEN fy.fy_start 
+                                AND fy.fy_end
                         )
 
                         AND e.employee_id =
@@ -2860,7 +2905,7 @@ async function calculateStaffScoresCb(
                             OR
 
                             emp2.user_add_date <
-                                '2025-04-01'
+                                fy.fy_start
                         )
 
                         AND
@@ -2870,7 +2915,7 @@ async function calculateStaffScoresCb(
                             OR
 
                             emp2.transfer_date <
-                                '2025-04-01'
+                                fy.fy_start
                         )
 
                         AND e.employee_id =
@@ -2940,7 +2985,10 @@ async function calculateStaffScoresCb(
 
     const results =
       await new Promise(
-        (resolve, reject) => {
+        (
+          resolve,
+          reject,
+        ) => {
 
           pool.query(
             query,
@@ -2950,11 +2998,19 @@ async function calculateStaffScoresCb(
 
               period,
               period,
+
               period,
               period,
 
               period,
+
+              period,
+              period,
+
+              period,
+              period,
             ],
+
 
             (err, rows) => {
 
@@ -4117,8 +4173,6 @@ function getTransferBmScores(pool, period, branchId, callback) {
 //attender score
 async function getBranchAttendersScores(
   period,
-  branchId,
-  hod_id,
 ) {
 
   if (!period) {
@@ -4128,7 +4182,7 @@ async function getBranchAttendersScores(
     );
   }
 
-
+  
   const attenderKpis =
     await new Promise(
       (
@@ -4148,7 +4202,7 @@ async function getBranchAttendersScores(
           JOIN kpi_master k
             ON r.kpi_id = k.id
 
-          WHERE r.role = 'Attender'
+          WHERE UPPER(r.role)='ATTENDER'
           `,
 
           (
@@ -4171,6 +4225,8 @@ async function getBranchAttendersScores(
       },
     );
 
+  
+
   if (
     !attenderKpis.length
   ) {
@@ -4178,16 +4234,7 @@ async function getBranchAttendersScores(
     return [];
   }
 
-
-  const normalizedBranchId =
-    branchId &&
-      branchId !== "null" &&
-      branchId !==
-      "undefined"
-      ? branchId
-      : null;
-
-
+  
   const users =
     await new Promise(
       (
@@ -4195,54 +4242,21 @@ async function getBranchAttendersScores(
         reject,
       ) => {
 
-        let sql;
-        let params;
-
-        if (
-          normalizedBranchId
-        ) {
-
-          sql = `
-          SELECT 
-            id,
-            name
-
-          FROM users
-
-          WHERE branch_id=?
-          AND period = ?
-          AND role='Attender'
-          `;
-
-          params = [
-            normalizedBranchId,
-            period,
-          ];
-        }
-
-        else {
-
-          sql = `
-          SELECT 
-            id,
-            name
-
-          FROM users
-
-          WHERE hod_id=?
-          AND period = ?
-          AND role='Attender'
-          `;
-
-          params = [
-            hod_id,
-            period,
-          ];
-        }
-
         pool.query(
-          sql,
-          params,
+          `
+          SELECT 
+            id,
+            name,
+            branch_id,
+            hod_id,
+            role
+
+          FROM users
+
+          WHERE period = ?
+          AND UPPER(role)='ATTENDER'
+          `,
+          [period],
 
           (
             err,
@@ -4264,6 +4278,8 @@ async function getBranchAttendersScores(
       },
     );
 
+ 
+
   if (!users.length) {
 
     return [];
@@ -4274,7 +4290,7 @@ async function getBranchAttendersScores(
       (u) => u.id,
     );
 
-
+  
   const userEntries =
     await new Promise(
       (
@@ -4323,7 +4339,7 @@ async function getBranchAttendersScores(
       },
     );
 
-
+  
   const insuranceRows =
     await new Promise(
       (
@@ -4370,7 +4386,7 @@ async function getBranchAttendersScores(
       },
     );
 
-
+  
   const entryMap = {};
 
   userEntries.forEach(
@@ -4378,7 +4394,7 @@ async function getBranchAttendersScores(
 
       if (
         !entryMap[
-        r.user_id
+          r.user_id
         ]
       ) {
 
@@ -4397,7 +4413,7 @@ async function getBranchAttendersScores(
     },
   );
 
-
+ 
   const insuranceMap =
     {};
 
@@ -4412,159 +4428,32 @@ async function getBranchAttendersScores(
     },
   );
 
-
-  const [
-    hoTransferData,
-    attTransferData,
-    transferKpiData,
-  ] = await Promise.all([
-
-    Promise.all(
-      userIds.map(
-        (id) =>
-          new Promise(
-            (
-              resolve,
-              reject,
-            ) => {
-
-              getHoStaffTransferHistory(
-                pool,
-                period,
-                id,
-
-                (
-                  err,
-                  data,
-                ) => {
-
-                  if (err) {
-
-                    return reject(
-                      err
-                    );
-                  }
-
-                  resolve({
-                    id,
-                    data,
-                  });
-                },
-              );
-            },
-          ),
-      ),
-    ),
-
-    Promise.all(
-      userIds.map(
-        (id) =>
-          new Promise(
-            (
-              resolve,
-              reject,
-            ) => {
-
-              getAttenderTransferHistory(
-                pool,
-                period,
-                id,
-
-                (
-                  err,
-                  data,
-                ) => {
-
-                  if (err) {
-
-                    return reject(
-                      err
-                    );
-                  }
-
-                  resolve({
-                    id,
-                    data,
-                  });
-                },
-              );
-            },
-          ),
-      ),
-    ),
-
-    Promise.all(
-      userIds.map(
-        async (id) => {
-
-          const data =
-            await getTransferKpiHistory(
-              pool,
-              period,
-              id,
-            );
-
-          return {
-            id,
-            data,
-          };
-        },
-      ),
-    ),
-
-  ]);
-
-
-  const hoMap = {};
-  const attMap = {};
-  const transferMap =
-    {};
-
-  hoTransferData.forEach(
-    (x) => {
-
-      hoMap[x.id] =
-        x.data;
-    },
-  );
-
-  attTransferData.forEach(
-    (x) => {
-
-      attMap[x.id] =
-        x.data;
-    },
-  );
-
-  transferKpiData.forEach(
-    (x) => {
-
-      transferMap[x.id] =
-        x.data;
-    },
-  );
-
-
+ 
   const response = [];
 
   for (const user of users) {
 
+ 
+
     const userKpis =
       entryMap[
-      user.id
+        user.id
       ] || {};
 
+  
     const insuranceValue =
       insuranceMap[
-      user.id
+        user.id
       ] || 0;
 
+  
+   
     const finalKpis =
       {};
 
     let totalScore = 0;
 
-
+    
     for (const kpi of attenderKpis) {
 
       let achieved = 0;
@@ -4572,21 +4461,23 @@ async function getBranchAttendersScores(
       let target =
         kpi.weightage;
 
+     
       if (
-        kpi.kpi_name ===
-        "Cleanliness" ||
-
-        kpi.kpi_name ===
-        "Attitude, Behavior & Discipline"
+        !kpi.kpi_name
+          .toLowerCase()
+          .includes(
+            "insurance",
+          )
       ) {
 
         achieved =
           userKpis[
-          kpi
-            .role_kpi_mapping_id
+            kpi
+              .role_kpi_mapping_id
           ] || 0;
       }
 
+    
       if (
         kpi.kpi_name
           .toLowerCase()
@@ -4601,6 +4492,12 @@ async function getBranchAttendersScores(
         target = 40000;
       }
 
+      
+
+    
+
+      
+
       let score = 0;
 
       if (
@@ -4610,6 +4507,8 @@ async function getBranchAttendersScores(
         const ratio =
           achieved /
           target;
+
+       
 
         if (
           ratio <= 1
@@ -4638,13 +4537,14 @@ async function getBranchAttendersScores(
           .includes(
             "insurance",
           ) &&
-          achieved === 0
+        achieved === 0
           ? -2
           : (
-            score *
-            kpi.weightage
-          ) / 100;
+              score *
+              kpi.weightage
+            ) / 100;
 
+     
       finalKpis[
         kpi.kpi_name
       ] = {
@@ -4665,65 +4565,7 @@ async function getBranchAttendersScores(
         weightageScore;
     }
 
-
-    const hoHistory =
-      hoMap[user.id];
-
-    const attHistory =
-      attMap[user.id];
-
-    const transferHistory =
-      transferMap[
-      user.id
-      ];
-
-    const previousHoScores =
-      hoHistory?.[0]
-        ?.transfers?.map(
-          (t) =>
-            t.total_weightage_score,
-        ) || [];
-
-    const previousAttenderScores =
-      attHistory?.[0]
-        ?.transfers?.map(
-          (t) =>
-            t.total_weightage_score,
-        ) || [];
-
-    const previousTransferScores =
-      transferHistory
-        ?.all_scores || [];
-
-    const allScores = [
-
-      ...previousHoScores,
-
-      ...previousAttenderScores,
-
-      ...previousTransferScores,
-
-      totalScore,
-    ];
-
-    const finalAvg =
-      allScores.length > 0
-        ? (
-          allScores.reduce(
-            (a, b) =>
-              a + b,
-            0,
-          ) /
-          allScores.length
-        )
-        : 0;
-
-    totalScore = Number(
-      finalAvg.toFixed(
-        2,
-      ),
-    );
-
+    
     response.push({
 
       staffId: user.id,
@@ -4731,11 +4573,17 @@ async function getBranchAttendersScores(
       staffName:
         user.name,
 
-      total: totalScore,
+      total: Number(
+        totalScore.toFixed(
+          2,
+        ),
+      ),
 
       kpis: finalKpis,
     });
   }
+
+ 
 
   return response;
 }
@@ -5110,9 +4958,6 @@ performanceMasterRouter.post("/usersAttender", async (req, res) => {
 
       try {
 
-        // =========================
-        // FILTER ATTENDERS
-        // =========================
         const list =
           users.filter(
             (u) =>
@@ -5120,9 +4965,7 @@ performanceMasterRouter.post("/usersAttender", async (req, res) => {
               "Attender"
           );
 
-        // =========================
-        // SINGLE FUNCTION CALL
-        // =========================
+
         const attenders =
           await getBranchAttendersScores(
             String(period),
@@ -5130,9 +4973,7 @@ performanceMasterRouter.post("/usersAttender", async (req, res) => {
             null,
           );
 
-        // =========================
-        // MAP RESPONSE
-        // =========================
+       
         const attenderMap =
           {};
 
