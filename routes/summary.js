@@ -624,13 +624,17 @@ summaryRouter.get("/staff-scores", async (req, res) => {
       if (!calculateScore._auditRatio) calculateScore._auditRatio = 0;
       if (!calculateScore._recoveryRatio) calculateScore._recoveryRatio = 0;
 
-      if (kpi === "audit") {
-        calculateScore._auditRatio = ratio;
-      }
+      if (
+  calculateScore._auditRatio === undefined
+) {
+  calculateScore._auditRatio = 0;
+}
 
-      if (kpi === "recovery") {
-        calculateScore._recoveryRatio = ratio;
-      }
+if (
+  calculateScore._recoveryRatio === undefined
+) {
+  calculateScore._recoveryRatio = 0;
+}
 
       const auditRatio = calculateScore._auditRatio;
       const recoveryRatio = calculateScore._recoveryRatio;
