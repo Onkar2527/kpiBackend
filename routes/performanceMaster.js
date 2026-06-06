@@ -1452,8 +1452,9 @@ performanceMasterRouter.get("/ho-staff-scores-all", async (req, res) => {
               if (kpi_name.toLowerCase() === "insurance") {
                 const ratio = achieved / target;
 
-                if (ratio <= 1) score = ratio * 10;
-                else if (ratio < 1.25) score = 10;
+                 if (ratio <= 1) score = ratio * 10;
+          else if (ratio < 1.25) score = 10;
+          else score = 12.5;
               } else {
                 const ratio = achieved / target;
 
