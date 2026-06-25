@@ -16,6 +16,10 @@
     "p-limit": "^7.3.0"
   },
   "scripts": {
-    "start": "node index.js"
+    "start": "node --watch index.js",
+    "dev": "node --watch index.js"
+  },
+  "devDependencies": {
+    "nodemon": "^3.1.14"
   }
 }

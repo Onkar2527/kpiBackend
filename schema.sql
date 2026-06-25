@@ -82,3 +82,25 @@ CREATE TABLE periods (
   id INT PRIMARY KEY AUTO_INCREMENT,
   period VARCHAR(7) NOT NULL
 );
+
+CREATE TABLE previous_period_data (
+  id INT PRIMARY KEY AUTO_INCREMENT,
+  period VARCHAR(7) NOT NULL,
+  branch_id VARCHAR(255) NOT NULL,
+  kpi VARCHAR(255) NOT NULL,
+  amount DECIMAL(15, 2) NOT NULL,
+  created_date DATETIME DEFAULT CURRENT_TIMESTAMP,
+  INDEX idx_period_branch (period, branch_id)
+);
+
+CREATE TABLE previous_period_data_staffwise (
+  id INT PRIMARY KEY AUTO_INCREMENT,
+  employee_id VARCHAR(255) NOT NULL,
+  period VARCHAR(7) NOT NULL,
+  branch_id VARCHAR(255) NOT NULL,
+  kpi VARCHAR(255) NOT NULL,
+  amount DECIMAL(15, 2) NOT NULL,
+  created_date DATETIME DEFAULT CURRENT_TIMESTAMP,
+  INDEX idx_period_branch_emp (period, branch_id, employee_id)
+);
+

@@ -1,11 +1,10 @@
-import mysql from 'mysql2';
+import mysql from "mysql2";
 
 // Create a connection pool for the database.
 // TODO: Replace the placeholder credentials with your actual database credentials.
 
 //Beereshwar Database
 const pool = mysql.createPool({
-
   connectionLimit: 30,
   queueLimit: 0,
   waitForConnections: true,
@@ -17,10 +16,10 @@ const pool = mysql.createPool({
   enableKeepAlive: true,
   keepAliveInitialDelay: 0,
 
-  host: '3.110.60.145',
-  user: 'root',
-  password: 'Kred@Pool123',
-  database: 'kpi_system_prod',
+  host: "localhost",
+  user: "root",
+  password: "root",
+  database: "kpi_system_prod",
 
   timezone: "+05:30",
 });

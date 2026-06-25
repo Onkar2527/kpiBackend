@@ -2014,3 +2014,199 @@ targetsRouter.post(
       });
   },
 );
+
+// previous period baseline data upload
+targetsRouter.post(
+  "/previousPeriodData",
+  upload.single("previousPeriodDataFile"),
+  (req, res) => {
+    if (!req.file)
+      return res.status(400).json({ error: "previousPeriodDataFile required" });
+
+    const results = [];
+
+    Readable.from(req.file.buffer)
+      .pipe(csv())
+      .on("data", (data) => results.push(data))
+      .on("end", () => {
+        if (!results.length) {
+          return res
+            .status(400)
+            .json({ error: "CSV file is empty or invalid." });
+        }
+
+        const values = [];
+        const branchIds = new Set();
+
+        results.forEach((row) => {
+          let periodKey = Object.keys(row).find(
+            (k) => k.trim().toLowerCase() === "period",
+          );
+          const period = (row[periodKey] || "").trim();
+
+          const branch_id = (row.branch_id || "").trim();
+
+          if (!period || !branch_id) return;
+
+          branchIds.add(branch_id);
+
+          Object.keys(row).forEach((key) => {
+            const cleanKey = key.trim();
+            if (
+              cleanKey !== "branch_id" &&
+              cleanKey.toLowerCase() !== "period" &&
+              cleanKey !== ""
+            ) {
+              const amount =
+                row[key] === "" || row[key] == null ? 0 : Number(row[key]);
+              values.push([period, branch_id, cleanKey, amount]);
+            }
+          });
+        });
+
+        const branchIdArray = Array.from(branchIds);
+        if (!branchIdArray.length) {
+          return res
+            .status(400)
+            .json({ error: "No valid branch_id values found in CSV." });
+        }
+
+        const branchPlaceholders = branchIdArray.map(() => "?").join(",");
+
+        const deleteQuery = `
+          DELETE FROM previous_period_data
+          WHERE period = ?
+          AND branch_id IN (${branchPlaceholders})
+        `;
+
+        pool.query(
+          deleteQuery,
+          [results[0].period, ...branchIdArray],
+          (error) => {
+            if (error) {
+              console.error("Delete error:", error);
+              return res
+                .status(500)
+                .json({ error: "Internal server error (delete)" });
+            }
+
+            pool.query(
+              "INSERT INTO previous_period_data (period, branch_id, kpi, amount) VALUES ?",
+              [values],
+              (error) => {
+                if (error) {
+                  console.error("Insert error:", error);
+                  return res
+                    .status(500)
+                    .json({ error: "Internal server error (insert)" });
+                }
+
+                // Query all active CLERK/STAFF users for the uploaded branches and period
+                const staffQuery = `
+                  SELECT id, branch_id 
+                  FROM users 
+                  WHERE branch_id IN (${branchPlaceholders}) 
+                  AND period = ? 
+                  AND role IN ('CLERK', 'STAFF')
+                `;
+
+                pool.query(
+                  staffQuery,
+                  [...branchIdArray, results[0].period],
+                  (error, staff) => {
+                    if (error) {
+                      console.error("Staff fetch error:", error);
+                      return res.status(500).json({ error: "Internal server error (staff fetch)" });
+                    }
+
+                    // Group staff by branch_id
+                    const branchStaffMap = {};
+                    staff.forEach((user) => {
+                      const bId = user.branch_id;
+                      if (!branchStaffMap[bId]) {
+                        branchStaffMap[bId] = [];
+                      }
+                      branchStaffMap[bId].push(user);
+                    });
+
+                    // Generate distributed staff-wise baseline records
+                    const staffwiseValues = [];
+                    values.forEach(([period, branch_id, kpi, amount]) => {
+                      const branchStaff = branchStaffMap[branch_id] || [];
+                      if (branchStaff.length === 0) return;
+
+                      const N = branchStaff.length;
+                      const base = Math.floor(amount / N);
+                      const rem = amount % N;
+
+                      branchStaff.forEach((user, idx) => {
+                        const distributedAmount = base + (idx < rem ? 1 : 0);
+                        staffwiseValues.push([
+                          user.id,
+                          period,
+                          branch_id,
+                          kpi,
+                          distributedAmount
+                        ]);
+                      });
+                    });
+
+                    // Delete old staffwise baseline records for the uploaded branches and period
+                    const deleteStaffwiseQuery = `
+                      DELETE FROM previous_period_data_staffwise
+                      WHERE period = ?
+                      AND branch_id IN (${branchPlaceholders})
+                    `;
+
+                    pool.query(
+                      deleteStaffwiseQuery,
+                      [results[0].period, ...branchIdArray],
+                      (error) => {
+                        if (error) {
+                          console.error("Staffwise delete error:", error);
+                          return res.status(500).json({ error: "Internal server error (staffwise delete)" });
+                        }
+
+                        if (staffwiseValues.length === 0) {
+                          // No staff to distribute to
+                          return res.json({
+                            ok: true,
+                            inserted: values.length,
+                            deletedBranches: branchIdArray.length,
+                            insertedStaffwise: 0
+                          });
+                        }
+
+                        const insertStaffwiseQuery = `
+                          INSERT INTO previous_period_data_staffwise (employee_id, period, branch_id, kpi, amount)
+                          VALUES ?
+                        `;
+
+                        pool.query(
+                          insertStaffwiseQuery,
+                          [staffwiseValues],
+                          (error) => {
+                            if (error) {
+                              console.error("Staffwise insert error:", error);
+                              return res.status(500).json({ error: "Internal server error (staffwise insert)" });
+                            }
+
+                            res.json({
+                              ok: true,
+                              inserted: values.length,
+                              deletedBranches: branchIdArray.length,
+                              insertedStaffwise: staffwiseValues.length
+                            });
+                          }
+                        );
+                      }
+                    );
+                  }
+                );
+              },
+            );
+          },
+        );
+      });
+  },
+);

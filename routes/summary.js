@@ -70,10 +70,17 @@ summaryRouter.get("/scores", (req, res) => {
       u.name AS staffName,
       a.kpi,
       SUM(a.amount) AS target,
-      SUM(e.value) AS achieved
+      (COALESCE(SUM(e.value), 0) + COALESCE(MAX(prev.amount), 0)) AS achieved,
+      COALESCE(MAX(prev.amount), 0) AS baseline
     FROM users u
     LEFT JOIN allocations a ON u.id = a.user_id AND a.period = ? AND a.branch_id = ? AND u.period = ?
     LEFT JOIN entries e ON u.id = e.employee_id AND e.period = ? AND e.branch_id = ? AND e.status = 'Verified' AND a.kpi = e.kpi
+    LEFT JOIN (
+      SELECT employee_id, branch_id, kpi, period, SUM(amount) AS amount
+      FROM previous_period_data_staffwise
+      WHERE period = ? AND branch_id = ?
+      GROUP BY employee_id, branch_id, kpi, period
+    ) prev ON u.id COLLATE utf8mb4_unicode_ci = prev.employee_id COLLATE utf8mb4_unicode_ci AND prev.period COLLATE utf8mb4_unicode_ci = u.period COLLATE utf8mb4_unicode_ci AND prev.branch_id COLLATE utf8mb4_unicode_ci = u.branch_id COLLATE utf8mb4_unicode_ci AND a.kpi COLLATE utf8mb4_unicode_ci = prev.kpi COLLATE utf8mb4_unicode_ci
     WHERE u.branch_id = ? AND u.role IN ('ATTENDER', 'CLERK')
     GROUP BY u.id, u.name, a.kpi
   `;
@@ -94,7 +101,7 @@ summaryRouter.get("/scores", (req, res) => {
 
   pool.query(
     staffQuery,
-    [period, branchId, period, period, branchId, branchId],
+    [period, branchId, period, period, branchId, period, branchId, branchId],
     (error, staffResults) => {
       if (error)
         return res.status(500).json({ error: "Internal server error" });
@@ -107,14 +114,13 @@ summaryRouter.get("/scores", (req, res) => {
             return res.status(500).json({ error: "Internal server error" });
 
           const calculateScore = (kpi, achieved, target) => {
+            if (!target || Number(target) === 0) return 0;
             let outOf10;
             const ratio = achieved / target;
-            const auditRatio =
-              row.kpi === "audit" ? row.achieved / row.target : 0;
-            const recoveryRatio =
-              row.kpi === "recovery" ? row.achieved / row.target : 0;
+            const auditRatio = kpi === "audit" ? ratio : 0;
+            const recoveryRatio = kpi === "recovery" ? ratio : 0;
 
-            switch (row.kpi) {
+            switch (kpi) {
               case "deposit":
               case "loan_gen":
               case "loan_amulya":
@@ -174,8 +180,12 @@ summaryRouter.get("/scores", (req, res) => {
                 kpis: {},
               };
             }
+            const isBaselineOnly =
+              row.baseline > 0 && Number(row.achieved) <= Number(row.baseline);
             staffData[row.staffId].kpis[row.kpi] = {
-              score: calculateScore(row.kpi, row.achieved, row.target),
+              score: isBaselineOnly
+                ? 0
+                : calculateScore(row.kpi, row.achieved, row.target),
               target: row.target,
             };
           });
@@ -376,7 +386,16 @@ summaryRouter.get("/bm-scores", async (req, res) => {
         END AS target,
 
         MAX(COALESCE(w.weightage,0)) AS weightage,
-        MAX(COALESCE(e.total_achieved,0)) AS achieved
+        CASE 
+            WHEN k.kpi IN ('deposit', 'loan_gen', 'loan_amulya') 
+                THEN MAX(COALESCE(e.total_achieved, 0)) + MAX(COALESCE(p.amount, 0))
+            ELSE MAX(COALESCE(e.total_achieved, 0))
+        END AS achieved,
+        CASE 
+            WHEN k.kpi IN ('deposit', 'loan_gen', 'loan_amulya') 
+                THEN MAX(COALESCE(p.amount, 0))
+            ELSE 0
+        END AS baseline
 
     FROM
     (
@@ -398,6 +417,11 @@ summaryRouter.get("/bm-scores", async (req, res) => {
         ON t.kpi = k.kpi
         AND t.period = ?
         AND t.branch_id = ?
+
+    LEFT JOIN previous_period_data p
+        ON p.kpi = k.kpi
+        AND p.period = ?
+        AND p.branch_id = ?
 
     LEFT JOIN allocations a
         ON k.kpi = 'insurance'
@@ -450,6 +474,8 @@ summaryRouter.get("/bm-scores", async (req, res) => {
           [
             branchId,
             period,
+            period,
+            branchId,
             period,
             branchId,
             period,
@@ -518,46 +544,53 @@ summaryRouter.get("/bm-scores", async (req, res) => {
       let recoveryRatio = 0;
 
       updatedResults.forEach((r) => {
-        if (r.kpi === "audit") auditRatio = r.achieved / r.target;
-        if (r.kpi === "recovery") recoveryRatio = r.achieved / r.target;
+        const tNum = Number(r.target) || 0;
+        if (r.kpi === "audit") auditRatio = tNum ? r.achieved / tNum : 0;
+        if (r.kpi === "recovery") recoveryRatio = tNum ? r.achieved / tNum : 0;
       });
 
       updatedResults.forEach((row) => {
         if (!bmKpis.includes(row.kpi)) return;
 
+        const isBaselineOnly =
+          row.baseline > 0 && Number(row.achieved) <= Number(row.baseline);
         let outOf10 = 0;
-        const ratio = row.target ? row.achieved / row.target : 0;
+        const targetNum = Number(row.target) || 0;
+        const ratio = targetNum ? row.achieved / targetNum : 0;
 
-        switch (row.kpi) {
-          case "deposit":
-          case "loan_gen":
-          case "loan_amulya":
-            if (ratio <= 1) outOf10 = ratio * 10;
-            else if (ratio < 1.25) outOf10 = 10;
-            else if (auditRatio >= 0.75 && recoveryRatio >= 0.75)
-              outOf10 = 12.5;
-            else outOf10 = 10;
-            break;
+        if (!isBaselineOnly) {
+          switch (row.kpi) {
+            case "deposit":
+            case "loan_gen":
+            case "loan_amulya":
+              if (ratio <= 1) outOf10 = ratio * 10;
+              else if (ratio < 1.25) outOf10 = 10;
+              else if (auditRatio >= 0.75 && recoveryRatio >= 0.75)
+                outOf10 = 12.5;
+              else outOf10 = 10;
+              break;
 
-          case "insurance":
-            if (ratio === 0 || isNaN(ratio)) outOf10 = 0;
-            else if (ratio <= 1) outOf10 = ratio * 10;
-            else if (ratio < 1.25) outOf10 = 10;
-            else outOf10 = 12.5;
-            break;
+            case "insurance":
+              if (ratio === 0 || isNaN(ratio)) outOf10 = 0;
+              else if (ratio <= 1) outOf10 = ratio * 10;
+              else if (ratio < 1.25) outOf10 = 10;
+              else outOf10 = 12.5;
+              break;
 
-          case "recovery":
-          case "audit":
-            if (isNaN(ratio)) outOf10 = 0;
-            else if (ratio <= 1) outOf10 = ratio * 10;
-            else outOf10 = 12.5;
-            break;
+            case "recovery":
+            case "audit":
+              if (isNaN(ratio)) outOf10 = 0;
+              else if (ratio <= 1) outOf10 = ratio * 10;
+              else outOf10 = 12.5;
+              break;
+          }
+
+          outOf10 = Math.max(0, Math.min(cap, isNaN(outOf10) ? 0 : outOf10));
         }
 
-        outOf10 = Math.max(0, Math.min(cap, isNaN(outOf10) ? 0 : outOf10));
-
-        const weightageScore =
-          row.kpi === "insurance" && (isNaN(ratio) || ratio === 0)
+        const weightageScore = isBaselineOnly
+          ? 0
+          : row.kpi === "insurance" && (isNaN(ratio) || ratio === 0)
             ? -2
             : (outOf10 * (row.weightage || 0)) / 100;
 
@@ -617,7 +650,7 @@ summaryRouter.get("/staff-scores", async (req, res) => {
 
     const calculateScore = (kpi, achieved, target) => {
       let outOf10 = 0;
-      if (!target) return 0;
+      if (!target || Number(target) === 0) return 0;
 
       const ratio = achieved / target;
 
@@ -776,7 +809,8 @@ SELECT
     ) AS target,
 
     MAX(COALESCE(w.weightage,0)) AS weightage,
-    MAX(COALESCE(e.total_achieved,0)) AS achieved
+    MAX(COALESCE(e.total_achieved,0) + COALESCE(prev.amount,0)) AS achieved,
+    MAX(COALESCE(prev.amount,0)) AS baseline
 
 FROM (
     SELECT 'deposit' AS kpi
@@ -894,6 +928,17 @@ LEFT JOIN (
 ) e 
 ON k.kpi = e.kpi
 
+LEFT JOIN (
+    SELECT employee_id, branch_id, kpi, period, SUM(amount) AS amount
+    FROM previous_period_data_staffwise
+    WHERE period = ? AND branch_id = ? AND employee_id = ?
+    GROUP BY employee_id, branch_id, kpi, period
+) prev
+    ON prev.employee_id COLLATE utf8mb4_unicode_ci = emp.id COLLATE utf8mb4_unicode_ci
+    AND prev.branch_id COLLATE utf8mb4_unicode_ci = emp.branch_id COLLATE utf8mb4_unicode_ci
+    AND prev.kpi COLLATE utf8mb4_unicode_ci = k.kpi COLLATE utf8mb4_unicode_ci
+    AND prev.period COLLATE utf8mb4_unicode_ci = emp.period COLLATE utf8mb4_unicode_ci
+
 GROUP BY k.kpi
 ORDER BY k.kpi
  `;
@@ -901,30 +946,34 @@ ORDER BY k.kpi
         query,
         [
           employeeId,
-    period,
+          period,
 
-    period,
-    period,
+          period,
+          period,
 
-    period,
-    period,
+          period,
+          period,
 
-    employeeId,
-    period,
+          employeeId,
+          period,
 
-    period,
+          period,
 
-    period,
-    period,
+          period,
+          period,
 
-    period,
-    period,
+          period,
+          period,
 
-    period,
+          period,
 
-    period,
+          period,
 
-    period
+          period,
+
+          period,
+          branchId,
+          employeeId,
         ],
         (error, results) => {
           results;
@@ -948,11 +997,12 @@ ORDER BY k.kpi
 
               pool.query(
                 `
-        SELECT SUM(value) AS achieved
-                FROM entries
-                WHERE period = ? AND employee_id = ? AND kpi = 'insurance'
+        SELECT 
+            (SELECT COALESCE(SUM(value), 0) FROM entries WHERE period = ? AND employee_id = ? AND kpi = 'insurance') +
+            (SELECT COALESCE(SUM(amount), 0) FROM previous_period_data_staffwise WHERE period = ? AND employee_id = ? AND branch_id = ? AND kpi = 'insurance')
+            AS achieved
       `,
-                [period, employeeId],
+                [period, employeeId, period, employeeId, branchId],
                 (errIns, insRows) => {
                   if (errIns)
                     return res
@@ -993,31 +1043,25 @@ ORDER BY k.kpi
                   let totalWeightageScore = 0;
                   results.forEach((row) => {
                     if (row.kpi) {
-                      // if (row.kpi === "recovery") {
-                      //   const branchRecovery = branchResults.find(
-                      //     (b) => b.kpi === "recovery",
-                      //   );
-
-                      //   if (branchRecovery) {
-                      //     row.target = branchRecovery.target;
-                      //     row.achieved = branchRecovery.achieved;
-                      //   }
-                      // }
-                      const score = calculateScore(
-                        row.kpi,
-                        row.achieved,
-                        row.target,
-                      );
-                      const weightageScore = (score * row.weightage) / 100;
+                      const isBaselineOnly =
+                        row.baseline > 0 &&
+                        Number(row.achieved) <= Number(row.baseline);
+                      const score = isBaselineOnly
+                        ? 0
+                        : calculateScore(row.kpi, row.achieved, row.target);
+                      const weightageScore = isBaselineOnly
+                        ? 0
+                        : (score * row.weightage) / 100;
 
                       scores[row.kpi] = {
                         score,
                         target: row.target || 0,
                         achieved: row.achieved || 0,
                         weightage: row.weightage || 0,
-                        weightageScore:
-                          row.kpi === "insurance" &&
-                          (score === 0 || score === undefined)
+                        weightageScore: isBaselineOnly
+                          ? 0
+                          : row.kpi === "insurance" &&
+                              (score === 0 || score === undefined)
                             ? -2
                             : isNaN(weightageScore)
                               ? 0
@@ -1153,31 +1197,31 @@ export async function getTransferKpiHistory(pool, period, staff_id) {
         };
 
         const calculateScore = (kpi, achieved, target) => {
-          if (!target || target === 0) return 0;
+          if (!target || Number(target) === 0) return 0;
 
           let outOf10;
           const ratio = achieved / target;
-           const auditRatio = kpi === "audit" ? ratio:0;
-            const recoveryRatio = kpi === "recovery" ? ratio : 0;
+          const auditRatio = kpi === "audit" ? ratio : 0;
+          const recoveryRatio = kpi === "recovery" ? ratio : 0;
 
           switch (kpi) {
             case "deposit":
             case "loan_gen":
             case "loan_amulya":
               if (ratio <= 1) {
-              outOf10 = ratio * 10;
-            } else if (ratio > 1 && ratio < 1.25) {
-              outOf10 = 10;
-            } else if (
-              ratio >= 1.25 &&
-              auditRatio >= 0.75 &&
-              recoveryRatio >= 0.75
-            ) {
-              outOf10 = 12.5;
-            } else {
-              outOf10 = 10;
-            }
-            break;
+                outOf10 = ratio * 10;
+              } else if (ratio > 1 && ratio < 1.25) {
+                outOf10 = 10;
+              } else if (
+                ratio >= 1.25 &&
+                auditRatio >= 0.75 &&
+                recoveryRatio >= 0.75
+              ) {
+                outOf10 = 12.5;
+              } else {
+                outOf10 = 10;
+              }
+              break;
 
             case "recovery":
             case "audit":
@@ -1256,7 +1300,6 @@ export async function getTransferKpiHistory(pool, period, staff_id) {
             totalWeightageScore += weightageScore;
           });
 
-         
           allBranchKpiScores.push(totalWeightageScore);
 
           if (!branchWiseKpi[t.branch_name]) {
@@ -1304,7 +1347,7 @@ export async function getTransferKpiHistory(pool, period, staff_id) {
             months,
           };
         });
-     
+
         resolve(staffResult);
       });
     });
@@ -1336,7 +1379,7 @@ summaryRouter.get("/staff-scores-all", async (req, res) => {
       auditScore = 0,
       recoveryScore = 0,
     ) => {
-      if (!target) return 0;
+      if (!target || Number(target) === 0) return 0;
 
       const ratio = achieved / target;
       const auditRatio = auditScore / 10;
@@ -1349,15 +1392,14 @@ summaryRouter.get("/staff-scores-all", async (req, res) => {
         case "loan_gen":
         case "loan_amulya":
           if (ratio <= 1) outOf10 = ratio * 10;
-            else if (ratio < 1.25) outOf10 = 10;
-            else if (auditRatio >= 0.75 && recoveryRatio >= 0.75)
-              outOf10 = 12.5;
-            else outOf10 = 10;
-            break;
- 
+          else if (ratio < 1.25) outOf10 = 10;
+          else if (auditRatio >= 0.75 && recoveryRatio >= 0.75) outOf10 = 12.5;
+          else outOf10 = 10;
+          break;
+
         case "recovery":
         case "audit":
-        case "insurance": 
+        case "insurance":
           if (ratio <= 1) outOf10 = ratio * 10;
           else if (ratio < 1.25) outOf10 = 10;
           else outOf10 = 12.5;
@@ -1399,7 +1441,8 @@ SELECT
     END AS target,
 
     COALESCE(w.weightage, 0) AS weightage,
-    COALESCE(e.total_achieved, 0) AS achieved
+    (COALESCE(e.total_achieved, 0) + COALESCE(prev.amount, 0)) AS achieved,
+    COALESCE(prev.amount, 0) AS baseline
 
 FROM users u
 
@@ -1481,6 +1524,17 @@ AND e.branch_id = u.branch_id
 
 LEFT JOIN weightage w ON w.kpi = k.kpi
 
+LEFT JOIN (
+    SELECT employee_id, branch_id, kpi, period, SUM(amount) AS amount
+    FROM previous_period_data_staffwise
+    WHERE period = ? AND branch_id = ?
+    GROUP BY employee_id, branch_id, kpi, period
+) prev
+    ON prev.employee_id COLLATE utf8mb4_unicode_ci = u.id COLLATE utf8mb4_unicode_ci
+    AND prev.branch_id COLLATE utf8mb4_unicode_ci = u.branch_id COLLATE utf8mb4_unicode_ci
+    AND prev.kpi COLLATE utf8mb4_unicode_ci = k.kpi COLLATE utf8mb4_unicode_ci
+    AND prev.period COLLATE utf8mb4_unicode_ci = u.period COLLATE utf8mb4_unicode_ci
+
 WHERE u.branch_id = ?
 AND u.role = 'CLERK'
 AND u.period = ?
@@ -1513,6 +1567,10 @@ ORDER BY u.id, k.kpi;
 
           period,
           period,
+
+          period,
+          branchId,
+
           branchId,
           period,
         ],
@@ -1536,14 +1594,18 @@ ORDER BY u.id, k.kpi;
           };
         }
 
-        const score = calculateScore(row.kpi, row.achieved, row.target);
+        const isBaselineOnly =
+          row.baseline > 0 && Number(row.achieved) <= Number(row.baseline);
+        const score = isBaselineOnly
+          ? 0
+          : calculateScore(row.kpi, row.achieved, row.target);
 
         staffScores[id][row.kpi] = {
           score,
           target: Number(row.target),
           achieved: Number(row.achieved),
           weightage: Number(row.weightage),
-          weightageScore: (score * row.weightage) / 100,
+          weightageScore: isBaselineOnly ? 0 : (score * row.weightage) / 100,
         };
       }
     });
@@ -1553,13 +1615,17 @@ ORDER BY u.id, k.kpi;
 
       const id = row.staffId;
 
-      const score = calculateScore(
-        row.kpi,
-        row.achieved,
-        row.target,
-        staffScores[id]?.audit?.score || 0,
-        staffScores[id]?.recovery?.score || 0,
-      );
+      const isBaselineOnly =
+        row.baseline > 0 && Number(row.achieved) <= Number(row.baseline);
+      const score = isBaselineOnly
+        ? 0
+        : calculateScore(
+            row.kpi,
+            row.achieved,
+            row.target,
+            staffScores[id]?.audit?.score || 0,
+            staffScores[id]?.recovery?.score || 0,
+          );
 
       const weighted = (score * row.weightage) / 100;
 
@@ -1568,7 +1634,11 @@ ORDER BY u.id, k.kpi;
         target: Number(row.target),
         achieved: Number(row.achieved),
         weightage: Number(row.weightage),
-        weightageScore: row.kpi === "insurance" && score === 0 ? -2 : weighted,
+        weightageScore: isBaselineOnly
+          ? 0
+          : row.kpi === "insurance" && score === 0
+            ? -2
+            : weighted,
       };
     });
 

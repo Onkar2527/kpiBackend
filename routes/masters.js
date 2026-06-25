@@ -624,7 +624,7 @@ ORDER BY
 
       const calculateScore = (kpi, achieved, target) => {
         let outOf10;
-        if (!target || target === 0) return 0;
+        if (!target || Number(target) === 0) return 0;
 
         const ratio = achieved / target;
         const auditRatio = kpi === "audit" ? ratio:0;

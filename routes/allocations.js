@@ -1488,8 +1488,8 @@ allocationsRouter.get("/", (req, res) => {
             a.kpi,
             MAX(a.amount) AS amount,
             MAX(a.state) AS state,
-            COALESCE(w.weightage, 0) AS weightage,
-            COALESCE(e.achieved, 0) AS achieved
+            COALESCE(MAX(w.weightage), 0) AS weightage,
+            (COALESCE(MAX(e.achieved), 0) + COALESCE(MAX(prev.amount), 0)) AS achieved
           FROM allocations a
           JOIN users u ON u.id = a.user_id
           LEFT JOIN weightage w ON a.kpi = w.kpi
@@ -1499,6 +1499,12 @@ allocationsRouter.get("/", (req, res) => {
             WHERE period = ? AND employee_id = ? AND branch_id = ? AND status='Verified'
             GROUP BY kpi
           ) e ON a.kpi = e.kpi
+          LEFT JOIN (
+            SELECT kpi, SUM(amount) AS amount
+            FROM previous_period_data_staffwise
+            WHERE period = ? AND employee_id = ? AND branch_id = ?
+            GROUP BY kpi
+          ) prev ON a.kpi COLLATE utf8mb4_unicode_ci = prev.kpi COLLATE utf8mb4_unicode_ci
           WHERE a.period = ? 
           AND a.user_id = ? 
           AND u.branch_id = ? 
@@ -1509,7 +1515,7 @@ allocationsRouter.get("/", (req, res) => {
 
         pool.query(
           personalQuery,
-          [period, employeeId, branchId, period, employeeId, branchId, period],
+          [period, employeeId, branchId, period, employeeId, branchId, period, employeeId, branchId, period],
           (errP, personalTargets) => {
             if (errP) return res.status(500).json({ error: errP.message });
 
@@ -1537,7 +1543,7 @@ const branchTargetsQuery = `
     END AS amount,
 
     COALESCE(MAX(w.weightage), 0) AS weightage,
-    COALESCE(MAX(e_sum.achieved), 0) AS achieved
+    (COALESCE(MAX(e_sum.achieved), 0) + COALESCE(MAX(prev.amount), 0)) AS achieved
 
 FROM (
     SELECT 'deposit' AS kpi
@@ -1574,18 +1580,13 @@ ON w.kpi = k.kpi
 LEFT JOIN (
     SELECT 
         kpi,
-        branch_id,
         employee_id,
-        period,
         SUM(value) AS achieved
     FROM entries
-    WHERE status = 'Verified'
-    GROUP BY kpi, branch_id, employee_id, period
+    WHERE status = 'Verified' AND period = ? AND branch_id = ?
+    GROUP BY kpi, employee_id
 ) e_sum
 ON e_sum.kpi = k.kpi
-AND e_sum.branch_id = emp.branch_id
-AND e_sum.period = ?
-
 AND (
     (
         k.kpi IN ('audit','recovery')
@@ -1613,6 +1614,14 @@ AND (
         AND e_sum.employee_id = emp.id
     )
 )
+LEFT JOIN (
+    SELECT employee_id, kpi, SUM(amount) AS amount
+    FROM previous_period_data_staffwise
+    WHERE period = ? AND branch_id = ?
+    GROUP BY employee_id, kpi
+) prev
+ON prev.employee_id COLLATE utf8mb4_unicode_ci = emp.id COLLATE utf8mb4_unicode_ci
+AND prev.kpi COLLATE utf8mb4_unicode_ci = k.kpi COLLATE utf8mb4_unicode_ci
 
 GROUP BY k.kpi
 ORDER BY k.kpi;
@@ -1637,13 +1646,18 @@ const fyEnd   = `${startYear + 1}-03-31`;
 
                 period, // 9 (allocations)
                 period, // 10 (targets)
-                period, // 11 (entries)
+                
+                period, // 11 (entries - period)
+                branchId, // 12 (entries - branchId)
 
-                fyStart, // 12
+                fyStart, // 13
                 fyStart,
-                fyEnd, // 13,14
+                fyEnd, // 14,15
                 fyStart,
-                fyEnd, // 15,16
+                fyEnd, // 16,17
+                
+                period, // 18 (prev - period)
+                branchId, // 19 (prev - branchId)
               ],
               (errB, branchTargets) => {
                 if (errB) return res.status(500).json({ error: errB.message });
