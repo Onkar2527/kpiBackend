@@ -376,372 +376,7 @@ async function calculateStaffScores(period, staffId, role) {
   }
 }
 
-// funtion to get single BM score calculation
-// async function calculateBMScores(period, branchId) {
-
-//   try {
-
-//     const cacheKey = `${period}_${branchId}`;
-
-//     if (bmCalculationCache.has(cacheKey)) {
-//       return bmCalculationCache.get(cacheKey);
-//     }
-
-//     const resultsPromise = new Promise((resolve, reject) => {
-
-//       const query = `
-//       SELECT
-//         k.kpi,
-//         MAX(
-//           CASE
-//             WHEN k.kpi = 'audit' THEN 100
-//             WHEN k.kpi = 'insurance' THEN COALESCE(a.amount,0)
-//             ELSE COALESCE(t.amount,0)
-//           END
-//         ) AS target,
-
-//         MAX(COALESCE(w.weightage,0)) AS weightage,
-
-//         MAX(COALESCE(e.total_achieved, 0)) AS achieved
-
-//       FROM
-//       (
-//         SELECT 'deposit' AS kpi UNION ALL
-//         SELECT 'loan_gen' UNION ALL
-//         SELECT 'loan_amulya' UNION ALL
-//         SELECT 'recovery' UNION ALL
-//         SELECT 'audit' UNION ALL
-//         SELECT 'insurance'
-//       ) k
-
-//       LEFT JOIN users bm
-//         ON bm.branch_id = ?
-//         AND bm.role = 'BM'
-//         AND bm.resign = 0
-//         AND bm.period = ?
-
-//       LEFT JOIN targets t
-//         ON t.kpi = k.kpi
-//         AND t.period = ?
-//         AND t.branch_id = ?
-
-//       LEFT JOIN allocations a
-//         ON k.kpi = 'insurance'
-//         AND a.user_id = bm.id
-//         AND a.period = ?
-
-//       LEFT JOIN weightage w
-//         ON w.kpi = k.kpi
-
-//       LEFT JOIN (
-//         SELECT
-//           e.kpi,
-//           SUM(e.value) AS total_achieved
-
-//         FROM entries e
-
-//         LEFT JOIN users bm
-//           ON bm.branch_id = ?
-//           AND bm.role = 'BM'
-//           AND bm.resign = 0
-//           AND bm.period = ?
-
-//         WHERE
-//           e.period = ?
-//           AND e.status = 'Verified'
-//           AND (
-//             (
-//               e.kpi IN ('audit','recovery')
-//               AND e.employee_id = bm.id
-//             )
-//             OR
-//             (
-//               e.kpi NOT IN ('audit','recovery')
-//               AND e.branch_id = ?
-//             )
-//           )
-
-//         GROUP BY e.kpi
-
-//       ) e ON k.kpi = e.kpi
-
-//       GROUP BY k.kpi
-//       ORDER BY k.kpi;
-//       `;
-
-//       pool.query(
-//         query,
-//         [
-//           branchId,
-//           period,
-//           period,
-//           branchId,
-//           period,
-//           branchId,
-//           period,
-//           period,
-//           branchId,
-//         ],
-//         (err, rows) => {
-
-//           if (err) {
-//             return reject(err);
-//           }
-
-//           resolve(rows || []);
-//         }
-//       );
-//     });
-
-//     const insuranceCacheKey =
-//       `${period}_${branchId}_insurance`;
-
-//     let insurancePromise;
-
-//     if (insuranceCache.has(insuranceCacheKey)) {
-
-//       insurancePromise =
-//         Promise.resolve(
-//           insuranceCache.get(
-//             insuranceCacheKey
-//           )
-//         );
-//     }
-
-//     else {
-
-//       insurancePromise =
-//         new Promise((resolve, reject) => {
-
-//           pool.query(
-//             `
-//             SELECT SUM(value) AS achieved
-//             FROM entries
-//             WHERE period=?
-//             AND kpi='insurance'
-//             AND employee_id = (
-//               SELECT id
-//               FROM users
-//               WHERE branch_id=?
-//               AND period=?
-//               AND role='BM'
-//               LIMIT 1
-//             )
-//             `,
-//             [period, branchId, period],
-
-//             (err, rows) => {
-
-//               if (err) {
-//                 return reject(err);
-//               }
-
-//               const val =
-//                 rows?.[0]?.achieved || 0;
-
-//               insuranceCache.set(
-//                 insuranceCacheKey,
-//                 val
-//               );
-
-//               resolve(val);
-//             }
-//           );
-//         });
-//     }
-
-//     const [results, insuranceAchieved] =
-//       await Promise.all([
-//         resultsPromise,
-//         insurancePromise,
-//       ]);
-
-//     let auditRatio = 0;
-//     let recoveryRatio = 0;
-
-//     for (let i = 0; i < results.length; i++) {
-
-//       const row = results[i];
-
-//       if (row.kpi === "insurance") {
-//         row.achieved = insuranceAchieved;
-//       }
-
-//       if (row.kpi === "audit") {
-
-//         auditRatio =
-//           row.target
-//             ? (row.achieved || 0) / row.target
-//             : 0;
-//       }
-
-//       if (row.kpi === "recovery") {
-
-//         recoveryRatio =
-//           row.target
-//             ? (row.achieved || 0) / row.target
-//             : 0;
-//       }
-//     }
-
-//     const calculateScores = (cap) => {
-
-//       const scores = {};
-
-//       let totalWeightageScore = 0;
-
-//       for (let i = 0; i < results.length; i++) {
-
-//         const row = results[i];
-
-//         let outOf10 = 0;
-
-//         const target =
-//           Number(row.target) || 0;
-
-//         const achieved =
-//           Number(row.achieved) || 0;
-
-//         const weightage =
-//           Number(row.weightage) || 0;
-
-//         let ratio = 0;
-
-//         if (target > 0) {
-//           ratio = achieved / target;
-//         }
-
-//         switch (row.kpi) {
-
-//           case "deposit":
-//           case "loan_gen":
-//           case "loan_amulya":
-
-//             if (ratio <= 1) {
-//               outOf10 = ratio * 10;
-//             }
-
-//             else if (ratio < 1.25) {
-//               outOf10 = 10;
-//             }
-
-//             else if (
-//               auditRatio >= 0.75 &&
-//               recoveryRatio >= 0.75
-//             ) {
-//               outOf10 = 12.5;
-//             }
-
-//             else {
-//               outOf10 = 10;
-//             }
-
-//             break;
-
-//           case "insurance":
-
-//             if (ratio <= 0 || isNaN(ratio)) {
-//               outOf10 = 0;
-//             }
-
-//             else if (ratio <= 1) {
-//               outOf10 = ratio * 10;
-//             }
-
-//             else if (ratio < 1.25) {
-//               outOf10 = 10;
-//             }
-
-//             else {
-//               outOf10 = 12.5;
-//             }
-
-//             break;
-
-//           case "recovery":
-//           case "audit":
-
-//             if (ratio <= 0 || isNaN(ratio)) {
-//               outOf10 = 0;
-//             }
-
-//             else if (ratio <= 1) {
-//               outOf10 = ratio * 10;
-//             }
-
-//             else {
-//               outOf10 = 12.5;
-//             }
-
-//             break;
-//         }
-
-//         if (outOf10 > cap) {
-//           outOf10 = cap;
-//         }
-
-//         else if (
-//           outOf10 < 0 ||
-//           isNaN(outOf10)
-//         ) {
-//           outOf10 = 0;
-//         }
-
-//         const weightageScore =
-//           row.kpi === "insurance" &&
-//           (ratio <= 0 || isNaN(ratio))
-//             ? -2
-//             : (outOf10 * weightage) / 100;
-
-//         scores[row.kpi] = {
-//           score: outOf10,
-//           target,
-//           achieved,
-//           weightage,
-//           weightageScore,
-//         };
-
-//         totalWeightageScore +=
-//           weightageScore;
-//       }
-
-//       scores.total =
-//         totalWeightageScore;
-
-//       return scores;
-//     };
-
-//     const preliminaryScores =
-//       calculateScores(12.5);
-
-//     const insuranceScore =
-//       preliminaryScores.insurance?.score || 0;
-
-//     const recoveryScore =
-//       preliminaryScores.recovery?.score || 0;
-
-//     const cap =
-//       preliminaryScores.total > 10 &&
-//       insuranceScore < 7.5 &&
-//       recoveryScore < 7.5
-//         ? 10
-//         : 12.5;
-
-//     const finalResult =
-//       calculateScores(cap);
-
-//     bmCalculationCache.set(
-//       cacheKey,
-//       finalResult
-//     );
-
-//     return finalResult;
-
-//   } catch (err) {
-
-//     throw err;
-//   }
-// }
+// function to get single BM score calculation
 async function calculateBMScores(period, branchId = null) {
   try {
     const cacheKey = `${period}_${branchId || "ALL"}`;
@@ -1048,8 +683,8 @@ async function calculateBMScores(period, branchId = null) {
 
       const cap =
         preliminaryScores.total > 10 &&
-        insuranceScore < 7.5 &&
-        recoveryScore < 7.5
+          insuranceScore < 7.5 &&
+          recoveryScore < 7.5
           ? 10
           : 12.5;
 
@@ -1220,7 +855,7 @@ async function calculateBMScoresFortrasfer(period, branchId) {
         };
       });
 
-      // 🔥 ONLY FIX: GLOBAL audit/recovery ratios
+
       const auditRow = results.find((r) => r.kpi === "audit");
       const recoveryRow = results.find((r) => r.kpi === "recovery");
 
@@ -1308,8 +943,8 @@ async function calculateBMScoresFortrasfer(period, branchId) {
 
     const cap =
       preliminaryScores.total > 10 &&
-      insuranceScore < 7.5 &&
-      recoveryScore < 7.5
+        insuranceScore < 7.5 &&
+        recoveryScore < 7.5
         ? 10
         : 12.5;
 
@@ -1323,7 +958,6 @@ async function calculateBMScoresFortrasfer(period, branchId) {
 // function to get all hod scores
 const scoreCache = new Map();
 const branchScoreCache = new Map();
-
 performanceMasterRouter.get("/ho-Allhod-scores", async (req, res) => {
   const { period, hod_id, role } = req.query;
 
@@ -1334,9 +968,7 @@ performanceMasterRouter.get("/ho-Allhod-scores", async (req, res) => {
   }
 
   try {
-    // =========================
-    // MASTER QUERIES
-    // =========================
+
     const [hodKpis, staffIdsRows, branchCodesRows] = await Promise.all([
       new Promise((resolve, reject) => {
         pool.query(
@@ -1423,9 +1055,7 @@ performanceMasterRouter.get("/ho-Allhod-scores", async (req, res) => {
 
     const batchSize = 5;
 
-    // =========================
-    // STAFF SCORES
-    // =========================
+
     const staffScores = [];
 
     for (let i = 0; i < staffIds.length; i += batchSize) {
@@ -1464,14 +1094,10 @@ performanceMasterRouter.get("/ho-Allhod-scores", async (req, res) => {
       (fixedAvgTotal / (staffScores.length || 1)).toFixed(2),
     );
 
-    // =========================
-    // NEW BM FUNCTION
-    // =========================
+
     const allBranchScores = await calculateBMScores(period);
 
-    // =========================
-    // BRANCH SCORES
-    // =========================
+
     const branchTotals = [];
 
     for (let i = 0; i < branchCodes.length; i += batchSize) {
@@ -1510,9 +1136,7 @@ performanceMasterRouter.get("/ho-Allhod-scores", async (req, res) => {
       (branchTotalValue / (branchTotals.length || 1)).toFixed(2),
     );
 
-    // =========================
-    // KPI MAP
-    // =========================
+
     const kpiMap = {};
 
     for (const k of hodKpis) {
@@ -1523,9 +1147,7 @@ performanceMasterRouter.get("/ho-Allhod-scores", async (req, res) => {
       };
     }
 
-    // =========================
-    // KPI VALUES
-    // =========================
+
     const [userKpiValues, insuranceValue] = await Promise.all([
       new Promise((resolve, reject) => {
         pool.query(
@@ -1604,9 +1226,7 @@ performanceMasterRouter.get("/ho-Allhod-scores", async (req, res) => {
       "Insurance Business Development",
     );
 
-    // =========================
-    // FINAL KPI
-    // =========================
+
     let finalKpis = {};
 
     let Total = 0;
@@ -1690,8 +1310,8 @@ performanceMasterRouter.get("/ho-Allhod-scores", async (req, res) => {
 
         achieved:
           lowerName.includes("section") ||
-          lowerName.includes("branch") ||
-          lowerName.includes("visits")
+            lowerName.includes("branch") ||
+            lowerName.includes("visits")
             ? Number(rangeCovert.toFixed(2))
             : avg || 0,
 
@@ -1868,8 +1488,9 @@ performanceMasterRouter.get("/ho-staff-scores-all", async (req, res) => {
               if (kpi_name.toLowerCase() === "insurance") {
                 const ratio = achieved / target;
 
-                if (ratio <= 1) score = ratio * 10;
-                else if (ratio < 1.25) score = 10;
+                 if (ratio <= 1) score = ratio * 10;
+          else if (ratio < 1.25) score = 10;
+          else score = 12.5;
               } else {
                 const ratio = achieved / target;
 
@@ -2106,167 +1727,232 @@ performanceMasterRouter.post("/save-or-update-ho-staff-kpi", (req, res) => {
 
 //get Dashboard Data
 const bmScoreCache = new Map();
+performanceMasterRouter.post("/get-Total-Ho_staff-details", async (req, res) => {
 
-performanceMasterRouter.post(
-  "/get-Total-Ho_staff-details",
-  async (req, res) => {
-    const { hod_id, period } = req.body;
+  const { hod_id, period } = req.body;
 
-    if (!hod_id || !period) {
-      return res.status(400).json({
-        error: "hod_id and period are required",
-      });
-    }
+  if (
+    !hod_id ||
+    !period
+  ) {
 
-    try {
-      const dashboardResult = {};
+    return res.status(400).json({
 
-      // PARALLEL LIGHT QUERIES ONLY
-      const [hoStaffResult, branches, agmDgmResult] = await Promise.all([
-        new Promise((resolve, reject) => {
+      error:
+        "hod_id and period are required",
+    });
+  }
+
+  try {
+
+    const dashboardResult = {};
+
+    // PARALLEL LIGHT QUERIES ONLY
+    const [
+      hoStaffResult,
+      branches,
+      agmDgmResult,
+    ] = await Promise.all([
+
+      new Promise(
+        (resolve, reject) => {
+
           pool.query(
             `
-            SELECT 
-              username,
-              name,
-              role
-            FROM users
-            WHERE role='HO_STAFF'
-            AND hod_id = ?
-            AND period = ?
-            `,
+              SELECT 
+                username,
+                name,
+                role
+
+              FROM users
+
+              WHERE role='HO_STAFF'
+              AND hod_id = ?
+              AND period = ?
+              `,
             [hod_id, period],
+
             (err, rows) => {
+
               if (err) {
+
                 return reject(err);
               }
 
               resolve(rows);
             },
           );
-        }),
+        },
+      ),
 
-        new Promise((resolve, reject) => {
+      new Promise(
+        (resolve, reject) => {
+
           pool.query(
             `
-            SELECT 
-              code,
-              name
-            FROM branches
-            WHERE incharge_id = ?
-            AND period = ?
-            `,
+              SELECT 
+                code,
+                name
+
+              FROM branches
+
+              WHERE incharge_id = ?
+              AND period = ?
+              `,
             [hod_id, period],
+
             (err, rows) => {
+
               if (err) {
+
                 return reject(err);
               }
 
               resolve(rows);
             },
           );
-        }),
+        },
+      ),
 
-        new Promise((resolve, reject) => {
+      new Promise(
+        (resolve, reject) => {
+
           pool.query(
             `
-            SELECT 
-              username,
-              name,
-              role
-            FROM users
-            WHERE role IN (
-              'AGM',
-              'DGM',
-              'AGM_IT',
-              'AGM_INSURANCE',
-              'AGM_AUDIT'
-            )
-            AND period = ?
-            `,
+              SELECT 
+                username,
+                name,
+                role
+
+              FROM users
+
+              WHERE role IN (
+                'AGM',
+                'DGM',
+                'AGM_IT',
+                'AGM_INSURANCE',
+                'AGM_AUDIT'
+              )
+
+              AND period = ?
+              `,
             [period],
+
             (err, rows) => {
+
               if (err) {
+
                 return reject(err);
               }
 
               resolve(rows);
             },
           );
-        }),
-      ]);
+        },
+      ),
 
-      dashboardResult.totalHOStaff = hoStaffResult;
+    ]);
 
-      dashboardResult.totalHOStaffCount = hoStaffResult.length;
+    dashboardResult.totalHOStaff =
+      hoStaffResult;
 
-      // VERY IMPORTANT
-      const batchSize = 2;
+    dashboardResult.totalHOStaffCount =
+      hoStaffResult.length;
 
-      const branchesWithScore = [];
 
-      for (let i = 0; i < branches.length; i += batchSize) {
-        const batch = branches.slice(i, i + batchSize);
+    const allBranchScores =
+      await calculateBMScores(
+        period
+      );
 
-        // SEQUENTIAL
-        for (const branch of batch) {
+    const branchesWithScore =
+      branches.map(
+        (branch) => {
+
           try {
-            const cacheKey = `${period}_${branch.code}`;
 
-            if (bmScoreCache.has(cacheKey)) {
-              branchesWithScore.push({
+            const cacheKey =
+              `${period}_${branch.code}`;
+
+            if (
+              bmScoreCache.has(
+                cacheKey
+              )
+            ) {
+
+              return {
+
                 ...branch,
 
-                bmTotalScore: bmScoreCache.get(cacheKey),
-              });
-
-              continue;
+                bmTotalScore:
+                  bmScoreCache.get(
+                    cacheKey
+                  ),
+              };
             }
 
-            const branchScore = await calculateBMScores(period, branch.code);
+            const total =
+              allBranchScores?.[
+                branch.code
+              ]?.total || 0;
 
-            const total = branchScore.total || 0;
+            bmScoreCache.set(
+              cacheKey,
+              total,
+            );
 
-            bmScoreCache.set(cacheKey, total);
+            return {
 
-            branchesWithScore.push({
               ...branch,
 
-              bmTotalScore: total,
-            });
+              bmTotalScore:
+                total,
+            };
+
           } catch {
-            branchesWithScore.push({
+
+            return {
+
               ...branch,
 
               bmTotalScore: 0,
-            });
+            };
           }
-        }
-      }
+        },
+      );
 
-      dashboardResult.totalBranches = branchesWithScore;
+    dashboardResult.totalBranches =
+      branchesWithScore;
 
-      dashboardResult.totalBranchesCount = branchesWithScore.length;
+    dashboardResult.totalBranchesCount =
+      branchesWithScore.length;
 
-      dashboardResult.totalAGMDGM = agmDgmResult;
+    dashboardResult.totalAGMDGM =
+      agmDgmResult;
 
-      dashboardResult.totalAGMDGMCount = agmDgmResult.length;
+    dashboardResult.totalAGMDGMCount =
+      agmDgmResult.length;
 
-      res.json(dashboardResult);
-    } catch (err) {
-      console.error(err);
+    res.json(
+      dashboardResult,
+    );
 
-      res.status(500).json({
-        error: "Failed to load HO staff dashboard data",
-      });
-    }
-  },
+  } catch (err) {
+
+    console.error(err);
+
+    res.status(500).json({
+
+      error:
+        "Failed to load HO staff dashboard data",
+    });
+  }
+},
 );
 
 //function to calculate hod calculation
 const hodScoreCache = new Map();
 const bmScoreCache1 = new Map();
-
 const calculateHodAllScores = async (
   pool,
   period,
@@ -2276,9 +1962,7 @@ const calculateHodAllScores = async (
   calculateBMScores,
 ) => {
   try {
-    // =========================
-    // MASTER QUERIES
-    // =========================
+
     const [hodKpis, staffRows, branchRows] = await Promise.all([
       new Promise((resolve, reject) => {
         pool.query(
@@ -2356,9 +2040,7 @@ const calculateHodAllScores = async (
       }),
     ]);
 
-    // =========================
-    // KPI MAP
-    // =========================
+
     const kpiMap = {};
 
     for (const k of hodKpis) {
@@ -2373,9 +2055,7 @@ const calculateHodAllScores = async (
 
     const branchCodes = branchRows.map((r) => r.code);
 
-    // =========================
-    // STAFF SCORES
-    // =========================
+
     const limit = pLimit(1);
 
     const staffPromises = staffIds.map((id) =>
@@ -2412,14 +2092,10 @@ const calculateHodAllScores = async (
       (staffTotal / (staffScores.length || 1)).toFixed(2),
     );
 
-    // =========================
-    // NEW BM FUNCTION
-    // =========================
+
     const allBranchScores = await calculateBMScores(period);
 
-    // =========================
-    // BM TOTALS
-    // =========================
+
     const bmPromises = branchCodes.map(async (code) => {
       try {
         const cacheKey = `${period}_${code}`;
@@ -2450,9 +2126,7 @@ const calculateHodAllScores = async (
       (bmTotal / (bmTotals.length || 1)).toFixed(2),
     );
 
-    // =========================
-    // KPI VALUES
-    // =========================
+
     const [userKpiValues, insuranceValue] = await Promise.all([
       new Promise((resolve, reject) => {
         pool.query(
@@ -2529,9 +2203,7 @@ const calculateHodAllScores = async (
       "Insurance Business Development",
     );
 
-    // =========================
-    // FINAL KPI
-    // =========================
+
     let finalKpis = {};
 
     let Total = 0;
@@ -2566,9 +2238,7 @@ const calculateHodAllScores = async (
 
       rangeCovert = (avg / 10) * weightage;
 
-      // =========================
-      // INSURANCE
-      // =========================
+
       if (lowerName === "insurance") {
         const target = 40000;
 
@@ -2583,9 +2253,7 @@ const calculateHodAllScores = async (
         weightageScore = avg === 0 ? -2 : (result / 100) * weightage;
       }
 
-      // =========================
-      // SECTION / BRANCH
-      // =========================
+
       else if (
         lowerName.includes("section") ||
         lowerName.includes("branch") ||
@@ -2604,9 +2272,7 @@ const calculateHodAllScores = async (
         weightageScore = (result / 100) * weightage;
       }
 
-      // =========================
-      // NORMAL KPI
-      // =========================
+
       else {
         if (avg === 0) {
           result = 0;
@@ -2628,8 +2294,8 @@ const calculateHodAllScores = async (
 
         achieved:
           lowerName.includes("section") ||
-          lowerName.includes("branch") ||
-          lowerName.includes("visits")
+            lowerName.includes("branch") ||
+            lowerName.includes("visits")
             ? Number(rangeCovert.toFixed(2))
             : avg || 0,
 
@@ -2652,9 +2318,9 @@ const calculateHodAllScores = async (
     throw err;
   }
 };
+
 //calculate AGM-DGM Score
 const agmScoreCache = new Map();
-
 performanceMasterRouter.get("/AGM-DGM-Scores", async (req, res) => {
   const { period } = req.query;
 
@@ -2695,7 +2361,7 @@ performanceMasterRouter.get("/AGM-DGM-Scores", async (req, res) => {
     });
 
     // BEST PERFORMANCE BALANCE
-    const batchSize = 3;
+    const batchSize = 2;
 
     const results = [];
 
@@ -2733,7 +2399,7 @@ performanceMasterRouter.get("/AGM-DGM-Scores", async (req, res) => {
 
             // SAVE CACHE
             agmScoreCache.set(cacheKey, scoreData);
-            console.log(scoreData);
+
             return {
               hod_id: agm.hod_id,
 
@@ -2813,135 +2479,268 @@ performanceMasterRouter.post("/deputation-report", (req, res) => {
 
 const branchScoreCache1 = new Map();
 
-performanceMasterRouter.post("/getAllBranchesScore", async (req, res) => {
-  const { period } = req.body;
+performanceMasterRouter.post("/getAllBranchesScore",async (req, res) => {
 
-  if (!period) {
-    return res.status(400).json({
-      error: "period is required",
-    });
-  }
+    const { period } = req.body;
 
-  try {
-    const branchReportData = {};
+    if (!period) {
 
-    // LIGHT QUERY
-    const branches = await new Promise((resolve, reject) => {
-      pool.query(
-        `
+      return res.status(400).json({
+
+        error:
+          "period is required",
+      });
+    }
+
+    try {
+
+      const branchReportData = {};
+
+    
+      const branches =
+        await new Promise(
+          (
+            resolve,
+            reject,
+          ) => {
+
+            pool.query(
+              `
               SELECT 
                 code,
                 name
+
               FROM branches
+
               WHERE period = ?
               `,
-        [period],
-        (err, rows) => {
-          if (err) {
-            return reject(err);
-          }
+              [period],
 
-          resolve(rows);
-        },
-      );
-    });
+              (
+                err,
+                rows,
+              ) => {
 
-    // CONTROLLED CONCURRENCY
-    const limit = pLimit(2);
-
-    const branchPromises = branches.map((branch) =>
-      limit(async () => {
-        try {
-          const cacheKey = `${period}_${branch.code}`;
-
-          // CACHE
-          if (branchScoreCache1.has(cacheKey)) {
-            return {
-              ...branch,
-              ...branchScoreCache1.get(cacheKey),
-            };
-          }
-
-          // BM QUERY
-          const bmRows = await new Promise((resolve, reject) => {
-            pool.query(
-              `
-                      SELECT 
-                        PF_NO,
-                        name
-                      FROM users
-                      WHERE role='BM'
-                      AND branch_id = ?
-                      AND period = ?
-                      LIMIT 1
-                      `,
-              [branch.code, period],
-              (err, rows) => {
                 if (err) {
-                  return reject(err);
+
+                  return reject(
+                    err
+                  );
                 }
 
-                resolve(rows);
+                resolve(
+                  rows || [],
+                );
               },
             );
-          });
+          },
+        );
 
-          const bm = bmRows[0] || null;
+    
+      const allBranchScores =
+        await calculateBMScores(
+          period,
+        );
 
-          // HEAVY FUNCTION
-          const branchScore = await calculateBMScores(period, branch.code);
+     
+      const bmUsers =
+        await new Promise(
+          (
+            resolve,
+            reject,
+          ) => {
 
-          const result = {
-            bmId: bm?.PF_NO ?? null,
+            pool.query(
+              `
+              SELECT 
+                PF_NO,
+                name,
+                branch_id
 
-            bmName: bm?.name ?? null,
+              FROM users
 
-            bmTotalScore: branchScore?.total ?? 0,
-          };
+              WHERE role='BM'
+              AND period = ?
+              `,
+              [period],
 
-          // SAVE CACHE
-          branchScoreCache1.set(cacheKey, result);
+              (
+                err,
+                rows,
+              ) => {
 
-          return {
-            ...branch,
-            ...result,
-          };
-        } catch (err) {
-          console.error(`BM score failed for branch ${branch.code}`, err);
+                if (err) {
 
-          return {
-            ...branch,
+                  return reject(
+                    err
+                  );
+                }
 
-            bmId: null,
+                resolve(
+                  rows || [],
+                );
+              },
+            );
+          },
+        );
 
-            bmName: null,
+      
+      const bmMap = {};
 
-            bmTotalScore: 0,
-          };
-        }
-      }),
-    );
+      bmUsers.forEach(
+        (bm) => {
 
-    const branchesWithScore = await Promise.all(branchPromises);
+          bmMap[
+            bm.branch_id
+          ] = bm;
+        },
+      );
 
-    branchReportData.totalBranches = branchesWithScore;
+      
+      const batchSize = 5;
 
-    branchReportData.totalBranchesCount = branchesWithScore.length;
+      const branchesWithScore =
+        [];
 
-    res.json(branchReportData);
-  } catch (err) {
-    console.error(err);
+      for (
+        let i = 0;
+        i < branches.length;
+        i += batchSize
+      ) {
 
-    res.status(500).json({
-      error: "Failed to load branch report data",
-    });
-  }
-});
+        const batch =
+          branches.slice(
+            i,
+            i + batchSize,
+          );
+
+        const batchResults =
+          await Promise.all(
+
+            batch.map(
+              async (
+                branch,
+              ) => {
+
+                try {
+
+                  const cacheKey =
+                    `${period}_${branch.code}`;
+
+                  
+                  if (
+                    branchScoreCache1.has(
+                      cacheKey,
+                    )
+                  ) {
+
+                    return {
+
+                      ...branch,
+
+                      ...branchScoreCache1.get(
+                        cacheKey,
+                      ),
+                    };
+                  }
+
+                  const bm =
+                    bmMap[
+                      branch.code
+                    ];
+
+                  const total =
+                    allBranchScores?.[
+                      branch.code
+                    ]?.total || 0;
+
+                  const result =
+                    {
+
+                      bmId:
+                        bm?.PF_NO ??
+                        null,
+
+                      bmName:
+                        bm?.name ??
+                        null,
+
+                      bmTotalScore:
+                        total,
+                    };
+
+                  
+                  branchScoreCache1.set(
+                    cacheKey,
+                    result,
+                  );
+
+                  return {
+
+                    ...branch,
+
+                    ...result,
+                  };
+
+                } catch (
+                  err
+                ) {
+
+                  console.error(
+                    `BM score failed for branch ${branch.code}`,
+                    err,
+                  );
+
+                  return {
+
+                    ...branch,
+
+                    bmId: null,
+
+                    bmName: null,
+
+                    bmTotalScore: 0,
+                  };
+                }
+              },
+            ),
+          );
+
+        branchesWithScore.push(
+          ...batchResults,
+        );
+      }
+
+      branchReportData.totalBranches =
+        branchesWithScore;
+
+      branchReportData.totalBranchesCount =
+        branchesWithScore.length;
+
+      res.json(
+        branchReportData,
+      );
+
+    } catch (err) {
+
+      console.error(
+        err,
+      );
+
+      res.status(500).json({
+
+        error:
+          "Failed to load branch report data",
+      });
+    }
+  },
+);
+
 //single clerk kpi score
 async function calculateStaffScoresCb(period) {
   try {
     const query = `
-    SELECT 
+     SELECT 
         emp.id AS employee_id,
         emp.branch_id,
         emp.role,
@@ -3002,12 +2801,19 @@ async function calculateStaffScoresCb(period) {
     (
         SELECT 
             STR_TO_DATE(
-                '2025-04-01',
+                CONCAT(
+                    SUBSTRING(?,1,4),
+                    '-04-01'
+                ),
                 '%Y-%m-%d'
             ) AS fy_start,
 
             STR_TO_DATE(
-                '2026-03-31',
+                CONCAT(
+                    '20',
+                    SUBSTRING(?,6,2),
+                    '-03-31'
+                ),
                 '%Y-%m-%d'
             ) AS fy_end
     ) fy
@@ -3048,12 +2854,50 @@ async function calculateStaffScoresCb(period) {
 
             FROM users emp2
 
-            LEFT JOIN users bm
-                ON bm.branch_id =
+            CROSS JOIN
+            (
+                SELECT 
+                    STR_TO_DATE(
+                        CONCAT(
+                            SUBSTRING(?,1,4),
+                            '-04-01'
+                        ),
+                        '%Y-%m-%d'
+                    ) AS fy_start,
+
+                    STR_TO_DATE(
+                        CONCAT(
+                            '20',
+                            SUBSTRING(?,6,2),
+                            '-03-31'
+                        ),
+                        '%Y-%m-%d'
+                    ) AS fy_end
+            ) fy
+
+            LEFT JOIN
+            (
+                SELECT
+                    branch_id,
+                    MIN(id) AS id,
+                    period
+
+                FROM users
+
+                WHERE role = 'BM'
+
+                GROUP BY
+                    branch_id,
+                    period
+
+            ) bmMap
+                ON bmMap.branch_id =
                     emp2.branch_id
-                AND bm.role = 'BM'
-                AND bm.period =
+                AND bmMap.period =
                     emp2.period
+
+            LEFT JOIN users bm
+                ON bm.id = bmMap.id
 
             JOIN entries e
                 ON e.period = ?
@@ -3071,14 +2915,14 @@ async function calculateStaffScoresCb(period) {
                     (
                         (
                             emp2.user_add_date 
-                                BETWEEN '2025-04-01'
-                                AND '2026-03-31'
+                                BETWEEN fy.fy_start 
+                                AND fy.fy_end
 
                             OR
 
                             emp2.transfer_date 
-                                BETWEEN '2025-04-01'
-                                AND '2026-03-31'
+                                BETWEEN fy.fy_start 
+                                AND fy.fy_end
                         )
 
                         AND e.employee_id =
@@ -3094,7 +2938,7 @@ async function calculateStaffScoresCb(period) {
                             OR
 
                             emp2.user_add_date <
-                                '2025-04-01'
+                                fy.fy_start
                         )
 
                         AND
@@ -3104,7 +2948,7 @@ async function calculateStaffScoresCb(period) {
                             OR
 
                             emp2.transfer_date <
-                                '2025-04-01'
+                                fy.fy_start
                         )
 
                         AND e.employee_id =
@@ -3185,8 +3029,10 @@ async function calculateStaffScoresCb(period) {
     const results = await new Promise((resolve, reject) => {
       pool.query(
         query,
-        [period, period, period, period, period, period, period, period],
-
+        [
+          period, period, period, period, period, period,
+          period, period, period, period, period, period
+        ],
         (err, rows) => {
           if (err) {
             return reject(err);
@@ -3199,9 +3045,7 @@ async function calculateStaffScoresCb(period) {
 
     const grouped = {};
 
-    // =========================
-    // GROUP EMPLOYEE DATA
-    // =========================
+
     for (const row of results) {
       const employeeId = row.employee_id;
 
@@ -3214,9 +3058,137 @@ async function calculateStaffScoresCb(period) {
 
     const finalResponse = {};
 
-    // =========================
-    // CALCULATE SCORES
-    // =========================
+
+    const employeeIds =
+      Object.keys(grouped);
+
+    const [
+      hoTransferData,
+      attTransferData,
+      transferKpiData,
+    ] = await Promise.all([
+
+      Promise.all(
+        employeeIds.map(
+          (id) =>
+            new Promise(
+              (
+                resolve,
+                reject,
+              ) => {
+
+                getHoStaffTransferHistory(
+                  pool,
+                  period,
+                  id,
+
+                  (
+                    err,
+                    data,
+                  ) => {
+
+                    if (err) {
+                      return reject(
+                        err
+                      );
+                    }
+
+                    resolve({
+                      id,
+                      data,
+                    });
+                  },
+                );
+              },
+            ),
+        ),
+      ),
+
+      Promise.all(
+        employeeIds.map(
+          (id) =>
+            new Promise(
+              (
+                resolve,
+                reject,
+              ) => {
+
+                getAttenderTransferHistory(
+                  pool,
+                  period,
+                  id,
+
+                  (
+                    err,
+                    data,
+                  ) => {
+
+                    if (err) {
+                      return reject(
+                        err
+                      );
+                    }
+
+                    resolve({
+                      id,
+                      data,
+                    });
+                  },
+                );
+              },
+            ),
+        ),
+      ),
+
+      Promise.all(
+        employeeIds.map(
+          async (id) => {
+
+            const data =
+              await getTransferKpiHistory(
+                pool,
+                period,
+                id,
+              );
+
+            return {
+              id,
+              data,
+            };
+          },
+        ),
+      ),
+
+    ]);
+
+
+    const hoMap = {};
+    const attMap = {};
+    const transferMap = {};
+
+    hoTransferData.forEach(
+      (x) => {
+
+        hoMap[x.id] = x.data;
+      },
+    );
+
+    attTransferData.forEach(
+      (x) => {
+
+        attMap[x.id] = x.data;
+      },
+    );
+
+    transferKpiData.forEach(
+      (x) => {
+
+        transferMap[x.id] =
+          x.data;
+      },
+    );
+
+
     for (const employeeId in grouped) {
       const employeeRows = grouped[employeeId];
 
@@ -3271,44 +3243,9 @@ async function calculateStaffScoresCb(period) {
         totalWeightageScore += weightageScore;
       }
 
-      // =========================
-      // TRANSFER FUNCTIONS
-      // =========================
-      const [hoHistory, attHistory, transferHistory] = await Promise.all([
-        new Promise((resolve, reject) => {
-          getHoStaffTransferHistory(
-            pool,
-            period,
-            employeeId,
-
-            (err, data) => {
-              if (err) {
-                return reject(err);
-              }
-
-              resolve(data);
-            },
-          );
-        }),
-
-        new Promise((resolve, reject) => {
-          getAttenderTransferHistory(
-            pool,
-            period,
-            employeeId,
-
-            (err, data) => {
-              if (err) {
-                return reject(err);
-              }
-
-              resolve(data);
-            },
-          );
-        }),
-
-        getTransferKpiHistory(pool, period, employeeId),
-      ]);
+      const hoHistory = hoMap[employeeId];
+      const attHistory = attMap[employeeId];
+      const transferHistory = transferMap[employeeId];
 
       const previousHoScores =
         hoHistory?.[0]?.transfers?.map((t) => t.total_weightage_score) || [];
@@ -3335,7 +3272,6 @@ async function calculateStaffScoresCb(period) {
 
       if (Number(employeeId) === 2947) {
         console.log("All Scores =>", allScores);
-
         console.log("Final Avg =>", finalAvg);
       }
 
@@ -3418,156 +3354,518 @@ function calculateScore(
 }
 
 //single hostaff
-function calculateSpecificAllStaffScoresCb(
+async function calculateSpecificAllStaffScoresCb(
   period,
-  ho_staff_id,
   role,
-  callback,
 ) {
-  const kpiWeightageQuery = `
-    SELECT 
-      rkm.id AS role_kpi_mapping_id,
-      km.kpi_name,
-      rkm.weightage
-    FROM role_kpi_mapping rkm
-    JOIN kpi_master km ON km.id = rkm.kpi_id
-    WHERE rkm.role = ? AND rkm.deleted_at IS NULL
-  `;
 
-  pool.query(kpiWeightageQuery, [role], (err, kpiWeightage) => {
-    if (err) return callback(err);
-    if (!kpiWeightage.length)
-      return callback(new Error("No KPI found for this role"));
+  try {
 
-    const userEntryQuery = `
-      SELECT 
-        role_kpi_mapping_id, 
-        value AS achieved 
-      FROM user_kpi_entry 
-      WHERE period = ? AND user_id = ? AND deleted_at IS NULL
-    `;
+    const [
+      kpiWeightage,
+      userEntries,
+      insuranceRows,
+      users,
+    ] = await Promise.all([
 
-    pool.query(userEntryQuery, [period, ho_staff_id], (err2, userEntries) => {
-      if (err2) return callback(err2);
+      new Promise(
+        (resolve, reject) => {
 
-      const insuranceQuery = `
-          SELECT value AS achieved 
-          FROM entries 
-          WHERE kpi='insurance' AND employee_id = ?
-        `;
+          pool.query(
+            `
+            SELECT 
+              rkm.id AS role_kpi_mapping_id,
+              km.kpi_name,
+              rkm.weightage
 
-      pool.query(insuranceQuery, [ho_staff_id], (err3, insuranceRows) => {
-        if (err3) return callback(err3);
+            FROM role_kpi_mapping rkm
 
-        const insuranceValue = insuranceRows.length
-          ? Number(insuranceRows[0].achieved)
-          : 0;
+            JOIN kpi_master km
+              ON km.id = rkm.kpi_id
 
-        const achievedMap = {};
-        userEntries.forEach(
-          (e) => (achievedMap[e.role_kpi_mapping_id] = e.achieved),
+            WHERE rkm.role = ?
+            AND rkm.deleted_at IS NULL
+            `,
+            [role],
+
+            (err, rows) => {
+
+              if (err) {
+                return reject(err);
+              }
+
+              resolve(rows || []);
+            },
+          );
+        },
+      ),
+
+      new Promise(
+        (resolve, reject) => {
+
+          pool.query(
+            `
+            SELECT 
+              user_id,
+              role_kpi_mapping_id,
+              value AS achieved
+
+            FROM user_kpi_entry
+
+            WHERE period = ?
+            AND deleted_at IS NULL
+            `,
+            [period],
+
+            (err, rows) => {
+
+              if (err) {
+                return reject(err);
+              }
+
+              resolve(rows || []);
+            },
+          );
+        },
+      ),
+
+      new Promise(
+        (resolve, reject) => {
+
+          pool.query(
+            `
+            SELECT 
+              employee_id,
+              value AS achieved
+
+            FROM entries
+
+            WHERE kpi='insurance'
+            `,
+            [],
+
+            (err, rows) => {
+
+              if (err) {
+                return reject(err);
+              }
+
+              resolve(rows || []);
+            },
+          );
+        },
+      ),
+
+      new Promise(
+        (resolve, reject) => {
+
+          pool.query(
+            `
+            SELECT 
+              id,
+              username,
+              name,
+              role
+
+            FROM users
+
+            WHERE role = ?
+            AND period = ?
+            `,
+            [role, period],
+
+            (err, rows) => {
+
+              if (err) {
+                return reject(err);
+              }
+
+              resolve(rows || []);
+            },
+          );
+        },
+      ),
+
+    ]);
+
+
+    if (
+      !kpiWeightage.length
+    ) {
+
+      throw new Error(
+        "No KPI found for this role",
+      );
+    }
+
+
+    const entryMap = {};
+
+    userEntries.forEach(
+      (e) => {
+
+        if (
+          !entryMap[e.user_id]
+        ) {
+
+          entryMap[e.user_id] = {};
+        }
+
+        entryMap[
+          e.user_id
+        ][
+          e.role_kpi_mapping_id
+        ] = Number(
+          e.achieved || 0,
         );
+      },
+    );
 
-        let totalWeightageScore = 0;
-        const scores = {};
 
-        kpiWeightage.forEach((row) => {
-          const { role_kpi_mapping_id, kpi_name, weightage } = row;
+    const insuranceMap = {};
+
+    insuranceRows.forEach(
+      (r) => {
+
+        insuranceMap[
+          r.employee_id
+        ] = Number(
+          r.achieved || 0,
+        );
+      },
+    );
+
+
+    const userIds =
+      users.map(
+        (u) => u.id,
+      );
+
+    const [
+      hoTransferData,
+      attTransferData,
+      transferKpiData,
+    ] = await Promise.all([
+
+      Promise.all(
+        userIds.map(
+          (id) =>
+            new Promise(
+              (
+                resolve,
+                reject,
+              ) => {
+
+                getHoStaffTransferHistory(
+                  pool,
+                  period,
+                  id,
+
+                  (
+                    err,
+                    data,
+                  ) => {
+
+                    if (err) {
+                      return reject(
+                        err
+                      );
+                    }
+
+                    resolve({
+                      id,
+                      data,
+                    });
+                  },
+                );
+              },
+            ),
+        ),
+      ),
+
+      Promise.all(
+        userIds.map(
+          (id) =>
+            new Promise(
+              (
+                resolve,
+                reject,
+              ) => {
+
+                getAttenderTransferHistory(
+                  pool,
+                  period,
+                  id,
+
+                  (
+                    err,
+                    data,
+                  ) => {
+
+                    if (err) {
+                      return reject(
+                        err
+                      );
+                    }
+
+                    resolve({
+                      id,
+                      data,
+                    });
+                  },
+                );
+              },
+            ),
+        ),
+      ),
+
+      Promise.all(
+        userIds.map(
+          async (id) => {
+
+            const data =
+              await getTransferKpiHistory(
+                pool,
+                period,
+                id,
+              );
+
+            return {
+              id,
+              data,
+            };
+          },
+        ),
+      ),
+
+    ]);
+
+
+    const hoMap = {};
+    const attMap = {};
+    const transferMap = {};
+
+    hoTransferData.forEach(
+      (x) => {
+
+        hoMap[x.id] = x.data;
+      },
+    );
+
+    attTransferData.forEach(
+      (x) => {
+
+        attMap[x.id] = x.data;
+      },
+    );
+
+    transferKpiData.forEach(
+      (x) => {
+
+        transferMap[x.id] =
+          x.data;
+      },
+    );
+
+
+    const finalResponse = {};
+
+    for (const user of users) {
+
+      const ho_staff_id =
+        user.id;
+
+      const achievedMap =
+        entryMap[
+        ho_staff_id
+        ] || {};
+
+      let totalWeightageScore = 0;
+
+      const scores = {};
+
+
+      kpiWeightage.forEach(
+        (row) => {
+
+          const {
+            role_kpi_mapping_id,
+            kpi_name,
+            weightage,
+          } = row;
 
           let achieved = 0;
 
-          if (kpi_name.toLowerCase() === "insurance") {
-            achieved = insuranceValue;
-          } else {
-            achieved = parseFloat(achievedMap[role_kpi_mapping_id]) || 0;
+          if (
+            kpi_name.toLowerCase() ===
+            "insurance"
+          ) {
+
+            achieved =
+              insuranceMap[
+              ho_staff_id
+              ] || 0;
+          }
+
+          else {
+
+            achieved =
+              parseFloat(
+                achievedMap[
+                role_kpi_mapping_id
+                ],
+              ) || 0;
           }
 
           const target =
-            kpi_name.toLowerCase() === "insurance" ? 40000 : weightage;
+            kpi_name.toLowerCase() ===
+              "insurance"
+              ? 40000
+              : weightage;
 
           let score = 0;
-          if (achieved > 0) {
-            if (kpi_name.toLowerCase() === "insurance") {
-              const ratio = achieved / target;
-              if (ratio <= 1) score = ratio * 10;
-              else if (ratio < 1.25) score = 10;
-            } else {
-              const ratio = achieved / target;
-              if (ratio <= 1) score = ratio * 10;
-              else if (ratio < 1.25) score = 10;
-              else score = 12.5;
+
+          if (
+            achieved > 0
+          ) {
+
+            const ratio =
+              achieved /
+              target;
+
+            if (
+              ratio <= 1
+            ) {
+
+              score =
+                ratio * 10;
+            }
+
+            else if (
+              ratio < 1.25
+            ) {
+
+              score = 10;
+            }
+
+            else {
+
+              score = 12.5;
             }
           }
 
-          let weightageScore = (score * weightage) / 100;
+          let weightageScore =
+            (
+              score *
+              weightage
+            ) / 100;
 
-          if (kpi_name.toLowerCase() === "insurance" && score === 0) {
+          if (
+            kpi_name.toLowerCase() ===
+            "insurance" &&
+            score === 0
+          ) {
+
             weightageScore = -2;
           }
 
-          totalWeightageScore += weightageScore;
+          totalWeightageScore +=
+            weightageScore;
 
           scores[kpi_name] = {
-            score: Number(score.toFixed(2)),
+
+            score: Number(
+              score.toFixed(
+                2,
+              ),
+            ),
+
             achieved,
+
             weightage,
-            weightageScore: Number(weightageScore.toFixed(2)),
+
+            weightageScore:
+              Number(
+                weightageScore.toFixed(
+                  2,
+                ),
+              ),
           };
-        });
+        },
+      );
 
-        getHoStaffTransferHistory(
-          pool,
-          period,
-          ho_staff_id,
-          (err, hoHistory) => {
-            if (err) return callback(err);
 
-            const previousHoScores =
-              hoHistory?.[0]?.transfers?.map((t) => t.total_weightage_score) ||
-              [];
+      const hoHistory =
+        hoMap[
+        ho_staff_id
+        ];
 
-            getAttenderTransferHistory(
-              pool,
-              period,
-              ho_staff_id,
-              (err2, attHistory) => {
-                if (err2) return callback(err2);
+      const attHistory =
+        attMap[
+        ho_staff_id
+        ];
 
-                const previousAttenderScores =
-                  attHistory?.[0]?.transfers?.map(
-                    (t) => t.total_weightage_score,
-                  ) || [];
+      const transferHistory =
+        transferMap[
+        ho_staff_id
+        ];
 
-                getTransferKpiHistory(pool, period, ho_staff_id)
-                  .then((transferHistory) => {
-                    const previousTransferScores =
-                      transferHistory?.all_scores || [];
+      const previousHoScores =
+        hoHistory?.[0]
+          ?.transfers?.map(
+            (t) =>
+              t.total_weightage_score,
+          ) || [];
 
-                    const allScores = [
-                      ...previousHoScores,
-                      ...previousAttenderScores,
-                      ...previousTransferScores,
-                      totalWeightageScore,
-                    ];
+      const previousAttenderScores =
+        attHistory?.[0]
+          ?.transfers?.map(
+            (t) =>
+              t.total_weightage_score,
+          ) || [];
 
-                    const finalAvg =
-                      allScores.length > 0
-                        ? allScores.reduce((a, b) => a + b, 0) /
-                          allScores.length
-                        : 0;
+      const previousTransferScores =
+        transferHistory
+          ?.all_scores || [];
 
-                    scores.total = Number(finalAvg.toFixed(2));
+      const allScores = [
 
-                    callback(null, scores);
-                  })
-                  .catch(callback);
-              },
-            );
-          },
-        );
-      });
-    });
-  });
+        ...previousHoScores,
+
+        ...previousAttenderScores,
+
+        ...previousTransferScores,
+
+        totalWeightageScore,
+      ];
+
+      const finalAvg =
+        allScores.length > 0
+          ? (
+            allScores.reduce(
+              (a, b) =>
+                a + b,
+              0,
+            ) /
+            allScores.length
+          )
+          : 0;
+
+      scores.total = Number(
+        finalAvg.toFixed(2),
+      );
+
+      finalResponse[
+        ho_staff_id
+      ] = scores;
+    }
+
+    return finalResponse;
+
+  } catch (err) {
+
+    throw err;
+  }
 }
 //Transfer BM logic for the Report
 function getTransferBmScores(pool, period, branchId, callback) {
@@ -3585,8 +3883,8 @@ function getTransferBmScores(pool, period, branchId, callback) {
     return Math.max(
       0,
       (d2.getFullYear() - d1.getFullYear()) * 12 +
-        (d2.getMonth() - d1.getMonth()) +
-        1,
+      (d2.getMonth() - d1.getMonth()) +
+      1,
     );
   }
 
@@ -3749,8 +4047,8 @@ function getTransferBmScores(pool, period, branchId, callback) {
 
                     const cap =
                       prelim.total > 10 &&
-                      prelim.insurance.score < 7.5 &&
-                      prelim.recovery.score < 7.5
+                        prelim.insurance.score < 7.5 &&
+                        prelim.recovery.score < 7.5
                         ? 10
                         : 12.5;
 
@@ -3796,7 +4094,7 @@ function getTransferBmScores(pool, period, branchId, callback) {
                                 const finalAvg =
                                   allScores.length > 0
                                     ? allScores.reduce((a, b) => a + b, 0) /
-                                      allScores.length
+                                    allScores.length
                                     : 0;
 
                                 finalScores.total = finalAvg;
@@ -3826,192 +4124,419 @@ function getTransferBmScores(pool, period, branchId, callback) {
   );
 }
 //attender score
-async function getBranchAttendersScores(period, branchId, hod_id) {
+async function getBranchAttendersScores(
+  period,
+) {
+
   if (!period) {
-    throw new Error("period is required");
+
+    throw new Error(
+      "period is required",
+    );
   }
 
-  const attenderKpis = await new Promise((resolve, reject) => {
-    pool.query(
-      `
-      SELECT k.kpi_name, r.id AS role_kpi_mapping_id, r.weightage
-      FROM role_kpi_mapping r
-      JOIN kpi_master k ON r.kpi_id = k.id
-      WHERE r.role = 'Attender'
-      `,
-      (err, rows) => {
-        if (err) return reject(err);
-        resolve(rows);
+  
+  const attenderKpis =
+    await new Promise(
+      (
+        resolve,
+        reject,
+      ) => {
+
+        pool.query(
+          `
+          SELECT 
+            k.kpi_name,
+            r.id AS role_kpi_mapping_id,
+            r.weightage
+
+          FROM role_kpi_mapping r
+
+          JOIN kpi_master k
+            ON r.kpi_id = k.id
+
+          WHERE UPPER(r.role)='ATTENDER'
+          `,
+
+          (
+            err,
+            rows,
+          ) => {
+
+            if (err) {
+
+              return reject(
+                err
+              );
+            }
+
+            resolve(
+              rows || []
+            );
+          },
+        );
       },
     );
-  });
 
-  if (!attenderKpis.length) return [];
+  
 
-  const normalizedBranchId =
-    branchId && branchId !== "null" && branchId !== "undefined"
-      ? branchId
-      : null;
+  if (
+    !attenderKpis.length
+  ) {
 
-  const users = await new Promise((resolve, reject) => {
-    let sql, params;
+    return [];
+  }
 
-    if (normalizedBranchId) {
-      sql =
-        "SELECT id, name FROM users WHERE branch_id=? AND period = ? AND role='Attender'";
-      params = [normalizedBranchId, period];
-    } else {
-      sql =
-        "SELECT id, name FROM users WHERE hod_id=? AND period = ? AND role='Attender'";
-      params = [hod_id, period];
-    }
+  
+  const users =
+    await new Promise(
+      (
+        resolve,
+        reject,
+      ) => {
 
-    pool.query(sql, params, (err, rows) => {
-      if (err) return reject(err);
-      resolve(rows);
-    });
-  });
+        pool.query(
+          `
+          SELECT 
+            id,
+            name,
+            branch_id,
+            hod_id,
+            role
 
-  if (!users.length) return [];
+          FROM users
 
-  const response = await Promise.all(
-    users.map(async (user) => {
-      const [userKpis, insuranceRow] = await Promise.all([
-        new Promise((resolve, reject) => {
-          pool.query(
-            `
-            SELECT role_kpi_mapping_id, SUM(value) AS total
-            FROM user_kpi_entry
-            WHERE user_id=? AND period=?
-            GROUP BY role_kpi_mapping_id
-            `,
-            [user.id, period],
-            (err, rows) => {
-              if (err) return reject(err);
-              const map = {};
-              rows.forEach(
-                (r) => (map[r.role_kpi_mapping_id] = Number(r.total || 0)),
+          WHERE period = ?
+          AND UPPER(role)='ATTENDER'
+          `,
+          [period],
+
+          (
+            err,
+            rows,
+          ) => {
+
+            if (err) {
+
+              return reject(
+                err
               );
-              resolve(map);
-            },
-          );
-        }),
-        new Promise((resolve, reject) => {
-          pool.query(
-            `
-            SELECT SUM(value) AS total
-            FROM entries
-            WHERE kpi='insurance' AND employee_id=? AND period=?
-            `,
-            [user.id, period],
-            (err, rows) => {
-              if (err) return reject(err);
-              resolve(Number(rows[0]?.total || 0));
-            },
-          );
-        }),
-      ]);
+            }
 
-      const finalKpis = {};
-      let totalScore = 0;
+            resolve(
+              rows || []
+            );
+          },
+        );
+      },
+    );
 
-      // KPI LOOP (UNCHANGED)
-      for (const kpi of attenderKpis) {
-        let achieved = 0;
-        let target = kpi.weightage;
+ 
 
-        if (
-          kpi.kpi_name === "Cleanliness" ||
-          kpi.kpi_name === "Attitude, Behavior & Discipline"
-        ) {
-          achieved = userKpis[kpi.role_kpi_mapping_id] || 0;
-        }
+  if (!users.length) {
 
-        if (kpi.kpi_name.toLowerCase().includes("insurance")) {
-          achieved = insuranceRow;
-          target = 40000;
-        }
+    return [];
+  }
 
-        let score = 0;
-        if (achieved > 0) {
-          if (kpi.kpi_name.toLowerCase().includes("insurance")) {
-            const ratio = achieved / target;
-            if (ratio <= 1) score = ratio * 10;
-            else if (ratio < 1.25) score = 10;
-            else score = 12.5;
-          } else {
-            const ratio = achieved / target;
-            if (ratio <= 1) score = ratio * 10;
-            else if (ratio < 1.25) score = 10;
-            else score = 12.5;
-          }
-        }
+  const userIds =
+    users.map(
+      (u) => u.id,
+    );
 
-        const weightageScore =
-          kpi.kpi_name.toLowerCase().includes("insurance") && achieved === 0
-            ? -2
-            : (score * kpi.weightage) / 100;
+  
+  const userEntries =
+    await new Promise(
+      (
+        resolve,
+        reject,
+      ) => {
 
-        finalKpis[kpi.kpi_name] = {
-          target,
-          achieved,
-          weightage: kpi.weightage,
-          score,
-          weightageScore,
-        };
+        pool.query(
+          `
+          SELECT 
+            user_id,
+            role_kpi_mapping_id,
+            SUM(value) AS total
 
-        totalScore += weightageScore;
+          FROM user_kpi_entry
+
+          WHERE period=?
+          AND user_id IN (?)
+
+          GROUP BY
+            user_id,
+            role_kpi_mapping_id
+          `,
+          [
+            period,
+            userIds,
+          ],
+
+          (
+            err,
+            rows,
+          ) => {
+
+            if (err) {
+
+              return reject(
+                err
+              );
+            }
+
+            resolve(
+              rows || []
+            );
+          },
+        );
+      },
+    );
+
+  
+  const insuranceRows =
+    await new Promise(
+      (
+        resolve,
+        reject,
+      ) => {
+
+        pool.query(
+          `
+          SELECT 
+            employee_id,
+            SUM(value) AS total
+
+          FROM entries
+
+          WHERE kpi='insurance'
+          AND period=?
+          AND employee_id IN (?)
+
+          GROUP BY employee_id
+          `,
+          [
+            period,
+            userIds,
+          ],
+
+          (
+            err,
+            rows,
+          ) => {
+
+            if (err) {
+
+              return reject(
+                err
+              );
+            }
+
+            resolve(
+              rows || []
+            );
+          },
+        );
+      },
+    );
+
+  
+  const entryMap = {};
+
+  userEntries.forEach(
+    (r) => {
+
+      if (
+        !entryMap[
+          r.user_id
+        ]
+      ) {
+
+        entryMap[
+          r.user_id
+        ] = {};
       }
 
-      const hoHistory = await new Promise((resolve) => {
-        getHoStaffTransferHistory(pool, period, user.id, (err, data) => {
-          if (err) return resolve([]);
-          resolve(data);
-        });
-      });
-
-      const previousHoScores =
-        hoHistory?.[0]?.transfers?.map((t) => t.total_weightage_score) || [];
-
-      const attHistory = await new Promise((resolve) => {
-        getAttenderTransferHistory(pool, period, user.id, (err, data) => {
-          if (err) return resolve([]);
-          resolve(data);
-        });
-      });
-
-      const previousAttenderScores =
-        attHistory?.[0]?.transfers?.map((t) => t.total_weightage_score) || [];
-
-      const transferHistory = await getTransferKpiHistory(
-        pool,
-        period,
-        user.id,
+      entryMap[
+        r.user_id
+      ][
+        r.role_kpi_mapping_id
+      ] = Number(
+        r.total || 0,
       );
-      const previousTransferScores = transferHistory?.all_scores || [];
-
-      const allScores = [
-        ...previousHoScores,
-        ...previousAttenderScores,
-        ...previousTransferScores,
-        totalScore,
-      ];
-
-      const finalAvg =
-        allScores.length > 0
-          ? allScores.reduce((a, b) => a + b, 0) / allScores.length
-          : 0;
-
-      totalScore = Number(finalAvg.toFixed(2));
-
-      return {
-        staffId: user.id,
-        staffName: user.name,
-        total: totalScore,
-        kpis: finalKpis,
-      };
-    }),
+    },
   );
+
+ 
+  const insuranceMap =
+    {};
+
+  insuranceRows.forEach(
+    (r) => {
+
+      insuranceMap[
+        r.employee_id
+      ] = Number(
+        r.total || 0,
+      );
+    },
+  );
+
+ 
+  const response = [];
+
+  for (const user of users) {
+
+ 
+
+    const userKpis =
+      entryMap[
+        user.id
+      ] || {};
+
+  
+    const insuranceValue =
+      insuranceMap[
+        user.id
+      ] || 0;
+
+  
+   
+    const finalKpis =
+      {};
+
+    let totalScore = 0;
+
+    
+    for (const kpi of attenderKpis) {
+
+      let achieved = 0;
+
+      let target =
+        kpi.weightage;
+
+     
+      if (
+        !kpi.kpi_name
+          .toLowerCase()
+          .includes(
+            "insurance",
+          )
+      ) {
+
+        achieved =
+          userKpis[
+            kpi
+              .role_kpi_mapping_id
+          ] || 0;
+      }
+
+    
+      if (
+        kpi.kpi_name
+          .toLowerCase()
+          .includes(
+            "insurance",
+          )
+      ) {
+
+        achieved =
+          insuranceValue;
+
+        target = 40000;
+      }
+
+      
+
+    
+
+      
+
+      let score = 0;
+
+      if (
+        achieved > 0
+      ) {
+
+        const ratio =
+          achieved /
+          target;
+
+       
+
+        if (
+          ratio <= 1
+        ) {
+
+          score =
+            ratio * 10;
+        }
+
+        else if (
+          ratio < 1.25
+        ) {
+
+          score = 10;
+        }
+
+        else {
+
+          score = 12.5;
+        }
+      }
+
+      const weightageScore =
+        kpi.kpi_name
+          .toLowerCase()
+          .includes(
+            "insurance",
+          ) &&
+        achieved === 0
+          ? -2
+          : (
+              score *
+              kpi.weightage
+            ) / 100;
+
+     
+      finalKpis[
+        kpi.kpi_name
+      ] = {
+
+        target,
+
+        achieved,
+
+        weightage:
+          kpi.weightage,
+
+        score,
+
+        weightageScore,
+      };
+
+      totalScore +=
+        weightageScore;
+    }
+
+    
+    response.push({
+
+      staffId: user.id,
+
+      staffName:
+        user.name,
+
+      total: Number(
+        totalScore.toFixed(
+          2,
+        ),
+      ),
+
+      kpis: finalKpis,
+    });
+  }
+
+ 
 
   return response;
 }
@@ -4390,138 +4915,417 @@ performanceMasterRouter.post("/usersClerk/part4", async (req, res) => {
   );
 });
 //get all HO_STAFF Score
-performanceMasterRouter.post("/usersHOStaff", (req, res) => {
+performanceMasterRouter.post("/usersHOStaff", async (req, res) => {
+
   const { period } = req.body;
 
-  getAllUsers(pool, period, async (err, users) => {
-    if (err) {
-      return res.status(500).json({ error: "Failed to load users" });
-    }
+  getAllUsers(
+    pool,
+    period,
 
-    const list = users.filter((u) => u.role === "HO_STAFF");
+    async (err, users) => {
 
-    const result = await Promise.all(
-      list.map(
-        (u) =>
-          new Promise((resolve) => {
-            calculateSpecificAllStaffScoresCb(
-              String(period),
-              Number(u.id),
-              u.role,
-              (err, hoStaffScore) => {
-                resolve({
-                  ...u,
-                  bmTotalScore: err ? 0 : (hoStaffScore?.total ?? 0),
-                });
-              },
-            );
-          }),
-      ),
-    );
+      if (err) {
 
-    res.json({ users: result });
-  });
-});
+        return res.status(500).json({
+
+          error:
+            "Failed to load users",
+        });
+      }
+
+      try {
+
+
+        const list =
+          users.filter(
+            (u) =>
+              u.role ===
+              "HO_STAFF"
+          );
+
+
+        const allScores =
+          await calculateSpecificAllStaffScoresCb(
+            String(period),
+            "HO_STAFF",
+          );
+
+
+        const result =
+          list.map((u) => {
+
+            const hoStaffScore =
+              allScores?.[
+              u.id
+              ];
+
+            return {
+
+              ...u,
+
+              bmTotalScore:
+                hoStaffScore
+                  ?.total ?? 0,
+            };
+          });
+
+        res.json({
+
+          totalHOStaff:
+            list.length,
+
+          users: result,
+        });
+
+      } catch (error) {
+
+        console.error(error);
+
+        res.status(500).json({
+
+          error:
+            "Failed to calculate scores",
+        });
+      }
+    },
+  );
+},
+);
 //get all Attender Score
-performanceMasterRouter.post("/usersAttender", (req, res) => {
+performanceMasterRouter.post("/usersAttender", async (req, res) => {
+
   const { period } = req.body;
 
-  getAllUsers(pool, period, async (err, users) => {
-    if (err) {
-      return res.status(500).json({ error: "Failed to load users" });
-    }
+  getAllUsers(
+    pool,
+    period,
 
-    const list = users.filter((u) => u.role === "Attender");
+    async (err, users) => {
 
-    const result = await Promise.all(
-      list.map(async (u) => {
-        try {
-          const attenders = await getBranchAttendersScores(
-            String(period),
-            Number(u.branch_id),
-            Number(u.hod_id),
+      if (err) {
+
+        return res.status(500).json({
+
+          error:
+            "Failed to load users",
+        });
+      }
+
+      try {
+
+        const list =
+          users.filter(
+            (u) =>
+              u.role ===
+              "Attender"
           );
 
-          const current = attenders.find((a) => a.staffId === u.id);
 
-          return {
-            ...u,
-            bmTotalScore: current?.total ?? 0,
-          };
-        } catch (err) {
-          return {
-            ...u,
-            bmTotalScore: 0,
-          };
-        }
-      }),
-    );
+        const attenders =
+          await getBranchAttendersScores(
+            String(period),
+            null,
+            null,
+          );
 
-    res.json({ users: result });
-  });
-});
+       
+        const attenderMap =
+          {};
+
+        attenders.forEach(
+          (a) => {
+
+            attenderMap[
+              a.staffId
+            ] = a;
+          },
+        );
+
+        const result =
+          list.map((u) => {
+
+            try {
+
+              const current =
+                attenderMap[
+                u.id
+                ];
+
+              return {
+
+                ...u,
+
+                bmTotalScore:
+                  current
+                    ?.total ?? 0,
+              };
+
+            } catch {
+
+              return {
+
+                ...u,
+
+                bmTotalScore: 0,
+              };
+            }
+          });
+
+        res.json({
+
+          totalAttenders:
+            list.length,
+
+          users: result,
+        });
+
+      } catch (err) {
+
+        console.error(err);
+
+        res.status(500).json({
+
+          error:
+            "Failed to calculate scores",
+        });
+      }
+    },
+  );
+},
+);
 //get all AGM/DGM/GM Score
-performanceMasterRouter.post("/usersAgmGm", (req, res) => {
+performanceMasterRouter.post("/usersAgmGm", async (req, res) => {
+
   const { period } = req.body;
 
-  getAllUsers(pool, period, async (err, users) => {
-    if (err) {
-      return res.status(500).json({ error: "Failed to load users" });
-    }
+  getAllUsers(
+    pool,
+    period,
 
-    const agmUsers = users.filter((u) =>
-      ["AGM", "DGM", "AGM_IT", "AGM_AUDIT", "AGM_INSURANCE"].includes(u.role),
-    );
+    async (err, users) => {
 
-    const gmUser = users.find((u) => u.role === "GM") || null;
+      if (err) {
 
-    const agmScores = [];
+        return res.status(500).json({
 
-    const agmResults = await Promise.all(
-      agmUsers.map(async (u) => {
-        try {
-          const hodScore = await calculateHodAllScores(
-            pool,
-            String(period),
-            Number(u.id),
-            u.role,
-            calculateStaffScores,
-            calculateBMScores,
+          error:
+            "Failed to load users",
+        });
+      }
+
+      try {
+
+
+        const agmUsers =
+          users.filter(
+            (u) =>
+              [
+                "AGM",
+                "DGM",
+                "AGM_IT",
+                "AGM_AUDIT",
+                "AGM_INSURANCE",
+              ].includes(
+                u.role,
+              ),
           );
 
-          const total = hodScore?.total ?? 0;
-          agmScores.push(total);
 
-          return {
-            ...u,
-            bmTotalScore: total,
-          };
-        } catch (err) {
-          agmScores.push(0);
-          return {
-            ...u,
-            bmTotalScore: 0,
-          };
+        const gmUser =
+          users.find(
+            (u) =>
+              u.role ===
+              "GM",
+          ) || null;
+
+        const agmScores = [];
+
+
+        const batchSize = 2;
+
+        const agmResults = [];
+
+        for (
+          let i = 0;
+          i < agmUsers.length;
+          i += batchSize
+        ) {
+
+          const batch =
+            agmUsers.slice(
+              i,
+              i + batchSize,
+            );
+
+          const batchResults =
+            await Promise.all(
+
+              batch.map(
+                async (agm) => {
+
+                  try {
+
+                    const cacheKey =
+                      `${period}_${agm.id}_${agm.role}`;
+
+
+                    if (
+                      agmScoreCache.has(
+                        cacheKey,
+                      )
+                    ) {
+
+                      const cached =
+                        agmScoreCache.get(
+                          cacheKey,
+                        );
+
+                      agmScores.push(
+                        cached
+                          ?.total ||
+                        0,
+                      );
+
+                      return {
+
+                        ...agm,
+
+                        bmTotalScore:
+                          cached
+                            ?.total ||
+                          0,
+                      };
+                    }
+
+
+                    const scoreData =
+                      await calculateHodAllScores(
+                        pool,
+                        period,
+                        agm.id,
+                        agm.role,
+                        calculateStaffScores,
+                        calculateBMScores,
+                      );
+
+
+                    agmScoreCache.set(
+                      cacheKey,
+                      scoreData,
+                    );
+
+                    agmScores.push(
+                      scoreData
+                        ?.total ||
+                      0,
+                    );
+
+                    return {
+
+                      ...agm,
+
+                      bmTotalScore:
+                        scoreData
+                          ?.total ||
+                        0,
+                    };
+
+                  } catch (
+                  err
+                  ) {
+
+                    console.error(
+                      err,
+                    );
+
+                    agmScores.push(
+                      0,
+                    );
+
+                    return {
+
+                      ...agm,
+
+                      bmTotalScore: 0,
+                    };
+                  }
+                },
+              ),
+            );
+
+          agmResults.push(
+            ...batchResults,
+          );
         }
-      }),
-    );
 
-    /* ---------- GM CALCULATION (UNCHANGED LOGIC) ---------- */
-    const results = [...agmResults];
 
-    if (gmUser && agmScores.length) {
-      const per = 100 / agmScores.length;
-      const gmScore = agmScores.reduce((sum, a) => sum + (a * per) / 100, 0);
+        const results = [
+          ...agmResults,
+        ];
 
-      results.push({
-        ...gmUser,
-        bmTotalScore: Number(gmScore.toFixed(2)),
-      });
-    }
+        if (
+          gmUser &&
+          agmScores.length
+        ) {
 
-    res.json({ users: results });
-  });
-});
+          const per =
+            100 /
+            agmScores.length;
+
+          const gmScore =
+            agmScores.reduce(
+              (
+                sum,
+                a,
+              ) =>
+                sum +
+                (
+                  a *
+                  per
+                ) /
+                100,
+
+              0,
+            );
+
+          results.push({
+
+            ...gmUser,
+
+            bmTotalScore:
+              Number(
+                gmScore.toFixed(
+                  2,
+                ),
+              ),
+          });
+        }
+
+        res.json({
+
+          totalUsers:
+            results.length,
+
+          users: results,
+        });
+
+      } catch (error) {
+
+        console.error(
+          error,
+        );
+
+        res.status(500).json({
+
+          error:
+            "Failed to calculate scores",
+        });
+      }
+    },
+  );
+},
+);
 //function for get single ho_staff history code
 export function getHoStaffTransferHistory(pool, period, ho_staff_id, callback) {
   const role = "HO_STAFF";
@@ -4955,85 +5759,303 @@ performanceMasterRouter.get("/ho_staff_transfer_history", (req, res) => {
 });
 
 //departmentwise report
-performanceMasterRouter.post(
-  "/getAllBranchesScoreSectionsWise",
-  async (req, res) => {
-    const { period, department } = req.body;
+performanceMasterRouter.post("/getAllBranchesScoreSectionsWise",async (req, res) => {
+
+    const {
+      period,
+      department,
+    } = req.body;
 
     if (!period) {
-      return res.status(400).json({ error: "period is required" });
+
+      return res.status(400).json({
+
+        error:
+          "period is required",
+      });
     }
 
     try {
+
       const branchReportData = {};
 
-      const branches = await new Promise((resolve, reject) => {
-        pool.query(
-          `SELECT code, name FROM branches where period = ?`,
-          [period],
-          (err, rows) => {
-            if (err) return reject(err);
-            resolve(rows);
+     
+      const branches =
+        await new Promise(
+          (
+            resolve,
+            reject,
+          ) => {
+
+            pool.query(
+              `
+              SELECT 
+                code,
+                name
+
+              FROM branches
+
+              WHERE period = ?
+              `,
+              [period],
+
+              (
+                err,
+                rows,
+              ) => {
+
+                if (err) {
+
+                  return reject(
+                    err
+                  );
+                }
+
+                resolve(
+                  rows || [],
+                );
+              },
+            );
           },
         );
-      });
 
-      const branchesWithScore = await Promise.all(
-        branches.map(async (branch) => {
-          try {
-            // Fetch BM
-            const bmRows = await new Promise((resolve, reject) => {
-              pool.query(
-                `SELECT PF_NO, name FROM users WHERE role='BM' AND branch_id = ? AND period = ?`,
-                [branch.code, period],
-                (err, rows) => {
-                  if (err) return reject(err);
-                  resolve(rows);
-                },
-              );
-            });
+    
+      const allBranchScores =
+        await calculateBMScores(
+          period,
+        );
 
-            const bm = bmRows[0] || null;
+      
+      const bmUsers =
+        await new Promise(
+          (
+            resolve,
+            reject,
+          ) => {
 
-            const branchScore = await calculateBMScores(period, branch.code);
+            pool.query(
+              `
+              SELECT 
+                PF_NO,
+                name,
+                branch_id
 
-            const deptKey = String(department || "")
-              .trim()
-              .toLowerCase();
+              FROM users
 
-            const matchedKey = Object.keys(branchScore || {}).find(
-              (key) => key.toLowerCase() === deptKey,
+              WHERE role='BM'
+              AND period = ?
+              `,
+              [period],
+
+              (
+                err,
+                rows,
+              ) => {
+
+                if (err) {
+
+                  return reject(
+                    err
+                  );
+                }
+
+                resolve(
+                  rows || [],
+                );
+              },
             );
-            const formattedDepartment = department
-              ? department.charAt(0).toUpperCase() + department.slice(1)
-              : null;
-            return {
-              ...branch,
-              bmId: bm?.PF_NO ?? null,
-              bmName: bm?.name ?? null,
-              department: formattedDepartment,
-              departmentData: matchedKey ? branchScore[matchedKey] : null,
-            };
-          } catch (err) {
-            console.error(`BM score failed for branch ${branch.code}`, err);
-            return {
-              ...branch,
-              bmId: null,
-              bmName: null,
-              bmTotalScore: 0,
-            };
-          }
-        }),
+          },
+        );
+
+     
+      const bmMap = {};
+
+      bmUsers.forEach(
+        (bm) => {
+
+          bmMap[
+            bm.branch_id
+          ] = bm;
+        },
       );
 
-      branchReportData.totalBranches = branchesWithScore;
-      branchReportData.totalBranchesCount = branchesWithScore.length;
+      
+      const deptKey =
+        String(
+          department || "",
+        )
+          .trim()
+          .toLowerCase();
 
-      res.json(branchReportData);
+      const formattedDepartment =
+        department
+          ? (
+              department.charAt(
+                0,
+              ) +
+              department.slice(
+                1,
+              )
+            )
+          : null;
+
+      
+      const batchSize = 5;
+
+      const branchesWithScore =
+        [];
+
+      for (
+        let i = 0;
+        i < branches.length;
+        i += batchSize
+      ) {
+
+        const batch =
+          branches.slice(
+            i,
+            i + batchSize,
+          );
+
+        const batchResults =
+          await Promise.all(
+
+            batch.map(
+              async (
+                branch,
+              ) => {
+
+                try {
+
+                  const cacheKey =
+                    `${period}_${branch.code}_${deptKey}`;
+
+                 
+                  if (
+                    branchScoreCache1.has(
+                      cacheKey,
+                    )
+                  ) {
+
+                    return {
+
+                      ...branch,
+
+                      ...branchScoreCache1.get(
+                        cacheKey,
+                      ),
+                    };
+                  }
+
+                  const bm =
+                    bmMap[
+                      branch.code
+                    ];
+
+                  const branchScore =
+                    allBranchScores?.[
+                      branch.code
+                    ] || {};
+
+                  const matchedKey =
+                    Object.keys(
+                      branchScore,
+                    ).find(
+                      (
+                        key,
+                      ) =>
+                        key.toLowerCase() ===
+                        deptKey,
+                    );
+
+                  const result =
+                    {
+
+                      bmId:
+                        bm?.PF_NO ??
+                        null,
+
+                      bmName:
+                        bm?.name ??
+                        null,
+
+                      department:
+                        formattedDepartment,
+
+                      departmentData:
+                        matchedKey
+                          ? branchScore[
+                              matchedKey
+                            ]
+                          : null,
+                    };
+
+
+                  branchScoreCache1.set(
+                    cacheKey,
+                    result,
+                  );
+
+                  return {
+
+                    ...branch,
+
+                    ...result,
+                  };
+
+                } catch (
+                  err
+                ) {
+
+                  console.error(
+                    `BM score failed for branch ${branch.code}`,
+                    err,
+                  );
+
+                  return {
+
+                    ...branch,
+
+                    bmId: null,
+
+                    bmName: null,
+
+                    department:
+                      formattedDepartment,
+
+                    departmentData:
+                      null,
+                  };
+                }
+              },
+            ),
+          );
+
+        branchesWithScore.push(
+          ...batchResults,
+        );
+      }
+
+      branchReportData.totalBranches =
+        branchesWithScore;
+
+      branchReportData.totalBranchesCount =
+        branchesWithScore.length;
+
+      res.json(
+        branchReportData,
+      );
+
     } catch (err) {
-      console.error(err);
+
+      console.error(
+        err,
+      );
+
       res.status(500).json({
-        error: "Failed to load branch report data",
+
+        error:
+          "Failed to load branch report data",
       });
     }
   },
