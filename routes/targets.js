@@ -2151,11 +2151,13 @@ targetsRouter.post(
                       });
                     });
 
-                    // Delete old staffwise baseline records for the uploaded branches and period
+                    // Soft delete old staffwise baseline records for the uploaded branches and period
                     const deleteStaffwiseQuery = `
-                      DELETE FROM previous_period_data_staffwise
+                      UPDATE previous_period_data_staffwise
+                      SET deleted_at = NOW()
                       WHERE period = ?
                       AND branch_id IN (${branchPlaceholders})
+                      AND deleted_at IS NULL
                     `;
 
                     pool.query(

@@ -311,11 +311,15 @@ mastersRouter.post("/transfers", (req, res) => {
   pool.query(
     `SELECT 
     t.id,
+    t.staff_id,
     u.name,
+    t.old_branch_id,
+    t.new_branch_id,
     b1.name AS old_branch,
     b2.name AS new_branch,
     old_hod.name AS old_hod_name,
-    new_hod.name AS new_hod_name
+    new_hod.name AS new_hod_name,
+    t.transfer_date
 FROM (
     SELECT 
         id,
@@ -323,8 +327,10 @@ FROM (
         old_branch_id,
         branch_id AS new_branch_id,
         old_hod_id,
-        hod_id
+        hod_id,
+        transfer_date
     FROM attender_transfer
+    WHERE period = ?
 
     UNION ALL
 
@@ -334,26 +340,45 @@ FROM (
         NULL AS old_branch_id,
         NULL AS new_branch_id,
         old_hod_id,
-        hod_id
+        hod_id,
+        transfer_date
     FROM ho_staff_transfer
+    WHERE period = ?
+
+    UNION ALL
+
+    SELECT 
+        id,
+        staff_id,
+        old_branch_id,
+        new_branch_id,
+        NULL AS old_hod_id,
+        NULL AS hod_id,
+        transfer_date
+    FROM employee_transfer
+    WHERE period = ?
 ) t
 JOIN users u 
     ON u.id = t.staff_id AND u.period = ?
 
 LEFT JOIN branches b1 
     ON b1.code COLLATE utf8mb4_unicode_ci = t.old_branch_id COLLATE utf8mb4_unicode_ci
+    AND b1.period COLLATE utf8mb4_unicode_ci = u.period COLLATE utf8mb4_unicode_ci
 
 LEFT JOIN branches b2 
     ON b2.code COLLATE utf8mb4_unicode_ci = t.new_branch_id COLLATE utf8mb4_unicode_ci
+    AND b2.period COLLATE utf8mb4_unicode_ci = u.period COLLATE utf8mb4_unicode_ci
 
 LEFT JOIN users old_hod 
     ON old_hod.id = t.old_hod_id AND old_hod.period = ?
 
 LEFT JOIN users new_hod 
     ON new_hod.id = t.hod_id AND new_hod.period = ?;`,
-    [period,period,period],(error, results) => {
-      if (error)
+    [period, period, period, period, period, period],(error, results) => {
+      if (error) {
+        console.error(error);
         return res.status(500).json({ error: "Internal server error" });
+      }
       res.json(results);
     },
   );
@@ -469,6 +494,150 @@ mastersRouter.delete("/transfers/:id", (req, res) => {
       res.json({ ok: true });
     },
   );
+});
+
+mastersRouter.post("/revert-transfer/:id", (req, res) => {
+  const transferId = req.params.id;
+
+  pool.getConnection((err, connection) => {
+    if (err) return res.status(500).json({ error: "DB connection failed" });
+
+    connection.beginTransaction((err) => {
+      if (err) {
+        connection.release();
+        return res.status(500).json({ error: "Transaction start failed" });
+      }
+
+      const rollbackTx = (errorMsg) => {
+        connection.rollback(() => {
+          connection.release();
+          res.status(500).json({ error: errorMsg });
+        });
+      };
+
+      // 1. Search in employee_transfer
+      connection.query(
+        "SELECT * FROM employee_transfer WHERE id = ?",
+        [transferId],
+        (err, empRows) => {
+          if (err) return rollbackTx(err.message);
+
+          if (empRows.length > 0) {
+            const tr = empRows[0];
+            // Revert clerk/BM/HOD transfer
+            connection.query(
+              "UPDATE users SET branch_id = ?, role = ?, transfered = 0, transfer_date = NULL WHERE id = ? AND period = ?",
+              [tr.old_branch_id, tr.old_designation, tr.staff_id, tr.period],
+              (errUpdate) => {
+                if (errUpdate) return rollbackTx(errUpdate.message);
+
+                connection.query(
+                  "DELETE FROM employee_transfer WHERE id = ?",
+                  [transferId],
+                  (errDelete) => {
+                    if (errDelete) return rollbackTx(errDelete.message);
+
+                    connection.commit((errCommit) => {
+                      if (errCommit) return rollbackTx(errCommit.message);
+                      connection.release();
+                      return res.json({
+                        ok: true,
+                        old_branch_id: tr.old_branch_id,
+                        new_branch_id: tr.new_branch_id
+                      });
+                    });
+                  }
+                );
+              }
+            );
+          } else {
+            // 2. Search in attender_transfer
+            connection.query(
+              "SELECT * FROM attender_transfer WHERE id = ?",
+              [transferId],
+              (err, attRows) => {
+                if (err) return rollbackTx(err.message);
+
+                if (attRows.length > 0) {
+                  const tr = attRows[0];
+                  // Revert attender transfer
+                  connection.query(
+                    "UPDATE users SET branch_id = ?, role = ?, hod_id = ?, transfered = 0, transfer_date = NULL WHERE id = ? AND period = ?",
+                    [tr.old_branch_id, tr.old_designation, tr.old_hod_id, tr.staff_id, tr.period],
+                    (errUpdate) => {
+                      if (errUpdate) return rollbackTx(errUpdate.message);
+
+                      connection.query(
+                        "DELETE FROM attender_transfer WHERE id = ?",
+                        [transferId],
+                        (errDelete) => {
+                          if (errDelete) return rollbackTx(errDelete.message);
+
+                          connection.commit((errCommit) => {
+                            if (errCommit) return rollbackTx(errCommit.message);
+                            connection.release();
+                            return res.json({
+                              ok: true,
+                              old_branch_id: tr.old_branch_id,
+                              new_branch_id: tr.branch_id
+                            });
+                          });
+                        }
+                      );
+                    }
+                  );
+                } else {
+                  // 3. Search in ho_staff_transfer
+                  connection.query(
+                    "SELECT * FROM ho_staff_transfer WHERE id = ?",
+                    [transferId],
+                    (err, hoRows) => {
+                      if (err) return rollbackTx(err.message);
+
+                      if (hoRows.length > 0) {
+                        const tr = hoRows[0];
+                        // Revert HO staff transfer
+                        connection.query(
+                          "UPDATE users SET hod_id = ?, transfered = 0, transfer_date = NULL WHERE id = ? AND period = ?",
+                          [tr.old_hod_id, tr.staff_id, tr.period],
+                          (errUpdate) => {
+                            if (errUpdate) return rollbackTx(errUpdate.message);
+
+                            connection.query(
+                              "DELETE FROM ho_staff_transfer WHERE id = ?",
+                              [transferId],
+                              (errDelete) => {
+                                if (errDelete) return rollbackTx(errDelete.message);
+
+                                connection.commit((errCommit) => {
+                                  if (errCommit) return rollbackTx(errCommit.message);
+                                  connection.release();
+                                  return res.json({
+                                    ok: true,
+                                    old_branch_id: null,
+                                    new_branch_id: null
+                                  });
+                                });
+                              }
+                            );
+                          }
+                        );
+                      } else {
+                        connection.rollback(() => {
+                          connection.release();
+                          res.status(404).json({ error: "Transfer record not found" });
+                        });
+                      }
+                    }
+                  );
+                }
+              }
+            );
+          }
+        }
+      );
+    });
+  });
 });
 
 mastersRouter.put("/Transfers_user/:id", (req, res) => {
@@ -596,9 +765,11 @@ FROM
     INNER JOIN branches b 
         ON b.code COLLATE utf8mb4_unicode_ci = 
            e.old_branch_id COLLATE utf8mb4_unicode_ci
+           AND b.period COLLATE utf8mb4_unicode_ci = e.period COLLATE utf8mb4_unicode_ci
     LEFT JOIN branches bi 
         ON bi.code COLLATE utf8mb4_unicode_ci = 
            e.new_branch_id COLLATE utf8mb4_unicode_ci       
+           AND bi.period COLLATE utf8mb4_unicode_ci = e.period COLLATE utf8mb4_unicode_ci
 WHERE 
     e.period COLLATE utf8mb4_unicode_ci = ? AND u.period COLLATE utf8mb4_unicode_ci = ?
     AND e.staff_id = ?
@@ -622,147 +793,195 @@ ORDER BY
         weightageMap[w.kpi] = w.weightage;
       });
 
-      const calculateScore = (kpi, achieved, target) => {
-        let outOf10;
-        if (!target || Number(target) === 0) return 0;
+      pool.query(
+        "SELECT branch_id, kpi, amount FROM previous_period_data_staffwise WHERE period = ? AND employee_id = ? AND deleted_at IS NULL",
+        [period, staff_id],
+        (errPrev, prevRows) => {
+          if (errPrev)
+            return res.status(500).json({ error: "Error fetching staffwise baseline" });
 
-        const ratio = achieved / target;
-        const auditRatio = kpi === "audit" ? ratio:0;
-        const recoveryRatio = kpi === "recovery" ? ratio : 0;
+          const baselineMap = {};
+          prevRows.forEach((row) => {
+            baselineMap[`${row.branch_id}_${row.kpi}`] = row.amount || 0;
+          });
 
-        switch (kpi) {
-          case "deposit":
-          case "loan_gen":
-          case "loan_amulya":
-            if (ratio <= 1) {
-              outOf10 = ratio * 10;
-            } else if (ratio > 1 && ratio < 1.25) {
-              outOf10 = 10;
-            } else if (
-              ratio >= 1.25 &&
-              auditRatio >= 0.75 &&
-              recoveryRatio >= 0.75
-            ) {
-              outOf10 = 12.5;
-            } else {
-              outOf10 = 10;
+          const calculateScore = (kpi, achieved, target) => {
+            let outOf10;
+            if (!target || Number(target) === 0) return 0;
+
+            const ratio = achieved / target;
+            const auditRatio = kpi === "audit" ? ratio : 0;
+            const recoveryRatio = kpi === "recovery" ? ratio : 0;
+
+            switch (kpi) {
+              case "deposit":
+              case "loan_gen":
+              case "loan_amulya":
+                if (ratio <= 1) {
+                  outOf10 = ratio * 10;
+                } else if (ratio > 1 && ratio < 1.25) {
+                  outOf10 = 10;
+                } else if (
+                  ratio >= 1.25 &&
+                  auditRatio >= 0.75 &&
+                  recoveryRatio >= 0.75
+                ) {
+                  outOf10 = 12.5;
+                } else {
+                  outOf10 = 10;
+                }
+                break;
+
+              case "recovery":
+              case "audit":
+                outOf10 = ratio <= 1 ? ratio * 10 : 12.5;
+                break;
+
+              default:
+                outOf10 = 0;
             }
-            break;
 
-          case "recovery":
-          case "audit":
-            outOf10 = ratio <= 1 ? ratio * 10 : 12.5;
-            break;
-
-          default:
-            outOf10 = 0;
-        }
-
-        return Math.max(0, Math.min(12.5, isNaN(outOf10) ? 0 : outOf10));
-      };
-
-      const staffResult = {
-        staff_id: transfers[0].staff_id,
-        name: transfers[0].staff_name,
-        period: transfers[0].period,
-        resigned: transfers[0].resigned,
-        resign_date: transfers[0].resign_date,
-        transfers: [],
-        branch_avg_kpi: {},
-        total_months: 0,
-      };
-
-      const fyStart = getFinancialYearStart(period);
-      const branchTransferDates = {};
-      const branchWiseKpi = {};
-
-      transfers.forEach((t) => {
-        const branchScores = {};
-        let totalWeightageScore = 0;
-
-        const kpis = [
-          {
-            key: "deposit",
-            achieved: t.deposit_achieved,
-            target: t.deposit_target,
-          },
-          {
-            key: "loan_gen",
-            achieved: t.loan_gen_achieved,
-            target: t.loan_gen_target,
-          },
-          {
-            key: "loan_amulya",
-            achieved: t.loan_amulya_achieved,
-            target: t.loan_amulya_target,
-          },
-          {
-            key: "recovery",
-            achieved: t.recovery_achieved,
-            target: t.recovery_target,
-          },
-          { key: "audit", achieved: t.audit_achieved, target: t.audit_target },
-        ];
-
-        kpis.forEach((row) => {
-          if (row.target == null) return;
-
-          const score = calculateScore(row.key, row.achieved, row.target);
-          const weightage = weightageMap[row.key] || 0;
-          const weightageScore = (score * weightage) / 100;
-
-          branchScores[row.key] = {
-            achieved: row.achieved || 0,
-            target: row.target || 0,
-            score,
-            weightage,
-            weightageScore: isNaN(weightageScore) ? 0 : weightageScore,
+            return Math.max(0, Math.min(12.5, isNaN(outOf10) ? 0 : outOf10));
           };
 
-          totalWeightageScore += branchScores[row.key].weightageScore;
-        });
+          const monthDiffstart = (d1, d2) => {
+            return Math.max(
+              0,
+              (d2.getFullYear() - d1.getFullYear()) * 12 +
+                (d2.getMonth() - d1.getMonth())
+            );
+          };
 
-        const branch = t.branch_name;
-        if (!branchTransferDates[branch]) branchTransferDates[branch] = [];
-        branchTransferDates[branch].push(new Date(t.transfer_date));
+          const staffResult = {
+            staff_id: transfers[0].staff_id,
+            name: transfers[0].staff_name,
+            period: transfers[0].period,
+            resigned: transfers[0].resigned,
+            resign_date: transfers[0].resign_date,
+            transfers: [],
+            branch_avg_kpi: {},
+            total_months: 0,
+          };
 
-        if (!branchWiseKpi[branch])
-          branchWiseKpi[branch] = { total: 0, count: 0 };
-        branchWiseKpi[branch].total += totalWeightageScore;
-        branchWiseKpi[branch].count += 1;
+          const fyStart = getFinancialYearStart(period);
+          const branchTransferDates = {};
+          const branchWiseKpi = {};
+          let lastDate = fyStart;
 
-        staffResult.transfers.push({
-          transfer_date: t.transfer_date,
-          old_designation: t.old_designation,
-          new_designation: t.new_designation,
-          old_branch_name: t.branch_name,
-          new_branch_name: t.new_branch_name,
-          total_weightage_score: totalWeightageScore,
-          ...branchScores,
-        });
-      });
+          transfers.forEach((t) => {
+            const branchScores = {};
+            let totalWeightageScore = 0;
 
-      let totalMonthsWorked = 0;
-      let branchCounter = {};
+            const transferDate = new Date(t.transfer_date);
+            const months = Math.max(1, monthDiffstart(lastDate, transferDate));
+            lastDate = transferDate;
 
-      staffResult.transfers.forEach((t) => {
-        const branch = t.old_branch_name || "UNKNOWN";
+            const kpis = [
+              {
+                key: "deposit",
+                achieved: t.deposit_achieved,
+                target: t.deposit_target,
+              },
+              {
+                key: "loan_gen",
+                achieved: t.loan_gen_achieved,
+                target: t.loan_gen_target,
+              },
+              {
+                key: "loan_amulya",
+                achieved: t.loan_amulya_achieved,
+                target: t.loan_amulya_target,
+              },
+              {
+                key: "recovery",
+                achieved: t.recovery_achieved,
+                target: t.recovery_target,
+              },
+              { key: "audit", achieved: t.audit_achieved, target: t.audit_target },
+            ];
 
-        branchCounter[branch] = (branchCounter[branch] || 0) + 1;
-        const key = `${branch}#${branchCounter[branch]}`;
+            kpis.forEach((row) => {
+              if (row.target == null) return;
 
-        staffResult.branch_avg_kpi[key] = {
-          avg_kpi: t.total_weightage_score,
-          months: 1,
-          new_branch_name: t.new_branch_name,
-        };
+              const baseline = ["deposit", "loan_gen", "loan_amulya"].includes(row.key)
+                ? (baselineMap[`${t.old_branch_id}_${row.key}`] || 0)
+                : 0;
 
-        totalMonthsWorked += 1;
-      });
+              let achievedValue = ["deposit", "loan_gen", "loan_amulya"].includes(row.key)
+                ? Number(row.achieved || 0) + Number(baseline)
+                : Number(row.achieved || 0);
 
-      staffResult.total_months = totalMonthsWorked;
+              // Scale achievement by month factor
+              achievedValue = (achievedValue / 12) * months;
+              const scaledBaseline = (Number(baseline) / 12) * months;
 
-      res.json([staffResult]);
+              const isBaselineOnly =
+                ["deposit", "loan_gen", "loan_amulya"].includes(row.key) &&
+                Number(baseline) > 0 &&
+                achievedValue <= scaledBaseline;
+
+              const score = isBaselineOnly
+                ? 0
+                : calculateScore(row.key, achievedValue, row.target);
+
+              const weightage = weightageMap[row.key] || 0;
+              const weightageScore = isBaselineOnly ? 0 : (score * weightage) / 100;
+
+              branchScores[row.key] = {
+                achieved: isBaselineOnly ? 0 : Number(achievedValue.toFixed(2)),
+                target: Number(Number(row.target || 0).toFixed(2)),
+                score,
+                weightage,
+                weightageScore: isNaN(weightageScore) ? 0 : weightageScore,
+              };
+
+              totalWeightageScore += branchScores[row.key].weightageScore;
+            });
+
+            const branch = t.branch_name;
+            if (!branchTransferDates[branch]) branchTransferDates[branch] = [];
+            branchTransferDates[branch].push(new Date(t.transfer_date));
+
+            if (!branchWiseKpi[branch])
+              branchWiseKpi[branch] = { total: 0, count: 0 };
+            branchWiseKpi[branch].total += totalWeightageScore;
+            branchWiseKpi[branch].count += 1;
+
+            staffResult.transfers.push({
+              transfer_date: t.transfer_date,
+              old_designation: t.old_designation,
+              new_designation: t.new_designation,
+              old_branch_name: t.branch_name,
+              new_branch_name: t.new_branch_name,
+              total_weightage_score: totalWeightageScore,
+              months: months,
+              ...branchScores,
+            });
+          });
+
+          let totalMonthsWorked = 0;
+          let branchCounter = {};
+
+          staffResult.transfers.forEach((t) => {
+            const branch = t.old_branch_name || "UNKNOWN";
+
+            branchCounter[branch] = (branchCounter[branch] || 0) + 1;
+            const key = `${branch}#${branchCounter[branch]}`;
+
+            staffResult.branch_avg_kpi[key] = {
+              avg_kpi: t.total_weightage_score,
+              months: t.months,
+              new_branch_name: t.new_branch_name,
+            };
+
+            totalMonthsWorked += t.months;
+          });
+
+          staffResult.total_months = totalMonthsWorked;
+
+          res.json([staffResult]);
+        }
+      );
     });
   });
 });

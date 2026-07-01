@@ -78,7 +78,7 @@ summaryRouter.get("/scores", (req, res) => {
     LEFT JOIN (
       SELECT employee_id, branch_id, kpi, period, SUM(amount) AS amount
       FROM previous_period_data_staffwise
-      WHERE period = ? AND branch_id = ?
+      WHERE period = ? AND branch_id = ? AND deleted_at IS NULL
       GROUP BY employee_id, branch_id, kpi, period
     ) prev ON u.id COLLATE utf8mb4_unicode_ci = prev.employee_id COLLATE utf8mb4_unicode_ci AND prev.period COLLATE utf8mb4_unicode_ci = u.period COLLATE utf8mb4_unicode_ci AND prev.branch_id COLLATE utf8mb4_unicode_ci = u.branch_id COLLATE utf8mb4_unicode_ci AND a.kpi COLLATE utf8mb4_unicode_ci = prev.kpi COLLATE utf8mb4_unicode_ci
     WHERE u.branch_id = ? AND u.role IN ('ATTENDER', 'CLERK')
@@ -597,7 +597,7 @@ summaryRouter.get("/bm-scores", async (req, res) => {
         scores[row.kpi] = {
           score: outOf10,
           target: row.target,
-          achieved: row.achieved || 0,
+          achieved: isBaselineOnly ? 0 : (row.achieved || 0),
           weightage: row.weightage || 0,
           weightageScore,
         };
@@ -648,29 +648,20 @@ summaryRouter.get("/staff-scores", async (req, res) => {
     const userRole = userResults[0].role;
     const branchId = userResults[0].branch_id;
 
-    const calculateScore = (kpi, achieved, target) => {
-      let outOf10 = 0;
+    const calculateScore = (
+      kpi,
+      achieved = 0,
+      target = 0,
+      auditScore = 0,
+      recoveryScore = 0,
+    ) => {
       if (!target || Number(target) === 0) return 0;
 
       const ratio = achieved / target;
+      const auditRatio = auditScore / 10;
+      const recoveryRatio = recoveryScore / 10;
 
-      if (!calculateScore._auditRatio) calculateScore._auditRatio = 0;
-      if (!calculateScore._recoveryRatio) calculateScore._recoveryRatio = 0;
-
-      if (
-  calculateScore._auditRatio === undefined
-) {
-  calculateScore._auditRatio = 0;
-}
-
-if (
-  calculateScore._recoveryRatio === undefined
-) {
-  calculateScore._recoveryRatio = 0;
-}
-
-      const auditRatio = calculateScore._auditRatio;
-      const recoveryRatio = calculateScore._recoveryRatio;
+      let outOf10 = 0;
 
       switch (kpi) {
         case "deposit":
@@ -687,22 +678,13 @@ if (
           }
           break;
 
+        case "recovery":
+        case "audit":
         case "insurance":
-          if (ratio === 0) {
-            outOf10 = -2;
-          } else if (ratio <= 1) {
+          if (ratio <= 1) {
             outOf10 = ratio * 10;
           } else if (ratio < 1.25) {
             outOf10 = 10;
-          } else {
-            outOf10 = 12.5;
-          }
-          break;
-
-        case "recovery":
-        case "audit":
-          if (ratio <= 1) {
-            outOf10 = ratio * 10;
           } else {
             outOf10 = 12.5;
           }
@@ -712,7 +694,7 @@ if (
           outOf10 = 0;
       }
 
-      return Math.max(0, Math.min(12.5, isNaN(outOf10) ? 0 : outOf10));
+      return Math.max(0, Math.min(12.5, outOf10));
     };
 
     if (userRole === "attender") {
@@ -935,7 +917,7 @@ ON k.kpi = e.kpi
 LEFT JOIN (
     SELECT employee_id, branch_id, kpi, period, SUM(amount) AS amount
     FROM previous_period_data_staffwise
-    WHERE period = ? AND branch_id = ? AND employee_id = ?
+    WHERE period = ? AND branch_id = ? AND employee_id = ? AND deleted_at IS NULL
     GROUP BY employee_id, branch_id, kpi, period
 ) prev
     ON prev.employee_id COLLATE utf8mb4_unicode_ci = emp.id COLLATE utf8mb4_unicode_ci
@@ -1003,7 +985,7 @@ ORDER BY k.kpi
                 `
         SELECT 
             (SELECT COALESCE(SUM(value), 0) FROM entries WHERE period = ? AND employee_id = ? AND kpi = 'insurance') +
-            (SELECT COALESCE(SUM(amount), 0) FROM previous_period_data_staffwise WHERE period = ? AND employee_id = ? AND branch_id = ? AND kpi = 'insurance')
+            (SELECT COALESCE(SUM(amount), 0) FROM previous_period_data_staffwise WHERE period = ? AND employee_id = ? AND branch_id = ? AND kpi = 'insurance' AND deleted_at IS NULL)
             AS achieved
       `,
                 [period, employeeId, period, employeeId, branchId],
@@ -1045,8 +1027,10 @@ ORDER BY k.kpi
 
                   const scores = {};
                   let totalWeightageScore = 0;
+
+                  // 1. Calculate audit and recovery scores first
                   results.forEach((row) => {
-                    if (row.kpi) {
+                    if (row.kpi === "audit" || row.kpi === "recovery") {
                       const isBaselineOnly =
                         row.baseline > 0 &&
                         Number(row.achieved) <= Number(row.baseline);
@@ -1060,7 +1044,40 @@ ORDER BY k.kpi
                       scores[row.kpi] = {
                         score,
                         target: row.target || 0,
-                        achieved: row.achieved || 0,
+                        achieved: isBaselineOnly ? 0 : (row.achieved || 0),
+                        weightage: row.weightage || 0,
+                        weightageScore: isBaselineOnly
+                          ? 0
+                          : isNaN(weightageScore)
+                            ? 0
+                            : weightageScore,
+                      };
+                    }
+                  });
+
+                  // 2. Calculate remaining KPIs using the audit/recovery scores
+                  results.forEach((row) => {
+                    if (row.kpi && row.kpi !== "audit" && row.kpi !== "recovery") {
+                      const isBaselineOnly =
+                        row.baseline > 0 &&
+                        Number(row.achieved) <= Number(row.baseline);
+                      const score = isBaselineOnly
+                        ? 0
+                        : calculateScore(
+                            row.kpi,
+                            row.achieved,
+                            row.target,
+                            scores.audit?.score || 0,
+                            scores.recovery?.score || 0,
+                          );
+                      const weightageScore = isBaselineOnly
+                        ? 0
+                        : (score * row.weightage) / 100;
+
+                      scores[row.kpi] = {
+                        score,
+                        target: row.target || 0,
+                        achieved: isBaselineOnly ? 0 : (row.achieved || 0),
                         weightage: row.weightage || 0,
                         weightageScore: isBaselineOnly
                           ? 0
@@ -1071,17 +1088,30 @@ ORDER BY k.kpi
                               ? 0
                               : weightageScore,
                       };
-
-                      totalWeightageScore += scores[row.kpi].weightageScore;
                     }
                   });
 
-                  // scores.deposit = branchScores.deposit;
-                  // scores.loan_gen = branchScores.loan_gen;
-                  // scores.loan_amulya = branchScores.loan_amulya;
-                  // scores.recovery = branchScores.recovery;
-                  // scores.audit = branchScores.audit;
-                  //  scores.insurance = branchScores.insurance;
+                  // 3. Sum the weightage scores
+                  [
+                    "deposit",
+                    "loan_gen",
+                    "loan_amulya",
+                    "recovery",
+                    "audit",
+                    "insurance",
+                  ].forEach((kpi) => {
+                    totalWeightageScore += Number(scores[kpi]?.weightageScore || 0);
+                  });
+
+                  scores.originalTotal = totalWeightageScore;
+
+                  if (
+                    scores.insurance?.score < 7.5 &&
+                    scores.recovery?.score < 7.5 &&
+                    totalWeightageScore > 10
+                  ) {
+                    totalWeightageScore = 10;
+                  }
 
                   // After calculating scores.total
                   scores["total"] = totalWeightageScore;
@@ -1110,34 +1140,80 @@ ORDER BY k.kpi
                     getTransferKpiHistory(pool, period, employeeId),
                   ])
                     .then(([hoHistory, attHistory, transferHistory]) => {
-                      const previousHoScores =
-                        hoHistory?.[0]?.transfers?.map(
-                          (t) => t.total_weightage_score,
-                        ) || [];
+                      let isTransferClerkOrBm = transferHistory && transferHistory.transfers && transferHistory.transfers.length > 0;
 
-                      const previousAttenderScores =
-                        attHistory?.[0]?.transfers?.map(
-                          (t) => t.total_weightage_score,
-                        ) || [];
+                      if (isTransferClerkOrBm) {
+                        let sumOfPrevious = 0;
+                        const transferCalcs = [];
 
-                      const previousTransferScores =
-                        transferHistory?.all_scores || [];
+                        transferHistory.transfers.forEach((t) => {
+                          const rawScore = Number(t.total_weightage_score || 0);
+                          const months = Number(t.months || 0);
+                          const proportionateScore = months > 0 ? (rawScore / 12) * months : rawScore;
+                          sumOfPrevious += proportionateScore;
 
-                      const allScores = [
-                        ...previousHoScores,
-                        ...previousAttenderScores,
-                        ...previousTransferScores,
-                        scores.total,
-                      ];
+                          transferCalcs.push({
+                            branchName: t.old_branch_name || t.branch_name || "Old Branch",
+                            kpaScore: Number(rawScore.toFixed(2)),
+                            months,
+                            proportionateScore: Number(proportionateScore.toFixed(2)),
+                          });
+                        });
 
-                      const finalAvg =
-                        allScores.length > 0
-                          ? allScores.reduce((a, b) => a + b, 0) /
-                            allScores.length
-                          : 0;
+                        const currentScoreExcludingInsurance =
+                          Number(scores.deposit?.weightageScore || 0) +
+                          Number(scores.loan_gen?.weightageScore || 0) +
+                          Number(scores.loan_amulya?.weightageScore || 0) +
+                          Number(scores.recovery?.weightageScore || 0) +
+                          Number(scores.audit?.weightageScore || 0);
 
-                      scores.originalTotal = scores.total;
-                      scores.total = Number(finalAvg.toFixed(2));
+                        const totalCount = transferCalcs.length + 1;
+                        const averageExcludingInsurance = (sumOfPrevious + currentScoreExcludingInsurance) / totalCount;
+                        const insuranceScore = Number(scores.insurance?.weightageScore || 0);
+                        const finalKpaScore = averageExcludingInsurance + insuranceScore;
+
+                        scores.originalTotal = Number((currentScoreExcludingInsurance + insuranceScore).toFixed(2));
+                        scores.total = Number(finalKpaScore.toFixed(2));
+
+                        scores.transferCalculation = {
+                          transfers: transferCalcs,
+                          currentBranch: {
+                            kpaScoreExcludingInsurance: Number(currentScoreExcludingInsurance.toFixed(2)),
+                          },
+                          averageExcludingInsurance: Number(averageExcludingInsurance.toFixed(2)),
+                          insuranceScore: Number(insuranceScore.toFixed(2)),
+                          totalFinalKpaScore: Number(finalKpaScore.toFixed(2)),
+                        };
+                      } else {
+                        const previousHoScores =
+                          hoHistory?.[0]?.transfers?.map(
+                            (t) => t.total_weightage_score,
+                          ) || [];
+
+                        const previousAttenderScores =
+                          attHistory?.[0]?.transfers?.map(
+                            (t) => t.total_weightage_score,
+                          ) || [];
+
+                        const previousTransferScores =
+                          transferHistory?.all_scores || [];
+
+                        const allScores = [
+                          ...previousHoScores,
+                          ...previousAttenderScores,
+                          ...previousTransferScores,
+                          scores.total,
+                        ];
+
+                        const finalAvg =
+                          allScores.length > 0
+                            ? allScores.reduce((a, b) => a + b, 0) /
+                              allScores.length
+                            : 0;
+
+                        scores.originalTotal = scores.total;
+                        scores.total = Number(finalAvg.toFixed(2));
+                      }
 
                       res.json(scores);
                     })
@@ -1185,174 +1261,221 @@ export async function getTransferKpiHistory(pool, period, staff_id) {
         const weightageMap = {};
         weightages.forEach((w) => (weightageMap[w.kpi] = w.weightage));
 
-        const getMonthDiff = (startDate, endDate) => {
-          const start = new Date(startDate);
-          const end = new Date(endDate);
-          return (
-            (end.getFullYear() - start.getFullYear()) * 12 +
-            (end.getMonth() - start.getMonth()) +
-            1
-          );
-        };
+        pool.query(
+          "SELECT branch_id, kpi, amount FROM previous_period_data_staffwise WHERE period = ? AND employee_id = ? AND deleted_at IS NULL",
+          [period, staff_id],
+          (errPrev, prevRows) => {
+            if (errPrev) return reject("Error fetching staffwise baseline");
 
-        const getFinancialYearStart = (period) => {
-          const startYear = parseInt(period.split("-")[0], 10);
-          return new Date(startYear, 3, 1);
-        };
+            const baselineMap = {};
+            prevRows.forEach((row) => {
+              baselineMap[`${row.branch_id}_${row.kpi}`] = row.amount || 0;
+            });
 
-        const calculateScore = (kpi, achieved, target) => {
-          if (!target || Number(target) === 0) return 0;
-
-          let outOf10;
-          const ratio = achieved / target;
-          const auditRatio = kpi === "audit" ? ratio : 0;
-          const recoveryRatio = kpi === "recovery" ? ratio : 0;
-
-          switch (kpi) {
-            case "deposit":
-            case "loan_gen":
-            case "loan_amulya":
-              if (ratio <= 1) {
-                outOf10 = ratio * 10;
-              } else if (ratio > 1 && ratio < 1.25) {
-                outOf10 = 10;
-              } else if (
-                ratio >= 1.25 &&
-                auditRatio >= 0.75 &&
-                recoveryRatio >= 0.75
-              ) {
-                outOf10 = 12.5;
-              } else {
-                outOf10 = 10;
-              }
-              break;
-
-            case "recovery":
-            case "audit":
-              outOf10 = ratio < 1 ? ratio * 10 : 12.5;
-              break;
-
-            default:
-              outOf10 = 0;
-          }
-
-          return Math.max(0, Math.min(12.5, outOf10));
-        };
-
-        const staffResult = {
-          staff_id: transfers[0].staff_id,
-          name: transfers[0].staff_name,
-          period: transfers[0].period,
-          resigned: transfers[0].resigned,
-          transfers: [],
-          avg_kpi: 0,
-          branch_avg_kpi: {},
-          all_scores: [],
-        };
-
-        let allBranchKpiScores = [];
-        const branchWiseKpi = {};
-        const branchTransferDates = {};
-
-        transfers.forEach((t) => {
-          const branchScores = {};
-          let totalWeightageScore = 0;
-
-          const kpis = [
-            {
-              key: "deposit",
-              achieved: t.deposit_achieved,
-              target: t.deposit_target,
-            },
-            {
-              key: "loan_gen",
-              achieved: t.loan_gen_achieved,
-              target: t.loan_gen_target,
-            },
-            {
-              key: "loan_amulya",
-              achieved: t.loan_amulya_achieved,
-              target: t.loan_amulya_target,
-            },
-            {
-              key: "recovery",
-              achieved: t.recovery_achieved,
-              target: t.recovery_target,
-            },
-            {
-              key: "audit",
-              achieved: t.audit_achieved,
-              target: t.audit_target,
-            },
-          ];
-
-          kpis.forEach((row) => {
-            if (!row.target) return;
-
-            const score = calculateScore(row.key, row.achieved, row.target);
-            const weightage = weightageMap[row.key] || 0;
-            const weightageScore = (score * weightage) / 100;
-
-            branchScores[row.key] = {
-              achieved: row.achieved || 0,
-              target: row.target || 0,
-              score,
-              weightage,
-              weightageScore,
+            const getMonthDiff = (startDate, endDate) => {
+              const start = new Date(startDate);
+              const end = new Date(endDate);
+              return (
+                (end.getFullYear() - start.getFullYear()) * 12 +
+                (end.getMonth() - start.getMonth()) +
+                1
+              );
             };
 
-            totalWeightageScore += weightageScore;
-          });
+            const monthDiffstart = (d1, d2) => {
+              return Math.max(
+                0,
+                (d2.getFullYear() - d1.getFullYear()) * 12 +
+                  (d2.getMonth() - d1.getMonth())
+              );
+            };
 
-          allBranchKpiScores.push(totalWeightageScore);
+            const getFinancialYearStart = (period) => {
+              const startYear = parseInt(period.split("-")[0], 10);
+              return new Date(startYear, 3, 1);
+            };
 
-          if (!branchWiseKpi[t.branch_name]) {
-            branchWiseKpi[t.branch_name] = { total: 0, count: 0 };
-            branchTransferDates[t.branch_name] = [];
+            const calculateScore = (kpi, achieved, target) => {
+              if (!target || Number(target) === 0) return 0;
+
+              let outOf10;
+              const ratio = achieved / target;
+              const auditRatio = kpi === "audit" ? ratio : 0;
+              const recoveryRatio = kpi === "recovery" ? ratio : 0;
+
+              switch (kpi) {
+                case "deposit":
+                case "loan_gen":
+                case "loan_amulya":
+                  if (ratio <= 1) {
+                    outOf10 = ratio * 10;
+                  } else if (ratio > 1 && ratio < 1.25) {
+                    outOf10 = 10;
+                  } else if (
+                    ratio >= 1.25 &&
+                    auditRatio >= 0.75 &&
+                    recoveryRatio >= 0.75
+                  ) {
+                    outOf10 = 12.5;
+                  } else {
+                    outOf10 = 10;
+                  }
+                  break;
+
+                case "recovery":
+                case "audit":
+                  outOf10 = ratio < 1 ? ratio * 10 : 12.5;
+                  break;
+
+                default:
+                  outOf10 = 0;
+              }
+
+              return Math.max(0, Math.min(12.5, outOf10));
+            };
+
+            const staffResult = {
+              staff_id: transfers[0].staff_id,
+              name: transfers[0].staff_name,
+              period: transfers[0].period,
+              resigned: transfers[0].resigned,
+              transfers: [],
+              avg_kpi: 0,
+              branch_avg_kpi: {},
+              all_scores: [],
+            };
+
+            let allBranchKpiScores = [];
+            const branchWiseKpi = {};
+            const branchTransferDates = {};
+            const fyStart = getFinancialYearStart(staffResult.period);
+            let lastDate = fyStart;
+
+            transfers.forEach((t) => {
+              const branchScores = {};
+              let totalWeightageScore = 0;
+
+              const transferDate = new Date(t.transfer_date);
+              const months = Math.max(1, monthDiffstart(lastDate, transferDate));
+              lastDate = transferDate;
+
+              const kpis = [
+                {
+                  key: "deposit",
+                  achieved: t.deposit_achieved,
+                  target: t.deposit_target,
+                },
+                {
+                  key: "loan_gen",
+                  achieved: t.loan_gen_achieved,
+                  target: t.loan_gen_target,
+                },
+                {
+                  key: "loan_amulya",
+                  achieved: t.loan_amulya_achieved,
+                  target: t.loan_amulya_target,
+                },
+                {
+                  key: "recovery",
+                  achieved: t.recovery_achieved,
+                  target: t.recovery_target,
+                },
+                {
+                  key: "audit",
+                  achieved: t.audit_achieved,
+                  target: t.audit_target,
+                },
+              ];
+
+              kpis.forEach((row) => {
+                if (!row.target) return;
+
+                const baseline = ["deposit", "loan_gen", "loan_amulya"].includes(row.key)
+                  ? (baselineMap[`${t.old_branch_id}_${row.key}`] || 0)
+                  : 0;
+
+                let achievedValue = ["deposit", "loan_gen", "loan_amulya"].includes(row.key)
+                  ? Number(row.achieved || 0) + Number(baseline)
+                  : Number(row.achieved || 0);
+
+                // Scale achievement by month factor
+                achievedValue = (achievedValue / 12) * months;
+                const scaledBaseline = (Number(baseline) / 12) * months;
+
+                const isBaselineOnly =
+                  ["deposit", "loan_gen", "loan_amulya"].includes(row.key) &&
+                  Number(baseline) > 0 &&
+                  achievedValue <= scaledBaseline;
+
+                const score = isBaselineOnly
+                  ? 0
+                  : calculateScore(row.key, achievedValue, row.target);
+
+                const weightage = weightageMap[row.key] || 0;
+                const weightageScore = isBaselineOnly
+                  ? 0
+                  : (score * weightage) / 100;
+                branchScores[row.key] = {
+                  achieved: isBaselineOnly ? 0 : Number(achievedValue.toFixed(2)),
+                  target: Number(Number(row.target || 0).toFixed(2)),
+                  score,
+                  weightage,
+                  weightageScore,
+                };
+
+                totalWeightageScore += weightageScore;
+              });
+
+              allBranchKpiScores.push(totalWeightageScore);
+
+              if (!branchWiseKpi[t.branch_name]) {
+                branchWiseKpi[t.branch_name] = { total: 0, count: 0 };
+                branchTransferDates[t.branch_name] = [];
+              }
+
+              branchWiseKpi[t.branch_name].total += totalWeightageScore;
+              branchWiseKpi[t.branch_name].count += 1;
+              branchTransferDates[t.branch_name].push(new Date(t.transfer_date));
+
+              staffResult.transfers.push({
+                transfer_date: t.transfer_date,
+                branch_name: t.branch_name,
+                old_designation: t.old_designation,
+                new_designation: t.new_designation,
+                total_weightage_score: totalWeightageScore,
+                months,
+                ...branchScores,
+              });
+            });
+
+            if (allBranchKpiScores.length > 0) {
+              const sum = allBranchKpiScores.reduce((a, b) => a + b, 0);
+              staffResult.avg_kpi = sum / allBranchKpiScores.length;
+              staffResult.all_scores = allBranchKpiScores;
+            }
+
+            Object.keys(branchWiseKpi).forEach((branch) => {
+              const { total, count } = branchWiseKpi[branch];
+              const avgKpi = count > 0 ? total / count : 0;
+
+              const dates = branchTransferDates[branch].sort((a, b) => a - b);
+
+              let months;
+              if (dates.length === 1) {
+                months = getMonthDiff(fyStart, dates[0]);
+              } else {
+                months = getMonthDiff(dates[0], dates[dates.length - 1]);
+              }
+
+              staffResult.branch_avg_kpi[branch] = {
+                avg_kpi: avgKpi,
+                months,
+              };
+            });
+
+            resolve(staffResult);
           }
-
-          branchWiseKpi[t.branch_name].total += totalWeightageScore;
-          branchWiseKpi[t.branch_name].count += 1;
-          branchTransferDates[t.branch_name].push(new Date(t.transfer_date));
-
-          staffResult.transfers.push({
-            transfer_date: t.transfer_date,
-            branch_name: t.branch_name,
-            old_designation: t.old_designation,
-            new_designation: t.new_designation,
-            total_weightage_score: totalWeightageScore,
-            ...branchScores,
-          });
-        });
-
-        if (allBranchKpiScores.length > 0) {
-          const sum = allBranchKpiScores.reduce((a, b) => a + b, 0);
-          staffResult.avg_kpi = sum / allBranchKpiScores.length;
-          staffResult.all_scores = allBranchKpiScores;
-        }
-
-        const fyStart = getFinancialYearStart(staffResult.period);
-
-        Object.keys(branchWiseKpi).forEach((branch) => {
-          const { total, count } = branchWiseKpi[branch];
-          const avgKpi = count > 0 ? total / count : 0;
-
-          const dates = branchTransferDates[branch].sort((a, b) => a - b);
-
-          let months;
-          if (dates.length === 1) {
-            months = getMonthDiff(fyStart, dates[0]);
-          } else {
-            months = getMonthDiff(dates[0], dates[dates.length - 1]);
-          }
-
-          staffResult.branch_avg_kpi[branch] = {
-            avg_kpi: avgKpi,
-            months,
-          };
-        });
-
-        resolve(staffResult);
+        );
       });
     });
   });
@@ -1531,7 +1654,7 @@ LEFT JOIN weightage w ON w.kpi = k.kpi
 LEFT JOIN (
     SELECT employee_id, branch_id, kpi, period, SUM(amount) AS amount
     FROM previous_period_data_staffwise
-    WHERE period = ? AND branch_id = ?
+    WHERE period = ? AND branch_id = ? AND deleted_at IS NULL
     GROUP BY employee_id, branch_id, kpi, period
 ) prev
     ON prev.employee_id COLLATE utf8mb4_unicode_ci = u.id COLLATE utf8mb4_unicode_ci
@@ -1607,7 +1730,7 @@ ORDER BY u.id, k.kpi;
         staffScores[id][row.kpi] = {
           score,
           target: Number(row.target),
-          achieved: Number(row.achieved),
+          achieved: isBaselineOnly ? 0 : Number(row.achieved),
           weightage: Number(row.weightage),
           weightageScore: isBaselineOnly ? 0 : (score * row.weightage) / 100,
         };
@@ -1636,7 +1759,7 @@ ORDER BY u.id, k.kpi;
       staffScores[id][row.kpi] = {
         score,
         target: Number(row.target),
-        achieved: Number(row.achieved),
+        achieved: isBaselineOnly ? 0 : Number(row.achieved),
         weightage: Number(row.weightage),
         weightageScore: isBaselineOnly
           ? 0
@@ -2011,112 +2134,133 @@ summaryRouter.get("/transfer-bm-scores", (req, res) => {
                 (achievedMap["recovery"] || 0) + (bm.recovery_achieved || 0);
 
               pool.query(
-                `
-                SELECT SUM(value) AS achieved
-                FROM entries
-                WHERE period=? AND employee_id=? 
-                AND kpi='insurance'
-                AND status='Verified'
-              `,
-                [period, BMID],
-                (errIns, insRows) => {
-                  if (errIns)
-                    return res
-                      .status(500)
-                      .json({ error: "Internal server error" });
+                `SELECT kpi, amount FROM previous_period_data WHERE period = ? AND branch_id = ?`,
+                [period, branchId],
+                (errPrev, prevRows) => {
+                  if (errPrev)
+                    return res.status(500).json({ error: "Internal server error" });
 
-                  achievedMap["insurance"] = insRows?.[0]?.achieved || 0;
+                  const baselineMap = {};
+                  prevRows.forEach((r) => (baselineMap[r.kpi] = r.amount || 0));
 
-                  pool.query(`SELECT * FROM weightage`, (errW, wRows) => {
-                    if (errW)
-                      return res
-                        .status(500)
-                        .json({ error: "Internal server error" });
+                  // Add previous period data to achieved for deposit, loan_gen, loan_amulya
+                  ["deposit", "loan_gen", "loan_amulya"].forEach((kpi) => {
+                    achievedMap[kpi] = (achievedMap[kpi] || 0) + (baselineMap[kpi] || 0);
+                  });
 
-                    const weightageMap = {};
-                    wRows.forEach((w) => (weightageMap[w.kpi] = w.weightage));
+                  pool.query(
+                    `
+                    SELECT SUM(value) AS achieved
+                    FROM entries
+                    WHERE period=? AND employee_id=? 
+                    AND kpi='insurance'
+                    AND status='Verified'
+                  `,
+                    [period, BMID],
+                    (errIns, insRows) => {
+                      if (errIns)
+                        return res
+                          .status(500)
+                          .json({ error: "Internal server error" });
 
-                    const bmKpis = [
-                      "deposit",
-                      "loan_gen",
-                      "loan_amulya",
-                      "recovery",
-                      "audit",
-                      "insurance",
-                    ];
+                      achievedMap["insurance"] = insRows?.[0]?.achieved || 0;
 
-                    const calculateScores = (cap) => {
-                      const scores = {};
-                      let total = 0;
+                      pool.query(`SELECT * FROM weightage`, (errW, wRows) => {
+                        if (errW)
+                          return res
+                            .status(500)
+                            .json({ error: "Internal server error" });
 
-                      bmKpis.forEach((kpi) => {
-                        const target = bmTargets[kpi] || 0;
-                        const achieved = achievedMap[kpi] || 0;
-                        const weight = weightageMap[kpi] || 0;
+                        const weightageMap = {};
+                        wRows.forEach((w) => (weightageMap[w.kpi] = w.weightage));
 
-                        let outOf10 = 0;
+                        const bmKpis = [
+                          "deposit",
+                          "loan_gen",
+                          "loan_amulya",
+                          "recovery",
+                          "audit",
+                          "insurance",
+                        ];
 
-                        if (target === 0) {
-                          outOf10 = 0;
-                        } else {
-                          const ratio = achieved / target;
-                          const auditRatio = kpi === "audit" ? ratio : 0;
-                          const recoveryRatio = kpi === "recovery" ? ratio : 0;
+                        const calculateScores = (cap) => {
+                          const scores = {};
+                          let total = 0;
 
-                          switch (kpi) {
-                            case "deposit":
-                            case "loan_gen":
-                            case "loan_amulya":
-                              if (ratio <= 1) outOf10 = ratio * 10;
-                              else if (ratio < 1.25) outOf10 = 10;
-                              else if (
-                                auditRatio >= 0.75 &&
-                                recoveryRatio >= 0.75
-                              )
-                                outOf10 = 12.5;
-                              else outOf10 = 10;
-                              break;
+                          bmKpis.forEach((kpi) => {
+                            const target = bmTargets[kpi] || 0;
+                            const achieved = achievedMap[kpi] || 0;
+                            const weight = weightageMap[kpi] || 0;
+                            const baseline = baselineMap[kpi] || 0;
 
-                            case "recovery":
-                            case "audit":
-                              if (ratio <= 1) outOf10 = ratio * 10;
-                              else outOf10 = 12.5;
-                              break;
+                            const isBaselineOnly =
+                              ["deposit", "loan_gen", "loan_amulya"].includes(kpi) &&
+                              baseline > 0 &&
+                              Number(achieved) <= Number(baseline);
 
-                            case "insurance":
-                              if (ratio === 0) outOf10 = -2;
-                              else if (ratio <= 1) outOf10 = ratio * 10;
-                              else if (ratio < 1.25) outOf10 = 10;
-                              else outOf10 = 12.5;
-                              break;
-                          }
-                        }
+                            let outOf10 = 0;
 
-                        outOf10 = Math.max(0, Math.min(cap, outOf10));
+                            if (target === 0) {
+                              outOf10 = 0;
+                            } else if (!isBaselineOnly) {
+                              const ratio = achieved / target;
+                              const auditRatio = kpi === "audit" ? ratio : 0;
+                              const recoveryRatio = kpi === "recovery" ? ratio : 0;
 
-                        let weightScore = (outOf10 * weight) / 100;
+                              switch (kpi) {
+                                case "deposit":
+                                case "loan_gen":
+                                case "loan_amulya":
+                                  if (ratio <= 1) outOf10 = ratio * 10;
+                                  else if (ratio < 1.25) outOf10 = 10;
+                                  else if (
+                                    auditRatio >= 0.75 &&
+                                    recoveryRatio >= 0.75
+                                  )
+                                    outOf10 = 12.5;
+                                  else outOf10 = 10;
+                                  break;
 
-                        if (kpi === "insurance" && outOf10 === 0) {
-                          weightScore = -2;
-                        }
+                                case "recovery":
+                                case "audit":
+                                  if (ratio <= 1) outOf10 = ratio * 10;
+                                  else outOf10 = 12.5;
+                                  break;
 
-                        scores[kpi] = {
-                          score: outOf10,
-                          target,
-                          achieved,
-                          weightage: weight,
-                          weightageScore:
-                            kpi === "insurance" && outOf10 === 0
-                              ? -2
-                              : weightScore,
+                                case "insurance":
+                                  if (ratio === 0) outOf10 = -2;
+                                  else if (ratio <= 1) outOf10 = ratio * 10;
+                                  else if (ratio < 1.25) outOf10 = 10;
+                                  else outOf10 = 12.5;
+                                  break;
+                              }
+                            }
+
+                            outOf10 = Math.max(0, Math.min(cap, outOf10));
+
+                            let weightScore = isBaselineOnly
+                              ? 0
+                              : kpi === "insurance" && outOf10 === 0
+                                ? -2
+                                : (outOf10 * weight) / 100;
+
+                            scores[kpi] = {
+                              score: outOf10,
+                              target,
+                              achieved,
+                              weightage: weight,
+                              weightageScore:
+                                kpi === "insurance" && outOf10 === 0
+                                  ? -2
+                                  : weightScore,
+                            };
+
+                            total += weightScore;
+                          });
+
+                          scores["total"] = total;
+                          return scores;
                         };
-
-                        total += weightScore;
-                      });
-
-                      scores["total"] = total;
-                      return scores;
-                    };
 
                     const prelim = calculateScores(12.5);
 
@@ -2142,6 +2286,7 @@ summaryRouter.get("/transfer-bm-scores", (req, res) => {
       );
     },
   );
+});
 });
 
 // all branch or gm  all attender api and also for get specific attender score /// this old api not existing transfer history //21-02-2026
@@ -2348,17 +2493,43 @@ summaryRouter.get("/branch-attenders", async (req, res) => {
 
         const previousTransferScores = transferHistory?.all_scores || [];
 
-        const allScores = [
-          ...previousHoScores,
-          ...previousAttenderScores,
-          ...previousTransferScores,
-          currentTotal,
-        ];
+        const isTransferClerkOrBm = transferHistory && transferHistory.transfers && transferHistory.transfers.length > 0;
 
-        const finalAvg =
-          allScores.length > 0
+        let finalAvg;
+        if (isTransferClerkOrBm) {
+          const currentScoreExcludingInsurance =
+            Number(finalKpis.deposit?.weightageScore || 0) +
+            Number(finalKpis.loan_gen?.weightageScore || 0) +
+            Number(finalKpis.loan_amulya?.weightageScore || 0) +
+            Number(finalKpis.recovery?.weightageScore || 0) +
+            Number(finalKpis.audit?.weightageScore || 0);
+
+          const insuranceScore = Number(finalKpis.insurance?.weightageScore || 0);
+
+          const allScoresExclInsurance = [
+            ...previousHoScores,
+            ...previousAttenderScores,
+            ...previousTransferScores,
+            currentScoreExcludingInsurance,
+          ];
+
+          const avgExclInsurance = allScoresExclInsurance.length > 0
+            ? allScoresExclInsurance.reduce((a, b) => a + b, 0) / allScoresExclInsurance.length
+            : 0;
+
+          finalAvg = avgExclInsurance + insuranceScore;
+        } else {
+          const allScores = [
+            ...previousHoScores,
+            ...previousAttenderScores,
+            ...previousTransferScores,
+            currentTotal,
+          ];
+
+          finalAvg = allScores.length > 0
             ? allScores.reduce((a, b) => a + b, 0) / allScores.length
             : 0;
+        }
 
         return {
           staffId: user.id,

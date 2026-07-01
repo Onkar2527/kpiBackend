@@ -101,6 +101,7 @@ CREATE TABLE previous_period_data_staffwise (
   kpi VARCHAR(255) NOT NULL,
   amount DECIMAL(15, 2) NOT NULL,
   created_date DATETIME DEFAULT CURRENT_TIMESTAMP,
+  deleted_at DATETIME DEFAULT NULL,
   INDEX idx_period_branch_emp (period, branch_id, employee_id)
 );
 
