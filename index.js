@@ -43,6 +43,6 @@ app.use('/api/trans',transferRouter);
 
 // Start listening for HTTP requests on the configured port.
 const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => {
-  console.log(`KPI server listening on http://localhost:${PORT}`);
+app.listen(PORT,'0.0.0.0', () => {
+  console.log(`KPI server listening on http://0.0.0.0:${PORT}`);
 });

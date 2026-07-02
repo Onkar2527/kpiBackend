@@ -250,14 +250,14 @@ summaryRouter.get("/bm-dashboard-counts", (req, res) => {
   if (!period || !branchId)
     return res.status(400).json({ error: "period and branchId required" });
 
-  const counts = { balance_deposit: {}, loan_gen: {} };
+  const counts = { balance_deposit: {}, loan_gen: {}, loan_amulya: {} };
 
   //deposit Data
 
   const totalPreviousTargetsQuery = `
     SELECT amount AS total 
-    FROM dashboard_table 
-    WHERE period = ? AND branch_id = ? AND kpi='balance_deposit'
+    FROM previous_period_data 
+    WHERE period = ? AND branch_id = ? AND kpi='deposit'
   `;
 
   pool.query(
@@ -266,12 +266,12 @@ summaryRouter.get("/bm-dashboard-counts", (req, res) => {
     (error, results1) => {
       if (error)
         return res.status(500).json({ error: "Internal server error (prev)" });
-      counts.balance_deposit.PreviousBalance = results1[0]?.total || 0;
+      counts.balance_deposit.PreviousBalance = Number(results1[0]?.total || 0);
 
       const totalTargetsQuery = `
       SELECT amount AS total 
-      FROM targets 
-      WHERE period = ? AND branch_id = ? AND kpi='deposit'
+      FROM dashboard_table 
+      WHERE period = ? AND branch_id = ? AND kpi='balance_deposit'
     `;
 
       pool.query(totalTargetsQuery, [period, branchId], (error, results2) => {
@@ -279,7 +279,7 @@ summaryRouter.get("/bm-dashboard-counts", (req, res) => {
           return res
             .status(500)
             .json({ error: "Internal server error (target)" });
-        counts.balance_deposit.totalPresentTarget = results2[0]?.total || 0;
+        counts.balance_deposit.totalPresentTarget = Number(results2[0]?.total || 0);
 
         const total_target =
           counts.balance_deposit.PreviousBalance +
@@ -287,9 +287,9 @@ summaryRouter.get("/bm-dashboard-counts", (req, res) => {
         counts.balance_deposit.total = total_target;
 
         const totalTargetsQuery = `
-      SELECT amount AS total 
-      FROM dashboard_total_achiveved 
-      WHERE period = ? AND branch_id = ? AND kpi='balance_deposit'
+      SELECT COALESCE(SUM(value), 0) AS total 
+      FROM entries 
+      WHERE period = ? AND branch_id = ? AND kpi='deposit' AND status='Verified'
     `;
 
         pool.query(totalTargetsQuery, [period, branchId], (error, results3) => {
@@ -297,13 +297,15 @@ summaryRouter.get("/bm-dashboard-counts", (req, res) => {
             return res
               .status(500)
               .json({ error: "Internal server error (target)" });
-          counts.balance_deposit.totalAchieved = results3[0]?.total || 0;
+          counts.balance_deposit.totalAchieved =
+            counts.balance_deposit.PreviousBalance +
+            Number(results3[0]?.total || 0);
 
           //loan Data
 
           const totalPreviousTargetsQuery = `
     SELECT amount AS total 
-    FROM dashboard_table 
+    FROM previous_period_data 
     WHERE period = ? AND branch_id = ? AND kpi='loan_gen'
   `;
 
@@ -315,11 +317,11 @@ summaryRouter.get("/bm-dashboard-counts", (req, res) => {
                 return res
                   .status(500)
                   .json({ error: "Internal server error (prev)" });
-              counts.loan_gen.PreviousBalance = results1[0]?.total || 0;
+              counts.loan_gen.PreviousBalance = Number(results1[0]?.total || 0);
 
               const totalTargetsQuery = `
       SELECT amount AS total 
-      FROM targets 
+      FROM dashboard_table 
       WHERE period = ? AND branch_id = ? AND kpi='loan_gen'
     `;
 
@@ -331,7 +333,7 @@ summaryRouter.get("/bm-dashboard-counts", (req, res) => {
                     return res
                       .status(500)
                       .json({ error: "Internal server error (target)" });
-                  counts.loan_gen.totalPresentTarget = results2[0]?.total || 0;
+                  counts.loan_gen.totalPresentTarget = Number(results2[0]?.total || 0);
 
                   const total_target =
                     counts.loan_gen.PreviousBalance +
@@ -339,9 +341,9 @@ summaryRouter.get("/bm-dashboard-counts", (req, res) => {
                   counts.loan_gen.total = total_target;
 
                   const totalTargetsQuery = `
-      SELECT amount AS total 
-      FROM dashboard_total_achiveved 
-      WHERE period = ? AND branch_id = ? AND kpi='loan_gen'
+      SELECT COALESCE(SUM(value), 0) AS total 
+      FROM entries 
+      WHERE period = ? AND branch_id = ? AND kpi='loan_gen' AND status='Verified'
     `;
 
                   pool.query(
@@ -352,9 +354,50 @@ summaryRouter.get("/bm-dashboard-counts", (req, res) => {
                         return res
                           .status(500)
                           .json({ error: "Internal server error (target)" });
-                      counts.loan_gen.totalAchieved = results3[0]?.total || 0;
+                      counts.loan_gen.totalAchieved =
+                        counts.loan_gen.PreviousBalance +
+                        Number(results3[0]?.total || 0);
 
-                      res.json(counts);
+                      const amulyaPrevQuery = `
+                        SELECT amount AS total 
+                        FROM previous_period_data 
+                        WHERE period = ? AND branch_id = ? AND kpi='loan_amulya'
+                      `;
+
+                      pool.query(amulyaPrevQuery, [period, branchId], (error, amulyaPrevRes) => {
+                        if (error)
+                          return res.status(500).json({ error: "Internal server error (amulya prev)" });
+                        counts.loan_amulya.PreviousBalance = Number(amulyaPrevRes[0]?.total || 0);
+
+                        const amulyaTargetQuery = `
+                          SELECT amount AS total 
+                          FROM targets 
+                          WHERE period = ? AND branch_id = ? AND kpi='loan_amulya'
+                        `;
+
+                        pool.query(amulyaTargetQuery, [period, branchId], (error, amulyaTargetRes) => {
+                          if (error)
+                            return res.status(500).json({ error: "Internal server error (amulya target)" });
+                          counts.loan_amulya.totalPresentTarget = Number(amulyaTargetRes[0]?.total || 0);
+                          counts.loan_amulya.total = counts.loan_amulya.PreviousBalance + counts.loan_amulya.totalPresentTarget;
+
+                          const amulyaAchievedQuery = `
+                            SELECT COALESCE(SUM(value), 0) AS total 
+                            FROM entries 
+                            WHERE period = ? AND branch_id = ? AND kpi='loan_amulya' AND status='Verified'
+                          `;
+
+                          pool.query(amulyaAchievedQuery, [period, branchId], (error, amulyaAchievedRes) => {
+                            if (error)
+                              return res.status(500).json({ error: "Internal server error (amulya achieved)" });
+                            counts.loan_amulya.totalAchieved =
+                              counts.loan_amulya.PreviousBalance +
+                              Number(amulyaAchievedRes[0]?.total || 0);
+
+                            res.json(counts);
+                          });
+                        });
+                      });
                     },
                   );
                 },
