@@ -371,7 +371,7 @@ summaryRouter.get("/bm-dashboard-counts", (req, res) => {
 
                         const amulyaTargetQuery = `
                           SELECT amount AS total 
-                          FROM targets 
+                          FROM dashboard_table 
                           WHERE period = ? AND branch_id = ? AND kpi='loan_amulya'
                         `;
 

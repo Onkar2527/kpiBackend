@@ -722,16 +722,19 @@ targetsRouter.post(
 
         const branchPlaceholders = branchIdArray.map(() => "?").join(",");
 
+        const allKpis = [...new Set(values.map((v) => v[2]))];
+        const kpiPlaceholders = allKpis.map(() => "?").join(",");
+
         const deleteQuery = `
         DELETE FROM dashboard_table
         WHERE period = ?
         AND branch_id IN (${branchPlaceholders})
-        AND kpi IN (?, ?)
+        AND kpi IN (${kpiPlaceholders})
       `;
 
         pool.query(
           deleteQuery,
-          [results[0].period, ...branchIdArray, "balance_deposit", "loan_gen"],
+          [results[0].period, ...branchIdArray, ...allKpis],
           (error) => {
             if (error) {
               console.error(" Delete error:", error);
@@ -821,16 +824,19 @@ targetsRouter.post(
 
         const branchPlaceholders = branchIdArray.map(() => "?").join(",");
 
+        const allKpis = [...new Set(values.map((v) => v[2]))];
+        const kpiPlaceholders = allKpis.map(() => "?").join(",");
+
         const deleteQuery = `
         DELETE FROM dashboard_total_achiveved
         WHERE period = ?
         AND branch_id IN (${branchPlaceholders})
-        AND kpi IN (?, ?)
+        AND kpi IN (${kpiPlaceholders})
       `;
 
         pool.query(
           deleteQuery,
-          [results[0].period, ...branchIdArray, "balance_deposit", "loan_gen"],
+          [results[0].period, ...branchIdArray, ...allKpis],
           (error) => {
             if (error) {
               console.error(" Delete error:", error);

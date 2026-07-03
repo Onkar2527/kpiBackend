@@ -23,30 +23,45 @@ entriesRouter.post("/", (req, res) => {
   try {
     if (type === "Remove") {
       if (typeOfDeposit?.toLowerCase() === "individual") {
-        const selectQuery = `SELECT value FROM entries WHERE period=? AND branch_id=? AND kpi=? AND employee_id=? AND account_no=?`;
+        const hasAccount = accountNo && accountNo.trim() !== "";
+        const selectQuery = hasAccount
+          ? `SELECT value FROM entries WHERE period=? AND branch_id=? AND kpi=? AND employee_id=? AND account_no=?`
+          : `SELECT value FROM entries WHERE period=? AND branch_id=? AND kpi=? AND employee_id=? AND (account_no IS NULL OR account_no='')`;
+
+        const queryParams = hasAccount
+          ? [period, branchId, kpi, employeeId, accountNo]
+          : [period, branchId, kpi, employeeId];
+
         pool.query(
           selectQuery,
-          [period, branchId, kpi, employeeId, accountNo],
+          queryParams,
           (err, results) => {
             if (err)
               return res
                 .status(500)
                 .json({ error: "Error fetching existing entry" });
             if (!results.length)
-              return res.status(404).json({ error: "Entry not found" });
+              return res.status(400).json({ error: "Insufficient balance. Current balance is 0." });
 
             const currentValue = Number(results[0].value || 0);
             const newValue = currentValue - Number(value || 0);
             if (newValue < 0)
               return res
                 .status(400)
-                .json({ error: "Cannot subtract beyond existing amount" });
+                .json({ error: `Insufficient balance. Current balance is ${currentValue}.` });
 
             if (newValue === 0) {
-              const delQuery = `DELETE FROM entries WHERE period=? AND branch_id=? AND kpi=? AND employee_id=? AND account_no=?`;
+              const delQuery = hasAccount
+                ? `DELETE FROM entries WHERE period=? AND branch_id=? AND kpi=? AND employee_id=? AND account_no=?`
+                : `DELETE FROM entries WHERE period=? AND branch_id=? AND kpi=? AND employee_id=? AND (account_no IS NULL OR account_no='')`;
+
+              const delParams = hasAccount
+                ? [period, branchId, kpi, employeeId, accountNo]
+                : [period, branchId, kpi, employeeId];
+
               pool.query(
                 delQuery,
-                [period, branchId, kpi, employeeId, accountNo],
+                delParams,
                 (err) => {
                   if (err)
                     return res
@@ -58,18 +73,17 @@ entriesRouter.post("/", (req, res) => {
                 },
               );
             } else {
-              const updateQuery = `UPDATE entries SET value=?, date=? WHERE period=? AND branch_id=? AND kpi=? AND employee_id=? AND account_no=?`;
+              const updateQuery = hasAccount
+                ? `UPDATE entries SET value=?, date=? WHERE period=? AND branch_id=? AND kpi=? AND employee_id=? AND account_no=?`
+                : `UPDATE entries SET value=?, date=? WHERE period=? AND branch_id=? AND kpi=? AND employee_id=? AND (account_no IS NULL OR account_no='')`;
+
+              const updateParams = hasAccount
+                ? [newValue, entryDate, period, branchId, kpi, employeeId, accountNo]
+                : [newValue, entryDate, period, branchId, kpi, employeeId];
+
               pool.query(
                 updateQuery,
-                [
-                  newValue,
-                  entryDate,
-                  period,
-                  branchId,
-                  kpi,
-                  employeeId,
-                  accountNo,
-                ],
+                updateParams,
                 (err) => {
                   if (err)
                     return res
@@ -88,14 +102,18 @@ entriesRouter.post("/", (req, res) => {
       }
 
       if (typeOfDeposit?.toLowerCase() === "combined") {
-        const selectQuery = `
-    SELECT SUM(value) AS totalValue 
-    FROM entries 
-    WHERE period=? AND branch_id=? AND kpi=? AND account_no=?`;
+        const hasAccount = accountNo && accountNo.trim() !== "";
+        const selectQuery = hasAccount
+          ? `SELECT SUM(value) AS totalValue FROM entries WHERE period=? AND branch_id=? AND kpi=? AND account_no=?`
+          : `SELECT SUM(value) AS totalValue FROM entries WHERE period=? AND branch_id=? AND kpi=? AND (account_no IS NULL OR account_no='') AND type='Combined'`;
+
+        const selectParams = hasAccount
+          ? [period, branchId, kpi, accountNo]
+          : [period, branchId, kpi];
 
         pool.query(
           selectQuery,
-          [period, branchId, kpi, accountNo],
+          selectParams,
           (err, results) => {
             if (err)
               return res
@@ -109,13 +127,17 @@ entriesRouter.post("/", (req, res) => {
             if (newTotal < 0)
               return res
                 .status(400)
-                .json({ error: "Cannot subtract beyond existing total" });
+                .json({ error: `Insufficient balance. Current balance is ${existingTotal}.` });
 
-            const delQuery = `
-      DELETE FROM entries 
-      WHERE period=? AND branch_id=? AND kpi=? AND account_no=?`;
+            const delQuery = hasAccount
+              ? `DELETE FROM entries WHERE period=? AND branch_id=? AND kpi=? AND account_no=?`
+              : `DELETE FROM entries WHERE period=? AND branch_id=? AND kpi=? AND (account_no IS NULL OR account_no='') AND type='Combined'`;
 
-            pool.query(delQuery, [period, branchId, kpi, accountNo], (err) => {
+            const delParams = hasAccount
+              ? [period, branchId, kpi, accountNo]
+              : [period, branchId, kpi];
+
+            pool.query(delQuery, delParams, (err) => {
               if (err)
                 return res
                   .status(500)
@@ -123,7 +145,7 @@ entriesRouter.post("/", (req, res) => {
 
               if (newTotal === 0) {
                 return res.json({
-                  message: "Entries removed for this account (value reached 0)",
+                  message: "Entries removed (value reached 0)",
                 });
               }
 
@@ -146,26 +168,36 @@ entriesRouter.post("/", (req, res) => {
                   branchId,
                   s.id,
                   kpi,
-                  accountNo,
+                  hasAccount ? accountNo : null,
                   baseValue + (i < remainder ? 1 : 0),
                   entryDate,
                   typeOfDeposit,
                   "Pending",
                 ]);
 
+                const nonZeroEntries = entries.filter(e => e[5] > 0);
+
+                if (nonZeroEntries.length === 0) {
+                  return res.json({
+                    message: `Combined entries updated (no non-zero entries to insert)`,
+                    newTotal,
+                    perEmployee: baseValue,
+                  });
+                }
+
                 const insertQuery = `
           INSERT INTO entries 
           (period, branch_id, employee_id, kpi, account_no, value, date, type, status)
           VALUES ?`;
 
-                pool.query(insertQuery, [entries], (err) => {
+                pool.query(insertQuery, [nonZeroEntries], (err) => {
                   if (err)
                     return res
                       .status(500)
                       .json({ error: "Error inserting adjusted entries" });
 
                   return res.json({
-                    message: `Combined entries updated for account ${accountNo}`,
+                    message: `Combined entries updated`,
                     newTotal,
                     perEmployee: baseValue,
                   });
@@ -228,8 +260,17 @@ entriesRouter.post("/", (req, res) => {
           "Pending",
         ]);
 
-        const insertQuery = `INSERT INTO entries (period, branch_id, employee_id, kpi, account_no, value, date, type, status) VALUES ?`;
-        pool.query(insertQuery, [entries], (err) => {
+        const nonZeroEntries = entries.filter(e => e[5] > 0);
+
+        if (nonZeroEntries.length === 0) {
+          return res.json({
+            message: `Combined entries distributed (no non-zero entries to insert)`,
+            distributedValue: totalValue,
+            perEmployee: baseValue,
+          });
+        }
+
+        pool.query(insertQuery, [nonZeroEntries], (err) => {
           if (err)
             return res.status(500).json({ error: "Failed to insert entries" });
           return res.json({
