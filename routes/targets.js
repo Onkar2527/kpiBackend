@@ -37,34 +37,57 @@ targetsRouter.post("/upload", upload.single("targetFile"), (req, res) => {
     .pipe(csv())
     .on("data", (data) => results.push(data))
     .on("end", () => {
+      if (results.length === 0) {
+        return res.status(400).json({ error: "No data found in CSV" });
+      }
+
       let values = [];
 
+      // Find period key case-insensitively
+      const periodKey = Object.keys(results[0] || {}).find(
+        (k) => k.trim().toLowerCase() === "period"
+      );
+      const firstPeriod = periodKey ? (results[0][periodKey] || "").toString().trim() : "";
+
+      // Find branch_id key case-insensitively
+      const branchIdKey = Object.keys(results[0] || {}).find(
+        (k) => k.trim().toLowerCase() === "branch_id"
+      );
+
       results.forEach((row) => {
-        let periodKey = Object.keys(row).find(
-          (k) => k.trim().toLowerCase() === "period",
-        );
-        const period = (row[periodKey] || "").trim();
+        const period = periodKey ? (row[periodKey] || "").toString().trim() : "";
+        const branch_id = branchIdKey ? (row[branchIdKey] || "").toString().trim() : "";
 
         Object.keys(row).forEach((key) => {
           const cleanKey = key.trim();
-          if (cleanKey && cleanKey !== "branch_id" && cleanKey !== "period") {
+          if (
+            cleanKey &&
+            cleanKey.toLowerCase() !== "branch_id" &&
+            cleanKey.toLowerCase() !== "period"
+          ) {
             const amount = row[key] === "" || row[key] == null ? 0 : row[key];
-            values.push([period, row.branch_id, cleanKey, amount, "published"]);
+            values.push([period, branch_id, cleanKey, amount, "published"]);
           }
         });
       });
 
       results.forEach((row) => {
-        let periodKey = Object.keys(row).find(
-          (k) => k.trim().toLowerCase() === "period",
-        );
-        const period = (row[periodKey] || "").trim();
-        if (!Object.keys(row).some((k) => k.trim() === "audit")) {
-          values.push([period, row.branch_id, "audit", 100, "published"]);
+        const period = periodKey ? (row[periodKey] || "").toString().trim() : "";
+        const branch_id = branchIdKey ? (row[branchIdKey] || "").toString().trim() : "";
+        
+        const hasAudit = Object.keys(row).some((k) => k.trim().toLowerCase() === "audit");
+        if (!hasAudit) {
+          values.push([period, branch_id, "audit", 100, "published"]);
         }
       });
 
-      const branchIds = [...new Set(results.map((r) => r.branch_id))];
+      const branchIds = [
+        ...new Set(
+          results
+            .map((r) => (branchIdKey ? (r[branchIdKey] || "").toString().trim() : ""))
+            .filter(Boolean)
+        ),
+      ];
       const placeholders = branchIds.map(() => "?").join(",");
 
       const allKpis = [...new Set(values.map((v) => v[2]))];
@@ -79,7 +102,7 @@ targetsRouter.post("/upload", upload.single("targetFile"), (req, res) => {
 
       pool.query(
         deleteQuery,
-        [results[0].period, ...branchIds, ...allKpis],
+        [firstPeriod, ...branchIds, ...allKpis],
         (error) => {
           if (error) {
             console.error("Delete error:", error);
@@ -88,7 +111,7 @@ targetsRouter.post("/upload", upload.single("targetFile"), (req, res) => {
 
           pool.query(
             "INSERT IGNORE INTO periods (period) VALUES (?)",
-            [results[0].period],
+            [firstPeriod],
             (error) => {
               if (error) console.error("Error inserting period:", error);
             },
@@ -104,7 +127,7 @@ targetsRouter.post("/upload", upload.single("targetFile"), (req, res) => {
               }
 
               branchIds.forEach((branchId) => {
-                autoDistributeTargets(results[0].period, branchId, (err) => {
+                autoDistributeTargets(firstPeriod, branchId, (err) => {
                   if (err)
                     console.error(
                       `Error auto-distributing targets for branch ${branchId}:`,
@@ -137,14 +160,17 @@ targetsRouter.post("/upload1", upload.single("targetFile"), (req, res) => {
 
       let values = [];
 
-      results.forEach((row) => {
+      const normalizedResults = results.map((row) => {
         const normalized = {};
         for (const key in row) {
           if (!key) continue;
           const cleanKey = key.trim().toLowerCase();
           normalized[cleanKey] = (row[key] || "").toString().trim();
         }
+        return normalized;
+      });
 
+      normalizedResults.forEach((normalized) => {
         const period = normalized["period"];
         const branchId = normalized["branch_id"];
         if (!period || !branchId) return;
@@ -158,9 +184,9 @@ targetsRouter.post("/upload1", upload.single("targetFile"), (req, res) => {
         });
       });
 
-      const firstPeriod = results[0]["period"] || results[0].period;
+      const firstPeriod = normalizedResults[0]?.["period"] || "";
       const branchIds = [
-        ...new Set(results.map((r) => r["branch_id"] || r.branch_id)),
+        ...new Set(normalizedResults.map((r) => r["branch_id"]).filter(Boolean)),
       ];
       const placeholders = branchIds.map(() => "?").join(",");
 
@@ -183,13 +209,6 @@ targetsRouter.post("/upload1", upload.single("targetFile"), (req, res) => {
             return res.status(500).json({ error: "Internal server error" });
           }
 
-          pool.query(
-            "INSERT IGNORE INTO periods (period) VALUES (?)",
-            [firstPeriod],
-            (error) => {
-              if (error) console.error("Error inserting period:", error);
-            },
-          );
 
           pool.query(
             "INSERT INTO targets (period, branch_id, kpi, amount, state) VALUES ?",
@@ -354,7 +373,7 @@ function uploadbranches(
             return next();
           }
 
-         
+
           pool.query(
             `SELECT id, staff_id, old_branch_id, new_branch_id, transfer_date, new_designation
              FROM employee_transfer
@@ -604,7 +623,7 @@ function uploadbranches(
                       if (err) return rollback(err);
 
                       if (--pending === 0) {
-                        afterAll(); 
+                        afterAll();
                       }
                     }
                   }
@@ -1182,7 +1201,7 @@ function processBranch(
     return diff < 0 ? 0 : diff;
   }
 
-  
+
   pool.query(
     "SELECT id FROM users WHERE role='BM' AND branch_id=? AND period=? AND resign=0 LIMIT 1",
     [sheetBranch, period],
@@ -1197,7 +1216,7 @@ function processBranch(
 
       const bmId = bmRows[0].id;
 
-      
+
       pool.query(
         `INSERT INTO entries (period, branch_id, employee_id, kpi, value, status)
          VALUES (?, ?, ?, 'recovery', ?, 'Verified')`,
@@ -1208,7 +1227,7 @@ function processBranch(
             return next();
           }
 
-         
+
           pool.query(
             `SELECT id, staff_id, old_branch_id, new_branch_id, transfer_date, old_designation, new_designation
              FROM employee_transfer
@@ -1289,7 +1308,7 @@ function processBranch(
                     }
                   }
 
-                  
+
                   pool.query(
                     `SELECT id, user_add_date
                      FROM users
@@ -1339,7 +1358,7 @@ function processBranch(
                     let pending = updates.length;
 
                     function afterAll() {
-                     
+
                       conn.query(
                         `SELECT id, transfer_date
                          FROM bm_transfer_target

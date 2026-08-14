@@ -587,21 +587,29 @@ summaryRouter.get("/bm-scores", async (req, res) => {
       let recoveryRatio = 0;
 
       updatedResults.forEach((r) => {
-        const tNum = Number(r.target) || 0;
-        if (r.kpi === "audit") auditRatio = tNum ? r.achieved / tNum : 0;
-        if (r.kpi === "recovery") recoveryRatio = tNum ? r.achieved / tNum : 0;
+        const prevBal = Number(r.baseline) || 0;
+        const targetN = Number(r.target) || 0;
+        const currentAch = Number(r.achieved) || 0;
+        const ratioVal = targetN > 0 ? Math.max(0, (currentAch - prevBal) / targetN) : 0;
+        if (r.kpi === "audit") auditRatio = ratioVal;
+        if (r.kpi === "recovery") recoveryRatio = ratioVal;
       });
 
       updatedResults.forEach((row) => {
         if (!bmKpis.includes(row.kpi)) return;
 
-        const isBaselineOnly =
-          row.baseline > 0 && Number(row.achieved) <= Number(row.baseline);
+        const previousBalance = Number(row.baseline) || 0;
+        const newTarget = Number(row.target) || 0;
+        const totalTarget = previousBalance + newTarget;
+        const currentAchieved = Number(row.achieved) || 0;
+
+        const isBaselineOnly = previousBalance > 0 && currentAchieved <= previousBalance;
         let outOf10 = 0;
-        const targetNum = Number(row.target) || 0;
-        const ratio = targetNum ? row.achieved / targetNum : 0;
+        let ratio = 0;
 
         if (!isBaselineOnly) {
+          ratio = newTarget > 0 ? Math.max(0, (currentAchieved - previousBalance) / newTarget) : 0;
+
           switch (row.kpi) {
             case "deposit":
             case "loan_gen":
@@ -633,14 +641,17 @@ summaryRouter.get("/bm-scores", async (req, res) => {
 
         const weightageScore = isBaselineOnly
           ? 0
-          : row.kpi === "insurance" && (isNaN(ratio) || ratio === 0)
+          : row.kpi === "insurance" && newTarget > 0 && (isNaN(ratio) || ratio === 0)
             ? -2
             : (outOf10 * (row.weightage || 0)) / 100;
 
         scores[row.kpi] = {
           score: outOf10,
-          target: row.target,
-          achieved: isBaselineOnly ? 0 : (row.achieved || 0),
+          previousBalance,
+          newTarget,
+          totalTarget,
+          target: totalTarget, // for backward compatibility with UI
+          achieved: isBaselineOnly ? 0 : currentAchieved,
           weightage: row.weightage || 0,
           weightageScore,
         };
