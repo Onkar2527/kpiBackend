@@ -137,7 +137,7 @@ summaryRouter.get("/scores", (req, res) => {
 
               case "insurance":
                 if (ratio === 0) {
-                  outOf10 = -2;
+                  outOf10 = 0;
                 } else if (ratio <= 1) {
                   outOf10 = ratio * 10;
                 } else if (ratio < 1.25) {
@@ -270,8 +270,8 @@ summaryRouter.get("/bm-dashboard-counts", (req, res) => {
 
       const totalTargetsQuery = `
       SELECT amount AS total 
-      FROM dashboard_table 
-      WHERE period = ? AND branch_id = ? AND kpi='balance_deposit'
+      FROM targets 
+      WHERE period = ? AND branch_id = ? AND kpi='deposit'
     `;
 
       pool.query(totalTargetsQuery, [period, branchId], (error, results2) => {
@@ -321,7 +321,7 @@ summaryRouter.get("/bm-dashboard-counts", (req, res) => {
 
               const totalTargetsQuery = `
       SELECT amount AS total 
-      FROM dashboard_table 
+      FROM targets 
       WHERE period = ? AND branch_id = ? AND kpi='loan_gen'
     `;
 
@@ -371,7 +371,7 @@ summaryRouter.get("/bm-dashboard-counts", (req, res) => {
 
                         const amulyaTargetQuery = `
                           SELECT amount AS total 
-                          FROM dashboard_table 
+                          FROM targets 
                           WHERE period = ? AND branch_id = ? AND kpi='loan_amulya'
                         `;
 
@@ -628,6 +628,7 @@ summaryRouter.get("/bm-scores", async (req, res) => {
               else outOf10 = 12.5;
               break;
 
+
             case "recovery":
             case "audit":
               if (isNaN(ratio)) outOf10 = 0;
@@ -641,9 +642,7 @@ summaryRouter.get("/bm-scores", async (req, res) => {
 
         const weightageScore = isBaselineOnly
           ? 0
-          : row.kpi === "insurance" && newTarget > 0 && (isNaN(ratio) || ratio === 0)
-            ? -2
-            : (outOf10 * (row.weightage || 0)) / 100;
+          : (outOf10 * (row.weightage || 0)) / 100;
 
         scores[row.kpi] = {
           score: outOf10,
@@ -670,8 +669,8 @@ summaryRouter.get("/bm-scores", async (req, res) => {
 
     const cap =
       preliminaryScores.total > 10 &&
-      insuranceScore < 7.5 &&
-      recoveryScore < 7.5
+        insuranceScore < 7.5 &&
+        recoveryScore < 7.5
         ? 10
         : 12.5;
 
@@ -732,13 +731,22 @@ summaryRouter.get("/staff-scores", async (req, res) => {
           }
           break;
 
-        case "recovery":
-        case "audit":
         case "insurance":
           if (ratio <= 1) {
             outOf10 = ratio * 10;
           } else if (ratio < 1.25) {
             outOf10 = 10;
+          } else {
+            outOf10 = 12.5;
+          }
+          break;
+
+        case "recovery":
+        case "audit":
+          if (isNaN(ratio)) {
+            outOf10 = 0;
+          } else if (ratio <= 1) {
+            outOf10 = ratio * 10;
           } else {
             outOf10 = 12.5;
           }
@@ -1070,12 +1078,7 @@ ORDER BY k.kpi
                       target: row.target || 0,
                       achieved: row.achieved || 0,
                       weightage: row.weightage || 0,
-                      weightageScore:
-                        row.kpi === "insurance" && score === 0
-                          ? -2
-                          : isNaN(weightageScore)
-                            ? 0
-                            : weightageScore,
+                      weightageScore: isNaN(weightageScore) ? 0 : weightageScore,
                     };
                   });
 
@@ -1085,21 +1088,34 @@ ORDER BY k.kpi
                   // 1. Calculate audit and recovery scores first
                   results.forEach((row) => {
                     if (row.kpi === "audit" || row.kpi === "recovery") {
+                      const previousBalance = Number(row.baseline) || 0;
+                      const newTarget = Number(row.target) || 0;
+                      const totalTarget = previousBalance + newTarget;
+                      const currentAchieved = Number(row.achieved) || 0;
+
                       const isBaselineOnly =
-                        row.baseline > 0 &&
-                        Number(row.achieved) <= Number(row.baseline);
+                        previousBalance > 0 &&
+                        currentAchieved <= previousBalance;
                       const score = isBaselineOnly
                         ? 0
-                        : calculateScore(row.kpi, row.achieved, row.target);
+                        : calculateScore(
+                          row.kpi,
+                          previousBalance > 0 ? currentAchieved - previousBalance : currentAchieved,
+                          newTarget
+                        );
+                      const weightage = Number(row.weightage) || 0;
                       const weightageScore = isBaselineOnly
                         ? 0
-                        : (score * row.weightage) / 100;
+                        : (score * weightage) / 100;
 
                       scores[row.kpi] = {
                         score,
-                        target: row.target || 0,
-                        achieved: isBaselineOnly ? 0 : (row.achieved || 0),
-                        weightage: row.weightage || 0,
+                        previousBalance,
+                        newTarget,
+                        totalTarget,
+                        target: totalTarget, // for backward compatibility with UI
+                        achieved: isBaselineOnly ? 0 : currentAchieved,
+                        weightage,
                         weightageScore: isBaselineOnly
                           ? 0
                           : isNaN(weightageScore)
@@ -1112,35 +1128,41 @@ ORDER BY k.kpi
                   // 2. Calculate remaining KPIs using the audit/recovery scores
                   results.forEach((row) => {
                     if (row.kpi && row.kpi !== "audit" && row.kpi !== "recovery") {
+                      const previousBalance = Number(row.baseline) || 0;
+                      const newTarget = Number(row.target) || 0;
+                      const totalTarget = previousBalance + newTarget;
+                      const currentAchieved = Number(row.achieved) || 0;
+
                       const isBaselineOnly =
-                        row.baseline > 0 &&
-                        Number(row.achieved) <= Number(row.baseline);
+                        previousBalance > 0 &&
+                        currentAchieved <= previousBalance;
                       const score = isBaselineOnly
                         ? 0
                         : calculateScore(
-                            row.kpi,
-                            row.achieved,
-                            row.target,
-                            scores.audit?.score || 0,
-                            scores.recovery?.score || 0,
-                          );
+                          row.kpi,
+                          previousBalance > 0 ? currentAchieved - previousBalance : currentAchieved,
+                          newTarget,
+                          scores.audit?.score || 0,
+                          scores.recovery?.score || 0,
+                        );
+                      const weightage = Number(row.weightage) || 0;
                       const weightageScore = isBaselineOnly
                         ? 0
-                        : (score * row.weightage) / 100;
+                        : (score * weightage) / 100;
 
                       scores[row.kpi] = {
                         score,
-                        target: row.target || 0,
-                        achieved: isBaselineOnly ? 0 : (row.achieved || 0),
-                        weightage: row.weightage || 0,
+                        previousBalance,
+                        newTarget,
+                        totalTarget,
+                        target: totalTarget, // for backward compatibility with UI
+                        achieved: isBaselineOnly ? 0 : currentAchieved,
+                        weightage,
                         weightageScore: isBaselineOnly
                           ? 0
-                          : row.kpi === "insurance" &&
-                              (score === 0 || score === undefined)
-                            ? -2
-                            : isNaN(weightageScore)
-                              ? 0
-                              : weightageScore,
+                          : isNaN(weightageScore)
+                            ? 0
+                            : weightageScore,
                       };
                     }
                   });
@@ -1194,13 +1216,23 @@ ORDER BY k.kpi
                     getTransferKpiHistory(pool, period, employeeId),
                   ])
                     .then(([hoHistory, attHistory, transferHistory]) => {
-                      let isTransferClerkOrBm = transferHistory && transferHistory.transfers && transferHistory.transfers.length > 0;
+                      const previousHoTransfers = hoHistory?.[0]?.transfers || [];
+                      const previousAttTransfers = attHistory?.[0]?.transfers || [];
+                      const previousClerkTransfers = transferHistory?.transfers || [];
+
+                      const allTransfers = [
+                        ...previousHoTransfers,
+                        ...previousAttTransfers,
+                        ...previousClerkTransfers,
+                      ];
+
+                      let isTransferClerkOrBm = allTransfers.length > 0;
 
                       if (isTransferClerkOrBm) {
                         let sumOfPrevious = 0;
                         const transferCalcs = [];
 
-                        transferHistory.transfers.forEach((t) => {
+                        allTransfers.forEach((t) => {
                           const rawScore = Number(t.total_weightage_score || 0);
                           const months = Number(t.months || 0);
                           const proportionateScore = months > 0 ? (rawScore / 12) * months : rawScore;
@@ -1221,8 +1253,7 @@ ORDER BY k.kpi
                           Number(scores.recovery?.weightageScore || 0) +
                           Number(scores.audit?.weightageScore || 0);
 
-                        const totalCount = transferCalcs.length + 1;
-                        const averageExcludingInsurance = (sumOfPrevious + currentScoreExcludingInsurance) / totalCount;
+                        const averageExcludingInsurance = sumOfPrevious + currentScoreExcludingInsurance;
                         const insuranceScore = Number(scores.insurance?.weightageScore || 0);
                         const finalKpaScore = averageExcludingInsurance + insuranceScore;
 
@@ -1262,7 +1293,7 @@ ORDER BY k.kpi
                         const finalAvg =
                           allScores.length > 0
                             ? allScores.reduce((a, b) => a + b, 0) /
-                              allScores.length
+                            allScores.length
                             : 0;
 
                         scores.originalTotal = scores.total;
@@ -1340,7 +1371,7 @@ export async function getTransferKpiHistory(pool, period, staff_id) {
               return Math.max(
                 0,
                 (d2.getFullYear() - d1.getFullYear()) * 12 +
-                  (d2.getMonth() - d1.getMonth())
+                (d2.getMonth() - d1.getMonth())
               );
             };
 
@@ -1445,8 +1476,12 @@ export async function getTransferKpiHistory(pool, period, staff_id) {
                 if (!row.target) return;
 
                 const baseline = ["deposit", "loan_gen", "loan_amulya"].includes(row.key)
-                  ? (baselineMap[`${t.old_branch_id}_${row.key}`] || 0)
+                  ? (Number(t[`${row.key}_baseline`]) || baselineMap[`${t.old_branch_id}_${row.key}`] || 0)
                   : 0;
+
+                // Scale baseline and target by month factor
+                const scaledBaseline = (Number(baseline) / 12) * months;
+                const scaledTarget = (Number(row.target || 0) / 12) * months;
 
                 let achievedValue = ["deposit", "loan_gen", "loan_amulya"].includes(row.key)
                   ? Number(row.achieved || 0) + Number(baseline)
@@ -1454,7 +1489,6 @@ export async function getTransferKpiHistory(pool, period, staff_id) {
 
                 // Scale achievement by month factor
                 achievedValue = (achievedValue / 12) * months;
-                const scaledBaseline = (Number(baseline) / 12) * months;
 
                 const isBaselineOnly =
                   ["deposit", "loan_gen", "loan_amulya"].includes(row.key) &&
@@ -1463,7 +1497,7 @@ export async function getTransferKpiHistory(pool, period, staff_id) {
 
                 const score = isBaselineOnly
                   ? 0
-                  : calculateScore(row.key, achievedValue, row.target);
+                  : calculateScore(row.key, achievedValue, scaledTarget);
 
                 const weightage = weightageMap[row.key] || 0;
                 const weightageScore = isBaselineOnly
@@ -1471,7 +1505,10 @@ export async function getTransferKpiHistory(pool, period, staff_id) {
                   : (score * weightage) / 100;
                 branchScores[row.key] = {
                   achieved: isBaselineOnly ? 0 : Number(achievedValue.toFixed(2)),
-                  target: Number(Number(row.target || 0).toFixed(2)),
+                  previousBalance: Number(scaledBaseline.toFixed(2)),
+                  newTarget: Number(scaledTarget.toFixed(2)),
+                  totalTarget: Number((scaledTarget + scaledBaseline).toFixed(2)),
+                  target: Number(scaledTarget.toFixed(2)),
                   score,
                   weightage,
                   weightageScore,
@@ -1578,11 +1615,16 @@ summaryRouter.get("/staff-scores-all", async (req, res) => {
           else outOf10 = 10;
           break;
 
-        case "recovery":
-        case "audit":
         case "insurance":
           if (ratio <= 1) outOf10 = ratio * 10;
           else if (ratio < 1.25) outOf10 = 10;
+          else outOf10 = 12.5;
+          break;
+
+        case "recovery":
+        case "audit":
+          if (isNaN(ratio)) outOf10 = 0;
+          else if (ratio <= 1) outOf10 = ratio * 10;
           else outOf10 = 12.5;
           break;
 
@@ -1775,18 +1817,33 @@ ORDER BY u.id, k.kpi;
           };
         }
 
+        const previousBalance = Number(row.baseline) || 0;
+        const newTarget = Number(row.target) || 0;
+        const totalTarget = previousBalance + newTarget;
+        const currentAchieved = Number(row.achieved) || 0;
+
         const isBaselineOnly =
-          row.baseline > 0 && Number(row.achieved) <= Number(row.baseline);
+          previousBalance > 0 && currentAchieved <= previousBalance;
         const score = isBaselineOnly
           ? 0
-          : calculateScore(row.kpi, row.achieved, row.target);
+          : calculateScore(
+            row.kpi,
+            previousBalance > 0 ? currentAchieved - previousBalance : currentAchieved,
+            newTarget
+          );
+
+        const weightage = Number(row.weightage) || 0;
+        const weightageScore = isBaselineOnly ? 0 : (score * weightage) / 100;
 
         staffScores[id][row.kpi] = {
           score,
-          target: Number(row.target),
-          achieved: isBaselineOnly ? 0 : Number(row.achieved),
-          weightage: Number(row.weightage),
-          weightageScore: isBaselineOnly ? 0 : (score * row.weightage) / 100,
+          previousBalance,
+          newTarget,
+          totalTarget,
+          target: totalTarget, // for backward compatibility with UI
+          achieved: isBaselineOnly ? 0 : currentAchieved,
+          weightage,
+          weightageScore: isBaselineOnly ? 0 : weightageScore,
         };
       }
     });
@@ -1796,30 +1853,37 @@ ORDER BY u.id, k.kpi;
 
       const id = row.staffId;
 
+      const previousBalance = Number(row.baseline) || 0;
+      const newTarget = Number(row.target) || 0;
+      const totalTarget = previousBalance + newTarget;
+      const currentAchieved = Number(row.achieved) || 0;
+
       const isBaselineOnly =
-        row.baseline > 0 && Number(row.achieved) <= Number(row.baseline);
+        previousBalance > 0 && currentAchieved <= previousBalance;
       const score = isBaselineOnly
         ? 0
         : calculateScore(
-            row.kpi,
-            row.achieved,
-            row.target,
-            staffScores[id]?.audit?.score || 0,
-            staffScores[id]?.recovery?.score || 0,
-          );
+          row.kpi,
+          previousBalance > 0 ? currentAchieved - previousBalance : currentAchieved,
+          newTarget,
+          staffScores[id]?.audit?.score || 0,
+          staffScores[id]?.recovery?.score || 0,
+        );
 
-      const weighted = (score * row.weightage) / 100;
+      const weightage = Number(row.weightage) || 0;
+      const weighted = (score * weightage) / 100;
 
       staffScores[id][row.kpi] = {
         score,
-        target: Number(row.target),
-        achieved: isBaselineOnly ? 0 : Number(row.achieved),
-        weightage: Number(row.weightage),
+        previousBalance,
+        newTarget,
+        totalTarget,
+        target: totalTarget, // for backward compatibility with UI
+        achieved: isBaselineOnly ? 0 : currentAchieved,
+        weightage,
         weightageScore: isBaselineOnly
           ? 0
-          : row.kpi === "insurance" && score === 0
-            ? -2
-            : weighted,
+          : weighted,
       };
     });
 
@@ -1956,7 +2020,6 @@ summaryRouter.get("/ho-hod-scores", (req, res) => {
 
           const weightage = weightageMap[kpi] || 0;
           let weightageScore = (score * weightage) / 100;
-          if (kpi === "insurance" && score === 0) weightageScore = -2;
 
           scores[kpi] = { score, achieved, weightage, weightageScore };
           totalWeightageScore += weightageScore;
@@ -2023,7 +2086,6 @@ summaryRouter.get("/specfic-hostaff-scores", (req, res) => {
         else score = 12.5;
 
         let weightageScore = (score * (weightageMap[kpi] || 0)) / 100;
-        if (kpi === "insurance" && score === 0) weightageScore = -2;
 
         scores[kpi] = {
           score,
@@ -2144,8 +2206,8 @@ summaryRouter.get("/transfer-bm-scores", (req, res) => {
             return Math.max(
               0,
               (d2.getFullYear() - d1.getFullYear()) * 12 +
-                (d2.getMonth() - d1.getMonth()) +
-                1,
+              (d2.getMonth() - d1.getMonth()) +
+              1,
             );
           }
 
@@ -2282,7 +2344,7 @@ summaryRouter.get("/transfer-bm-scores", (req, res) => {
                                   break;
 
                                 case "insurance":
-                                  if (ratio === 0) outOf10 = -2;
+                                  if (ratio === 0) outOf10 = 0;
                                   else if (ratio <= 1) outOf10 = ratio * 10;
                                   else if (ratio < 1.25) outOf10 = 10;
                                   else outOf10 = 12.5;
@@ -2294,19 +2356,14 @@ summaryRouter.get("/transfer-bm-scores", (req, res) => {
 
                             let weightScore = isBaselineOnly
                               ? 0
-                              : kpi === "insurance" && outOf10 === 0
-                                ? -2
-                                : (outOf10 * weight) / 100;
+                              : (outOf10 * weight) / 100;
 
                             scores[kpi] = {
                               score: outOf10,
                               target,
                               achieved,
                               weightage: weight,
-                              weightageScore:
-                                kpi === "insurance" && outOf10 === 0
-                                  ? -2
-                                  : weightScore,
+                              weightageScore: weightScore,
                             };
 
                             total += weightScore;
@@ -2316,31 +2373,31 @@ summaryRouter.get("/transfer-bm-scores", (req, res) => {
                           return scores;
                         };
 
-                    const prelim = calculateScores(12.5);
+                        const prelim = calculateScores(12.5);
 
-                    const cap =
-                      prelim.total > 10 &&
-                      prelim.insurance.score < 7.5 &&
-                      prelim.recovery.score < 7.5
-                        ? 10
-                        : 12.5;
+                        const cap =
+                          prelim.total > 10 &&
+                            prelim.insurance.score < 7.5 &&
+                            prelim.recovery.score < 7.5
+                            ? 10
+                            : 12.5;
 
-                    const finalScores = calculateScores(cap);
+                        const finalScores = calculateScores(cap);
 
-                    res.json({
-                      ...finalScores,
-                      totalMonthsWorked: totalMonths,
-                    });
-                  });
+                        res.json({
+                          ...finalScores,
+                          totalMonthsWorked: totalMonths,
+                        });
+                      });
+                    },
+                  );
                 },
               );
             },
           );
         },
       );
-    },
-  );
-});
+    });
 });
 
 // all branch or gm  all attender api and also for get specific attender score /// this old api not existing transfer history //21-02-2026
@@ -2507,10 +2564,7 @@ summaryRouter.get("/branch-attenders", async (req, res) => {
             else score = 12.5;
           }
 
-          const weightageScore =
-            kpi.kpi_name.toLowerCase().includes("insurance") && achieved === 0
-              ? -2
-              : (score * kpi.weightage) / 100;
+          const weightageScore = (score * kpi.weightage) / 100;
 
           finalKpis[kpi.kpi_name] = {
             target,
@@ -2547,7 +2601,17 @@ summaryRouter.get("/branch-attenders", async (req, res) => {
 
         const previousTransferScores = transferHistory?.all_scores || [];
 
-        const isTransferClerkOrBm = transferHistory && transferHistory.transfers && transferHistory.transfers.length > 0;
+        const previousHoTransfers = hoHistory?.[0]?.transfers || [];
+        const previousAttTransfers = attHistory?.[0]?.transfers || [];
+        const previousClerkTransfers = transferHistory?.transfers || [];
+
+        const allTransfers = [
+          ...previousHoTransfers,
+          ...previousAttTransfers,
+          ...previousClerkTransfers,
+        ];
+
+        const isTransferClerkOrBm = allTransfers.length > 0;
 
         let finalAvg;
         if (isTransferClerkOrBm) {
@@ -2560,18 +2624,16 @@ summaryRouter.get("/branch-attenders", async (req, res) => {
 
           const insuranceScore = Number(finalKpis.insurance?.weightageScore || 0);
 
-          const allScoresExclInsurance = [
-            ...previousHoScores,
-            ...previousAttenderScores,
-            ...previousTransferScores,
-            currentScoreExcludingInsurance,
-          ];
+          let sumOfPrevious = 0;
+          allTransfers.forEach((t) => {
+            const rawScore = Number(t.total_weightage_score || 0);
+            const months = Number(t.months || 0);
+            const proportionateScore = months > 0 ? (rawScore / 12) * months : rawScore;
+            sumOfPrevious += proportionateScore;
+          });
 
-          const avgExclInsurance = allScoresExclInsurance.length > 0
-            ? allScoresExclInsurance.reduce((a, b) => a + b, 0) / allScoresExclInsurance.length
-            : 0;
-
-          finalAvg = avgExclInsurance + insuranceScore;
+          const averageExcludingInsurance = sumOfPrevious + currentScoreExcludingInsurance;
+          finalAvg = averageExcludingInsurance + insuranceScore;
         } else {
           const allScores = [
             ...previousHoScores,

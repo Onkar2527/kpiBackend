@@ -4,6 +4,18 @@ import bcrypt from "bcryptjs";
 
 export const mastersRouter = express.Router();
 
+function parseTransferId(rawId) {
+  const str = String(rawId);
+  if (str.startsWith("emp_")) {
+    return { type: "emp", id: parseInt(str.substring(4), 10) };
+  } else if (str.startsWith("ho_")) {
+    return { type: "ho", id: parseInt(str.substring(3), 10) };
+  } else if (str.startsWith("att_")) {
+    return { type: "att", id: parseInt(str.substring(4), 10) };
+  }
+  return { type: "emp", id: parseInt(str, 10) };
+}
+
 // Departments
 mastersRouter.get("/departments", (req, res) => {
   pool.query("SELECT * FROM departments", (error, results) => {
@@ -97,11 +109,14 @@ mastersRouter.put("/weightages", (req, res) => {
 });
 
 // Users
-mastersRouter.post("/users", (req, res) => {
-  const {period}=req.body;
+mastersRouter.post("/users", (req, res, next) => {
+  if (req.body.username || req.body.name || req.body.password) {
+    return next();
+  }
+  const { period } = req.body;
   pool.query(
     "SELECT u.id, u.username, u.name, u.role, b.name as branch_name, u.PF_NO, d.name as department_name,u.branch_id,u.hod_id,u.transfer_date,u1.name as hod_name FROM users u left join branches b on u.branch_id=b.code AND b.period = ? left join departments d on d.id=u.department_id left join users u1 on u.hod_id = u1.id WHERE u.resign=0 AND u.period = ? ",
-    [period,period],(error, results) => {
+    [period, period], (error, results) => {
       if (error)
         return res.status(500).json({ error: "Internal server error" });
       res.json(results);
@@ -172,9 +187,8 @@ mastersRouter.put("/users/:id", (req, res) => {
     department_id,
     PF_NO,
     password,
-    hod_id,period
+    hod_id, period
   } = req.body;
-  const password_hash = bcrypt.hashSync(password, 10);
   const user = {
     username,
     name,
@@ -182,9 +196,11 @@ mastersRouter.put("/users/:id", (req, res) => {
     branch_id,
     department_id,
     PF_NO,
-    password_hash,
-    hod_id,period
+    hod_id, period
   };
+  if (password) {
+    user.password_hash = bcrypt.hashSync(password, 10);
+  }
   pool.query(
     "UPDATE users SET ? WHERE id = ?",
     [user, req.params.id],
@@ -197,7 +213,7 @@ mastersRouter.put("/users/:id", (req, res) => {
 });
 
 mastersRouter.post("/users/:id", (req, res) => {
-  const { resignedDate,period } = req.body;
+  const { resignedDate, period } = req.body;
 
   pool.query(
     "UPDATE users SET resign = 1,  resign_date = ?, hod_id = NULL WHERE id = ? AND period = ?",
@@ -231,11 +247,14 @@ mastersRouter.get("/users/branch/:branchId/role/:role", (req, res) => {
 });
 
 // Branches
-mastersRouter.post("/branches", (req, res) => {
-  const {period}=req.body;
+mastersRouter.post("/branches", (req, res, next) => {
+  if (req.body.code || req.body.name) {
+    return next();
+  }
+  const { period } = req.body;
   pool.query(
     "SELECT b.*, u.name AS incharge_name FROM branches b left join users u on b.incharge_id=u.id WHERE u.period = ? and b.period = ?",
-    [period,period],
+    [period, period],
     (error, results) => {
       if (error)
         return res.status(500).json({ error: "Internal server error" });
@@ -245,8 +264,8 @@ mastersRouter.post("/branches", (req, res) => {
 });
 
 mastersRouter.post("/branches", (req, res) => {
-  const { code, name, incharge_id ,period} = req.body;
-  const branch = { code, name, incharge_id ,period};
+  const { code, name, incharge_id, period } = req.body;
+  const branch = { code, name, incharge_id, period };
 
   pool.getConnection((err, connection) => {
     if (err) return res.status(500).json({ error: "Internal server error" });
@@ -278,7 +297,7 @@ mastersRouter.post("/branches", (req, res) => {
 });
 
 mastersRouter.put("/branches/:id", (req, res) => {
-  const { code, name, incharge_id ,period} = req.body;
+  const { code, name, incharge_id, period } = req.body;
   pool.query(
     "UPDATE branches SET code = ?, name = ?, incharge_id = ?, period = ? WHERE id = ? AND period = ?",
     [code, name, incharge_id, period, req.params.id, period],
@@ -307,7 +326,7 @@ mastersRouter.delete("/branches/:id", (req, res) => {
 
 //staff Transfers
 mastersRouter.post("/transfers", (req, res) => {
-  const {period} = req.body;
+  const { period } = req.body;
   pool.query(
     `SELECT 
     t.id,
@@ -322,7 +341,7 @@ mastersRouter.post("/transfers", (req, res) => {
     t.transfer_date
 FROM (
     SELECT 
-        id,
+        CONCAT('att_', id) AS id,
         staff_id,
         old_branch_id,
         branch_id AS new_branch_id,
@@ -335,7 +354,7 @@ FROM (
     UNION ALL
 
     SELECT 
-        id,
+        CONCAT('ho_', id) AS id,
         staff_id,
         NULL AS old_branch_id,
         NULL AS new_branch_id,
@@ -348,7 +367,7 @@ FROM (
     UNION ALL
 
     SELECT 
-        id,
+        CONCAT('emp_', id) AS id,
         staff_id,
         old_branch_id,
         new_branch_id,
@@ -374,7 +393,7 @@ LEFT JOIN users old_hod
 
 LEFT JOIN users new_hod 
     ON new_hod.id = t.hod_id AND new_hod.period = ?;`,
-    [period, period, period, period, period, period],(error, results) => {
+    [period, period, period, period, period, period], (error, results) => {
       if (error) {
         console.error(error);
         return res.status(500).json({ error: "Internal server error" });
@@ -469,35 +488,113 @@ mastersRouter.post("/transfers", (req, res) => {
 });
 
 mastersRouter.put("/transfers/:id", (req, res) => {
+  const { type, id } = parseTransferId(req.params.id);
   const { staff_id, old_branch_id, new_branch_id, kpi_total } = req.body;
-  pool.query(
-    "UPDATE employee_transfer SET staff_id = ?, old_branch_id = ?, new_branch_id = ?, kpi_total = ? WHERE id = ?",
-    [staff_id, old_branch_id, new_branch_id, kpi_total, req.params.id],
-    (error) => {
-      if (error)
-        return res.status(500).json({ error: "Internal server error" });
-      res.json({ ok: true });
-    },
-  );
+
+  if (type === "ho") {
+    pool.query(
+      "UPDATE ho_staff_transfer SET staff_id = ?, kpi_total = ? WHERE id = ?",
+      [staff_id, kpi_total, id],
+      (error) => {
+        if (error) return res.status(500).json({ error: "Internal server error" });
+        res.json({ ok: true });
+      }
+    );
+  } else if (type === "att") {
+    pool.query(
+      "UPDATE attender_transfer SET staff_id = ?, old_branch_id = ?, branch_id = ?, kpi_total = ? WHERE id = ?",
+      [staff_id, old_branch_id, new_branch_id, kpi_total, id],
+      (error) => {
+        if (error) return res.status(500).json({ error: "Internal server error" });
+        res.json({ ok: true });
+      }
+    );
+  } else {
+    pool.query(
+      "UPDATE employee_transfer SET staff_id = ?, old_branch_id = ?, new_branch_id = ?, kpi_total = ? WHERE id = ?",
+      [staff_id, old_branch_id, new_branch_id, kpi_total, id],
+      (error) => {
+        if (error)
+          return res.status(500).json({ error: "Internal server error" });
+        res.json({ ok: true });
+      },
+    );
+  }
 });
 
 mastersRouter.delete("/transfers/:id", (req, res) => {
-  pool.query(
-    "DELETE FROM employee_transfer WHERE id = ?",
-    [req.params.id],
-    (error, result) => {
-      if (error)
-        return res.status(500).json({ error: "Internal server error" });
-      if (result.affectedRows === 0) {
-        return res.status(404).json({ error: "Transfer not found" });
+  const { type, id } = parseTransferId(req.params.id);
+  const table = type === "ho" ? "ho_staff_transfer" : type === "att" ? "attender_transfer" : "employee_transfer";
+
+  pool.getConnection((err, connection) => {
+    if (err) return res.status(500).json({ error: "DB connection failed" });
+
+    connection.query(
+      `SELECT * FROM ${table} WHERE id = ?`,
+      [id],
+      (errSelect, rows) => {
+        if (errSelect) {
+          connection.release();
+          return res.status(500).json({ error: "Internal server error" });
+        }
+        if (rows.length === 0) {
+          connection.release();
+          return res.status(404).json({ error: "Transfer not found" });
+        }
+
+        const tr = rows[0];
+        let oldBranchId = null;
+        let newBranchId = null;
+
+        if (type === "emp") {
+          oldBranchId = tr.old_branch_id;
+          newBranchId = tr.new_branch_id;
+        } else if (type === "att") {
+          oldBranchId = tr.old_branch_id;
+          newBranchId = tr.branch_id;
+        }
+
+        const proceedDelete = (resolvedNewBranchId) => {
+          connection.query(
+            `DELETE FROM ${table} WHERE id = ?`,
+            [id],
+            (error, result) => {
+              connection.release();
+              if (error) return res.status(500).json({ error: "Internal server error" });
+              res.json({
+                ok: true,
+                old_branch_id: oldBranchId,
+                new_branch_id: resolvedNewBranchId
+              });
+            }
+          );
+        };
+
+        if (type === "ho") {
+          // Fetch current branch_id from users table for HO Staff
+          connection.query(
+            "SELECT branch_id FROM users WHERE id = ? AND period = ?",
+            [tr.staff_id, tr.period],
+            (errUser, userRows) => {
+              if (errUser) {
+                connection.release();
+                return res.status(500).json({ error: "Internal server error" });
+              }
+              proceedDelete(userRows[0]?.branch_id || null);
+            }
+          );
+        } else {
+          proceedDelete(newBranchId);
+        }
       }
-      res.json({ ok: true });
-    },
-  );
+    );
+  });
 });
 
 mastersRouter.post("/revert-transfer/:id", (req, res) => {
-  const transferId = req.params.id;
+  const rawId = req.params.id;
+  const { type, id } = parseTransferId(rawId);
+  const hasPrefix = String(rawId).startsWith("emp_") || String(rawId).startsWith("ho_") || String(rawId).startsWith("att_");
 
   pool.getConnection((err, connection) => {
     if (err) return res.status(500).json({ error: "DB connection failed" });
@@ -515,61 +612,114 @@ mastersRouter.post("/revert-transfer/:id", (req, res) => {
         });
       };
 
-      // 1. Search in employee_transfer
-      connection.query(
-        "SELECT * FROM employee_transfer WHERE id = ?",
-        [transferId],
-        (err, empRows) => {
-          if (err) return rollbackTx(err.message);
+      const revertEmp = () => {
+        connection.query(
+          "SELECT * FROM employee_transfer WHERE id = ?",
+          [id],
+          (err, empRows) => {
+            if (err) return rollbackTx(err.message);
+            if (empRows.length > 0) {
+              const tr = empRows[0];
+              connection.query(
+                "UPDATE users SET branch_id = ?, role = ?, transfered = 0, transfer_date = NULL WHERE id = ? AND period = ?",
+                [tr.old_branch_id, tr.old_designation, tr.staff_id, tr.period],
+                (errUpdate) => {
+                  if (errUpdate) return rollbackTx(errUpdate.message);
 
-          if (empRows.length > 0) {
-            const tr = empRows[0];
-            // Revert clerk/BM/HOD transfer
-            connection.query(
-              "UPDATE users SET branch_id = ?, role = ?, transfered = 0, transfer_date = NULL WHERE id = ? AND period = ?",
-              [tr.old_branch_id, tr.old_designation, tr.staff_id, tr.period],
-              (errUpdate) => {
-                if (errUpdate) return rollbackTx(errUpdate.message);
-
-                connection.query(
-                  "DELETE FROM employee_transfer WHERE id = ?",
-                  [transferId],
-                  (errDelete) => {
-                    if (errDelete) return rollbackTx(errDelete.message);
-
-                    connection.commit((errCommit) => {
-                      if (errCommit) return rollbackTx(errCommit.message);
-                      connection.release();
-                      return res.json({
-                        ok: true,
-                        old_branch_id: tr.old_branch_id,
-                        new_branch_id: tr.new_branch_id
-                      });
-                    });
-                  }
-                );
-              }
-            );
-          } else {
-            // 2. Search in attender_transfer
-            connection.query(
-              "SELECT * FROM attender_transfer WHERE id = ?",
-              [transferId],
-              (err, attRows) => {
-                if (err) return rollbackTx(err.message);
-
-                if (attRows.length > 0) {
-                  const tr = attRows[0];
-                  // Revert attender transfer
                   connection.query(
-                    "UPDATE users SET branch_id = ?, role = ?, hod_id = ?, transfered = 0, transfer_date = NULL WHERE id = ? AND period = ?",
-                    [tr.old_branch_id, tr.old_designation, tr.old_hod_id, tr.staff_id, tr.period],
+                    "DELETE FROM employee_transfer WHERE id = ?",
+                    [id],
+                    (errDelete) => {
+                      if (errDelete) return rollbackTx(errDelete.message);
+
+                      connection.commit((errCommit) => {
+                        if (errCommit) return rollbackTx(errCommit.message);
+                        connection.release();
+                        return res.json({
+                          ok: true,
+                          old_branch_id: tr.old_branch_id,
+                          new_branch_id: tr.new_branch_id
+                        });
+                      });
+                    }
+                  );
+                }
+              );
+            } else if (!hasPrefix) {
+              revertAtt();
+            } else {
+              rollbackTx("Transfer not found");
+            }
+          }
+        );
+      };
+
+      const revertAtt = () => {
+        connection.query(
+          "SELECT * FROM attender_transfer WHERE id = ?",
+          [id],
+          (err, attRows) => {
+            if (err) return rollbackTx(err.message);
+            if (attRows.length > 0) {
+              const tr = attRows[0];
+              connection.query(
+                "UPDATE users SET branch_id = ?, role = ?, hod_id = ?, transfered = 0, transfer_date = NULL WHERE id = ? AND period = ?",
+                [tr.old_branch_id, tr.old_designation, tr.old_hod_id, tr.staff_id, tr.period],
+                (errUpdate) => {
+                  if (errUpdate) return rollbackTx(errUpdate.message);
+
+                  connection.query(
+                    "DELETE FROM attender_transfer WHERE id = ?",
+                    [id],
+                    (errDelete) => {
+                      if (errDelete) return rollbackTx(errDelete.message);
+
+                      connection.commit((errCommit) => {
+                        if (errCommit) return rollbackTx(errCommit.message);
+                        connection.release();
+                        return res.json({
+                          ok: true,
+                          old_branch_id: tr.old_branch_id,
+                          new_branch_id: tr.branch_id
+                        });
+                      });
+                    }
+                  );
+                }
+              );
+            } else if (!hasPrefix) {
+              revertHo();
+            } else {
+              rollbackTx("Transfer not found");
+            }
+          }
+        );
+      };
+
+      const revertHo = () => {
+        connection.query(
+          "SELECT * FROM ho_staff_transfer WHERE id = ?",
+          [id],
+          (err, hoRows) => {
+            if (err) return rollbackTx(err.message);
+            if (hoRows.length > 0) {
+              const tr = hoRows[0];
+              connection.query(
+                "SELECT branch_id FROM users WHERE id = ? AND period = ?",
+                [tr.staff_id, tr.period],
+                (errUser, userRows) => {
+                  if (errUser) return rollbackTx(errUser.message);
+                  const currentBranchId = userRows[0]?.branch_id || null;
+
+                  connection.query(
+                    "UPDATE users SET branch_id = NULL, role = ?, hod_id = ?, transfered = 0, transfer_date = NULL WHERE id = ? AND period = ?",
+                    [tr.old_designation, tr.old_hod_id, tr.staff_id, tr.period],
                     (errUpdate) => {
                       if (errUpdate) return rollbackTx(errUpdate.message);
 
                       connection.query(
-                        "DELETE FROM attender_transfer WHERE id = ?",
-                        [transferId],
+                        "DELETE FROM ho_staff_transfer WHERE id = ?",
+                        [id],
                         (errDelete) => {
                           if (errDelete) return rollbackTx(errDelete.message);
 
@@ -578,75 +728,43 @@ mastersRouter.post("/revert-transfer/:id", (req, res) => {
                             connection.release();
                             return res.json({
                               ok: true,
-                              old_branch_id: tr.old_branch_id,
-                              new_branch_id: tr.branch_id
+                              old_branch_id: null,
+                              new_branch_id: currentBranchId
                             });
                           });
                         }
                       );
                     }
                   );
-                } else {
-                  // 3. Search in ho_staff_transfer
-                  connection.query(
-                    "SELECT * FROM ho_staff_transfer WHERE id = ?",
-                    [transferId],
-                    (err, hoRows) => {
-                      if (err) return rollbackTx(err.message);
-
-                      if (hoRows.length > 0) {
-                        const tr = hoRows[0];
-                        // Revert HO staff transfer
-                        connection.query(
-                          "UPDATE users SET hod_id = ?, transfered = 0, transfer_date = NULL WHERE id = ? AND period = ?",
-                          [tr.old_hod_id, tr.staff_id, tr.period],
-                          (errUpdate) => {
-                            if (errUpdate) return rollbackTx(errUpdate.message);
-
-                            connection.query(
-                              "DELETE FROM ho_staff_transfer WHERE id = ?",
-                              [transferId],
-                              (errDelete) => {
-                                if (errDelete) return rollbackTx(errDelete.message);
-
-                                connection.commit((errCommit) => {
-                                  if (errCommit) return rollbackTx(errCommit.message);
-                                  connection.release();
-                                  return res.json({
-                                    ok: true,
-                                    old_branch_id: null,
-                                    new_branch_id: null
-                                  });
-                                });
-                              }
-                            );
-                          }
-                        );
-                      } else {
-                        connection.rollback(() => {
-                          connection.release();
-                          res.status(404).json({ error: "Transfer record not found" });
-                        });
-                      }
-                    }
-                  );
                 }
-              }
-            );
+              );
+            } else {
+              rollbackTx("Transfer not found");
+            }
           }
-        }
-      );
+        );
+      };
+
+      if (type === "emp") {
+        revertEmp();
+      } else if (type === "att") {
+        revertAtt();
+      } else if (type === "ho") {
+        revertHo();
+      } else {
+        rollbackTx("Invalid transfer type");
+      }
     });
   });
 });
 
 mastersRouter.put("/Transfers_user/:id", (req, res) => {
-  const { branch_id, role, hod_id,period } = req.body;
+  const { branch_id, role, hod_id, period } = req.body;
   const user = { branch_id, role, transfered: 1, hod_id };
 
   pool.query(
     "UPDATE users SET ? WHERE id = ? AND period = ?",
-    [user, req.params.id,period],
+    [user, req.params.id, period],
     (error) => {
       if (error)
         return res.status(500).json({ error: "Internal server error" });
@@ -735,7 +853,7 @@ JOIN users s
 WHERE e.period = ? AND s.period = ?
 GROUP BY e.staff_id, DATE(e.transfer_date)
 ORDER BY DATE(MIN(e.transfer_date));`;
-  pool.query(query, [period,period], (error, results) => {
+  pool.query(query, [period, period], (error, results) => {
     if (error) return res.status(500).json({ error: "Internal server error" });
     res.json(results);
   });
@@ -778,7 +896,7 @@ ORDER BY
     e.transfer_date ASC;
   `;
 
-  pool.query(query, [period,period, staff_id], (err, transfers) => {
+  pool.query(query, [period, period, staff_id], (err, transfers) => {
     if (err) return res.status(500).json({ error: "Internal server error" });
     if (transfers.length === 0) return res.json([]);
 
@@ -848,7 +966,7 @@ ORDER BY
             return Math.max(
               0,
               (d2.getFullYear() - d1.getFullYear()) * 12 +
-                (d2.getMonth() - d1.getMonth())
+              (d2.getMonth() - d1.getMonth())
             );
           };
 
@@ -904,16 +1022,15 @@ ORDER BY
               if (row.target == null) return;
 
               const baseline = ["deposit", "loan_gen", "loan_amulya"].includes(row.key)
-                ? (baselineMap[`${t.old_branch_id}_${row.key}`] || 0)
+                ? (Number(t[`${row.key}_baseline`]) || baselineMap[`${t.old_branch_id}_${row.key}`] || 0)
                 : 0;
 
-              let achievedValue = ["deposit", "loan_gen", "loan_amulya"].includes(row.key)
-                ? Number(row.achieved || 0) + Number(baseline)
-                : Number(row.achieved || 0);
+              // Read baseline and target directly without month factor scaling
+              const scaledBaseline = Number(baseline);
+              const scaledTarget = Number(row.target || 0);
 
-              // Scale achievement by month factor
-              achievedValue = (achievedValue / 12) * months;
-              const scaledBaseline = (Number(baseline) / 12) * months;
+              // Read achievement directly
+              const achievedValue = Number(row.achieved || 0);
 
               const isBaselineOnly =
                 ["deposit", "loan_gen", "loan_amulya"].includes(row.key) &&
@@ -922,14 +1039,17 @@ ORDER BY
 
               const score = isBaselineOnly
                 ? 0
-                : calculateScore(row.key, achievedValue, row.target);
+                : calculateScore(row.key, achievedValue, scaledTarget);
 
               const weightage = weightageMap[row.key] || 0;
               const weightageScore = isBaselineOnly ? 0 : (score * weightage) / 100;
 
               branchScores[row.key] = {
                 achieved: isBaselineOnly ? 0 : Number(achievedValue.toFixed(2)),
-                target: Number(Number(row.target || 0).toFixed(2)),
+                previousBalance: Number(scaledBaseline.toFixed(2)),
+                newTarget: Number(scaledTarget.toFixed(2)),
+                totalTarget: Number((scaledTarget + scaledBaseline).toFixed(2)),
+                target: Number(scaledTarget.toFixed(2)),
                 score,
                 weightage,
                 weightageScore: isNaN(weightageScore) ? 0 : weightageScore,
@@ -989,22 +1109,58 @@ ORDER BY
 
 //password change API Logic
 mastersRouter.post("/verifyPassword", (req, res) => {
-  const { userId, oldPassword,period } = req.body;
-  pool.query("SELECT * FROM users WHERE id = ? AND period = ?", [userId,period], (error, results) => {
-    if (error) {
-      console.error(error);
-      return res.status(500).json({ error: "Internal server error" });
+  const { userId, oldPassword, period } = req.body;
+
+  pool.query(
+    "SELECT * FROM users WHERE id = ? AND period = ?",
+    [userId, period],
+    (error, results) => {
+      if (error) {
+        console.error(error);
+        return res.status(500).json({
+          error: "Internal server error"
+        });
+      }
+
+      if (results.length === 0) {
+        return res.status(404).json({
+          error: "User not found"
+        });
+      }
+
+      const user = results[0];
+
+      const enteredPassword = String(oldPassword);
+      const storedPassword = String(user.password_hash);
+
+      let isValidPassword = false;
+
+      // Check bcrypt password
+      if (
+        storedPassword.startsWith("$2a$") ||
+        storedPassword.startsWith("$2b$") ||
+        storedPassword.startsWith("$2y$")
+      ) {
+        isValidPassword = bcrypt.compareSync(
+          enteredPassword,
+          storedPassword
+        );
+      } else {
+        // Plain-text / numeric password
+        isValidPassword = enteredPassword === storedPassword;
+      }
+
+      if (!isValidPassword) {
+        return res.status(401).json({
+          error: "Invalid old password"
+        });
+      }
+
+      return res.json({
+        ok: true
+      });
     }
-    if (results.length === 0) {
-      return res.status(404).json({ error: "User not found" });
-    }
-    const user = results[0];
-    if (!bcrypt.compareSync(oldPassword, user.password_hash)) {
-      return res.status(401).json({ error: "Invalid old password" });
-    } else {
-      return res.json({ ok: true });
-    }
-  });
+  );
 });
 
 mastersRouter.put("/changePassword/:id", (req, res) => {
@@ -1138,7 +1294,7 @@ mastersRouter.post("/update_employee_transfer", (req, res) => {
 
               pool.query(
                 "UPDATE users SET ? WHERE id = ? AND period = ?",
-                [userUpdate, userId,period],
+                [userUpdate, userId, period],
                 (err) => {
                   if (err)
                     return res
@@ -1236,7 +1392,7 @@ mastersRouter.post("/update_employee_transfer_Transfered", (req, res) => {
 
               pool.query(
                 "UPDATE users SET ? WHERE id = ? AND period = ?",
-                [userUpdate, userId,period],
+                [userUpdate, userId, period],
                 (err) => {
                   if (err)
                     return res
@@ -1261,10 +1417,10 @@ mastersRouter.post("/update_employee_transfer_Transfered", (req, res) => {
 
 //get All Higher Authority
 mastersRouter.post("/get-AGM", (req, res) => {
-  const {period}=req.body;
+  const { period } = req.body;
   pool.query(
     ` select id , username,name from users where role in ('AGM','DGM','AGM_AUDIT','AGM_INSURANCE','AGM_IT','GM') and period = ?`,
-    [period],(error, results) => {
+    [period], (error, results) => {
       if (error)
         return res.status(500).json({ error: "Internal server error" });
       res.json(results);

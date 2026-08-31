@@ -150,7 +150,7 @@ entriesRouter.post("/", (req, res) => {
               }
 
               const staffQuery = `SELECT id FROM users WHERE branch_id=? AND period = ? AND role IN ('CLERK')`;
-              pool.query(staffQuery, [branchId,period], (error, staffResults) => {
+              pool.query(staffQuery, [branchId, period], (error, staffResults) => {
                 if (error)
                   return res
                     .status(500)
@@ -237,7 +237,7 @@ entriesRouter.post("/", (req, res) => {
 
     function insertCombined() {
       const query = `SELECT id FROM users WHERE branch_id=? AND period = ? AND role IN ('CLERK')`;
-      pool.query(query, [branchId,period], (error, results) => {
+      pool.query(query, [branchId, period], (error, results) => {
         if (error)
           return res.status(500).json({ error: "Internal server error" });
         if (!results || results.length === 0)
@@ -269,6 +269,11 @@ entriesRouter.post("/", (req, res) => {
             perEmployee: baseValue,
           });
         }
+
+        const insertQuery = `
+          INSERT INTO entries 
+          (period, branch_id, employee_id, kpi, account_no, value, date, type, status)
+          VALUES ?`;
 
         pool.query(insertQuery, [nonZeroEntries], (err) => {
           if (err)
@@ -357,15 +362,47 @@ entriesRouter.post("/monthEntries", (req, res) => {
     return res.status(400).json({ error: "Period is required" });
   }
 
-  const query = `
-    SELECT e.*,u.PF_NO,b.name as branchName FROM entries e join users u on e.employee_id=u.id AND u.period = ? join branches b on e.branch_id=b.code AND b.period = ?
-    WHERE e.period = ? 
-  `;
-  pool.query(query, [period,period,period], (error, results) => {
+  pool.query("SELECT * FROM entries WHERE period = ?", [period], (error, entries) => {
     if (error) {
+      console.error("Error fetching entries:", error);
       return res.status(500).json({ error: "Internal server error" });
     }
-    res.json(results);
+
+    if (entries.length === 0) {
+      return res.json([]);
+    }
+
+    pool.query("SELECT id, PF_NO FROM users WHERE period = ?", [period], (error, users) => {
+      if (error) {
+        console.error("Error fetching users:", error);
+        return res.status(500).json({ error: "Internal server error" });
+      }
+
+      pool.query("SELECT code, name FROM branches WHERE period = ?", [period], (error, branches) => {
+        if (error) {
+          console.error("Error fetching branches:", error);
+          return res.status(500).json({ error: "Internal server error" });
+        }
+
+        const userMap = new Map();
+        users.forEach(u => {
+          userMap.set(String(u.id), u.PF_NO);
+        });
+
+        const branchMap = new Map();
+        branches.forEach(b => {
+          branchMap.set(String(b.code), b.name);
+        });
+
+        const results = entries.map(e => ({
+          ...e,
+          PF_NO: userMap.get(String(e.employee_id)) || null,
+          branchName: branchMap.get(String(e.branch_id)) || null
+        }));
+
+        res.json(results);
+      });
+    });
   });
 });
 

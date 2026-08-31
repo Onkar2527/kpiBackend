@@ -395,11 +395,12 @@ export const autoDistributeTargetsNewUsers = async (period, branchId, callback) 
           updatesArray.push([Math.round(target), isBaseline ? undefined : "published", period, branchId, nj.id, kpi]);
         });
 
-        const remainingTarget = totalTarget - totalTransferGiven - totalNewJoinGiven - (isBaseline ? 0 : (transferTargetMap[kpi] || 0));
-        const perActive = Math.floor(activeStaff.length ? remainingTarget / activeStaff.length : 0);
+        const base = Math.floor(activeStaff.length ? remainingTarget / activeStaff.length : 0);
+        const rem = activeStaff.length ? remainingTarget % activeStaff.length : 0;
 
-        activeStaff.forEach((as) => {
-          updatesArray.push([perActive, isBaseline ? undefined : "published", period, branchId, as.id, kpi]);
+        activeStaff.forEach((as, idx) => {
+          const val = base + (idx < rem ? 1 : 0);
+          updatesArray.push([val, isBaseline ? undefined : "published", period, branchId, as.id, kpi]);
         });
       };
 
@@ -464,47 +465,38 @@ function monthDiff(d1, d2) {
 }
 
 //get Actual Months Worked According this transfer
-async function getActualMonthsWorked(pool, staffId, userTd, fyStart) {
-  // 1. Get TWO latest transfer dates
-  const dbDates = await new Promise((resolve) => {
+async function getActualMonthsWorked(pool, staffId, userAddDate, transferDate, branchId, period, fyStart) {
+  return new Promise((resolve) => {
     pool.query(
-      "SELECT transfer_date FROM employee_transfer WHERE staff_id = ? ORDER BY id DESC LIMIT 2",
-      [staffId],
+      `SELECT transfer_date FROM employee_transfer 
+       WHERE staff_id = ? AND new_branch_id = ? AND period = ? 
+       ORDER BY transfer_date DESC LIMIT 1`,
+      [staffId, branchId, period],
       (err, rows) => {
-        if (err || !rows.length) return resolve([]);
-        resolve(rows);
-      },
+        let arrivalDate = (rows && rows.length > 0) ? new Date(rows[0].transfer_date) : null;
+        if (!arrivalDate && userAddDate) {
+          arrivalDate = new Date(userAddDate);
+        }
+        if (!arrivalDate) {
+          arrivalDate = new Date(fyStart);
+        }
+
+        const activeStart = arrivalDate > new Date(fyStart) ? arrivalDate : new Date(fyStart);
+        const departure = transferDate ? new Date(transferDate) : new Date();
+
+        resolve(monthDiff(activeStart, departure));
+      }
     );
   });
-
-  let dbTd = null;
-
-  if (dbDates.length === 2) {
-    dbTd = dbDates[1].transfer_date; // SECOND latest 2025-12-10 00:00:00
-  } else if (dbDates.length === 1) {
-    dbTd = dbDates[0].transfer_date;
-  }
-
-  const dDb = dbTd ? new Date(dbTd) : null;
-  const dUser = userTd ? new Date(userTd) : null;
-  const fy = new Date(fyStart);
-  const effectiveDb = dDb || dUser || new Date();
-
-  if (dDb && dUser) {
-    const earlier = dDb < dUser ? dDb : dUser;
-    const later = dDb > dUser ? dDb : dUser;
-    return monthDiff(earlier, later);
-  }
-
-  if (dDb) return monthDiff(fy, dDb);
-
-  if (dUser) return monthDiff(fy, dUser);
-
-  return monthDiff(fy, effectiveDb);
 }
 
 // This function help us to calculate target distribution in case Old branch
 export const autoDistributeTargetsOldBranch = async (period, branchId, role, callback) => {
+  if (typeof role === "function") {
+    callback = role;
+    role = undefined;
+  }
+
   const periodEnd = getFinancialYearEnd(period);
   const fy = getFinancialYearRange(period);
 
@@ -578,7 +570,7 @@ export const autoDistributeTargetsOldBranch = async (period, branchId, role, cal
 
         for (const r of resignedStaff) {
           if (!r.transfer_date) continue;
-          const monthsWorked = await getActualMonthsWorked(pool, r.id, r.user_add_date, fy.start);
+          const monthsWorked = await getActualMonthsWorked(pool, r.id, r.user_add_date, r.transfer_date, branchId, period, fy.start);
           if (kpi === "audit" || kpi === "insurance") {
             const perMonth = totalTarget / 12;
             const resignedAuditTarget = perMonth * monthsWorked;
@@ -593,7 +585,7 @@ export const autoDistributeTargetsOldBranch = async (period, branchId, role, cal
         let totalResignedWorkedTargetPrevious = 0;
         for (const r of resignPrevoius) {
           if (!r.transfer_date) continue;
-          const monthsWorked = getMonthsWorked(r.transfer_date, periodEnd);
+          const monthsWorked = await getActualMonthsWorked(pool, r.id, r.user_add_date, r.transfer_date, branchId, period, fy.start);
           if (kpi === "audit" || kpi === "insurance") {
             const perMonth = totalTarget / 12;
             const resignedAuditTarget = perMonth * monthsWorked;
@@ -634,10 +626,12 @@ export const autoDistributeTargetsOldBranch = async (period, branchId, role, cal
           remainingTarget = totalTarget - totalResignedWorkedTarget - totalResignedWorkedTargetPrevious - totalNewJoinerWorkedTargetPrevious - (isBaseline ? 0 : (transferTargetMap[kpi] || 0));
         }
 
-        const perActive = Math.floor(activeStaff.length ? remainingTarget / activeStaff.length : 0);
-        for (const st of activeStaff) {
-          updatesArray.push([perActive, isBaseline ? undefined : "published", period, branchId, st.id, kpi]);
-        }
+        const base = Math.floor(activeStaff.length ? remainingTarget / activeStaff.length : 0);
+        const rem = activeStaff.length ? remainingTarget % activeStaff.length : 0;
+        activeStaff.forEach((st, idx) => {
+          const val = base + (idx < rem ? 1 : 0);
+          updatesArray.push([val, isBaseline ? undefined : "published", period, branchId, st.id, kpi]);
+        });
       };
 
       await processKpi(t, updates, false);
@@ -746,10 +740,12 @@ export const autoDistributeTargetsNewBranch = async (period, branchId, callback)
         });
 
         const remainingTarget = totalTarget - totalResignedWorkedTarget - newStaffTotalGiven - (isBaseline ? 0 : (transferTargetMap[kpi] || 0));
-        const perOld = Math.floor(activeStaff.length ? remainingTarget / activeStaff.length : 0);
+        const base = Math.floor(activeStaff.length ? remainingTarget / activeStaff.length : 0);
+        const rem = activeStaff.length ? remainingTarget % activeStaff.length : 0;
 
-        activeStaff.forEach((os) => {
-          updatesArray.push([perOld, isBaseline ? undefined : "published", period, branchId, os.id, kpi]);
+        activeStaff.forEach((os, idx) => {
+          const val = base + (idx < rem ? 1 : 0);
+          updatesArray.push([val, isBaseline ? undefined : "published", period, branchId, os.id, kpi]);
         });
       };
 

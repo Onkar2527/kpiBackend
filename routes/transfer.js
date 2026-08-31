@@ -11,9 +11,9 @@ function updateEmployeeTransferFromAllocations(conn, period, branchId, userId) {
       `SELECT kpi, amount FROM allocations
        WHERE period=? AND branch_id=? AND user_id=? AND state='Transfered'`,
       [period, branchId, userId],
-      (err, rows) => {
+      (err, targetRows) => {
         if (err) return reject(err);
-        if (!rows.length)
+        if (!targetRows.length)
           return reject(new Error("No transfer allocations found"));
 
         const mapping = {
@@ -25,18 +25,49 @@ function updateEmployeeTransferFromAllocations(conn, period, branchId, userId) {
         };
 
         const updateData = {};
-        rows.forEach((r) => {
+        targetRows.forEach((r) => {
           if (mapping[r.kpi]) updateData[mapping[r.kpi]] = r.amount;
         });
 
-        conn.query(
-          "UPDATE employee_transfer SET ? WHERE period=? AND old_branch_id=? AND staff_id=?",
-          [updateData, period, branchId, userId],
-          (err) => {
-            if (err) return reject(err);
-            resolve(updateData);
-          },
-        );
+        // Query the latest staffwise baselines for this user
+        const baselineSql = `
+          SELECT p1.kpi, p1.amount
+          FROM previous_period_data_staffwise p1
+          INNER JOIN (
+              SELECT kpi, MAX(id) as max_id
+              FROM previous_period_data_staffwise
+              WHERE period=? AND branch_id=? AND employee_id=? AND deleted_at IS NULL
+              GROUP BY kpi
+          ) p2 ON p1.id = p2.max_id
+        `;
+
+        conn.query(baselineSql, [period, branchId, userId], (err, baselineRows) => {
+          if (err) return reject(err);
+
+          const baselineMapping = {
+            deposit: "deposit_baseline",
+            loan_gen: "loan_gen_baseline",
+            loan_amulya: "loan_amulya_baseline",
+            recovery: "recovery_baseline",
+            audit: "audit_baseline",
+            insurance: "insurance_baseline",
+          };
+
+          baselineRows.forEach((r) => {
+            if (baselineMapping[r.kpi]) {
+              updateData[baselineMapping[r.kpi]] = r.amount;
+            }
+          });
+
+          conn.query(
+            "UPDATE employee_transfer SET ? WHERE period=? AND old_branch_id=? AND staff_id=?",
+            [updateData, period, branchId, userId],
+            (err) => {
+              if (err) return reject(err);
+              resolve(updateData);
+            },
+          );
+        });
       },
     );
   });
@@ -472,16 +503,22 @@ transferRouter.post("/transfer-staff-master", (req, res) => {
           period,
           deposit_target,
           deposit_achieved,
+          deposit_baseline,
           loan_gen_target,
           loan_gen_achieved,
+          loan_gen_baseline,
           loan_amulya_target,
           loan_amulya_achieved,
+          loan_amulya_baseline,
           audit_target,
           audit_achieved,
+          audit_baseline,
           recovery_target,
           recovery_achieved,
+          recovery_baseline,
           insurance_target,
           insurance_achieved,
+          insurance_baseline,
           old_designation,
           new_designation,
         } = transferData;
@@ -494,16 +531,22 @@ transferRouter.post("/transfer-staff-master", (req, res) => {
           period,
           deposit_target,
           deposit_achieved,
+          deposit_baseline: deposit_baseline || 0,
           loan_gen_target,
           loan_gen_achieved,
+          loan_gen_baseline: loan_gen_baseline || 0,
           loan_amulya_target,
           loan_amulya_achieved,
+          loan_amulya_baseline: loan_amulya_baseline || 0,
           audit_target,
           audit_achieved,
+          audit_baseline: audit_baseline || 0,
           recovery_target,
           recovery_achieved,
+          recovery_baseline: recovery_baseline || 0,
           insurance_target,
           insurance_achieved,
+          insurance_baseline: insurance_baseline || 0,
           old_designation,
           new_designation,
         };
@@ -641,16 +684,22 @@ transferRouter.post("/transfer-staff-master-update", (req, res) => {
           period,
           deposit_target,
           deposit_achieved,
+          deposit_baseline,
           loan_gen_target,
           loan_gen_achieved,
+          loan_gen_baseline,
           loan_amulya_target,
           loan_amulya_achieved,
+          loan_amulya_baseline,
           audit_target,
           audit_achieved,
+          audit_baseline,
           recovery_target,
           recovery_achieved,
+          recovery_baseline,
           insurance_target,
           insurance_achieved,
+          insurance_baseline,
           old_designation,
           new_designation,
         } = transferData;
@@ -663,16 +712,22 @@ transferRouter.post("/transfer-staff-master-update", (req, res) => {
           period,
           deposit_target,
           deposit_achieved,
+          deposit_baseline: deposit_baseline || 0,
           loan_gen_target,
           loan_gen_achieved,
+          loan_gen_baseline: loan_gen_baseline || 0,
           loan_amulya_target,
           loan_amulya_achieved,
+          loan_amulya_baseline: loan_amulya_baseline || 0,
           audit_target,
           audit_achieved,
+          audit_baseline: audit_baseline || 0,
           recovery_target,
           recovery_achieved,
+          recovery_baseline: recovery_baseline || 0,
           insurance_target,
           insurance_achieved,
+          insurance_baseline: insurance_baseline || 0,
           old_designation,
           new_designation,
         };
