@@ -559,13 +559,32 @@ mastersRouter.delete("/transfers/:id", (req, res) => {
             `DELETE FROM ${table} WHERE id = ?`,
             [id],
             (error, result) => {
-              connection.release();
-              if (error) return res.status(500).json({ error: "Internal server error" });
-              res.json({
-                ok: true,
-                old_branch_id: oldBranchId,
-                new_branch_id: resolvedNewBranchId
-              });
+              if (error) {
+                connection.release();
+                return res.status(500).json({ error: "Internal server error" });
+              }
+
+              if (table === "employee_transfer") {
+                connection.query(
+                  "DELETE FROM bm_transfer_target WHERE staff_id = ? AND period = ?",
+                  [tr.staff_id, tr.period],
+                  () => {
+                    connection.release();
+                    res.json({
+                      ok: true,
+                      old_branch_id: oldBranchId,
+                      new_branch_id: resolvedNewBranchId
+                    });
+                  }
+                );
+              } else {
+                connection.release();
+                res.json({
+                  ok: true,
+                  old_branch_id: oldBranchId,
+                  new_branch_id: resolvedNewBranchId
+                });
+              }
             }
           );
         };
@@ -632,15 +651,23 @@ mastersRouter.post("/revert-transfer/:id", (req, res) => {
                     (errDelete) => {
                       if (errDelete) return rollbackTx(errDelete.message);
 
-                      connection.commit((errCommit) => {
-                        if (errCommit) return rollbackTx(errCommit.message);
-                        connection.release();
-                        return res.json({
-                          ok: true,
-                          old_branch_id: tr.old_branch_id,
-                          new_branch_id: tr.new_branch_id
-                        });
-                      });
+                      connection.query(
+                        "DELETE FROM bm_transfer_target WHERE staff_id = ? AND period = ?",
+                        [tr.staff_id, tr.period],
+                        (errBmDelete) => {
+                          if (errBmDelete) return rollbackTx(errBmDelete.message);
+
+                          connection.commit((errCommit) => {
+                            if (errCommit) return rollbackTx(errCommit.message);
+                            connection.release();
+                            return res.json({
+                              ok: true,
+                              old_branch_id: tr.old_branch_id,
+                              new_branch_id: tr.new_branch_id
+                            });
+                          });
+                        }
+                      );
                     }
                   );
                 }

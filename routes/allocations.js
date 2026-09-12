@@ -16,7 +16,7 @@ export const autoDistributeTargets = async (period, branchId, callback) => {
     const previousData = await new Promise((res, rej) => pool.query("SELECT * FROM previous_period_data WHERE period = ? AND branch_id = ?", [period, branchId], (e, r) => e ? rej(e) : res(r)));
 
     const kpisToSplit = ["deposit", "loan_gen", "loan_amulya", "audit", "insurance", "recovery"];
-    
+
     await new Promise((res, rej) => pool.query("DELETE FROM allocations WHERE period = ? AND branch_id = ? AND kpi IN (?)", [period, branchId, kpisToSplit], (e, r) => e ? rej(e) : res(r)));
     await new Promise((res, rej) => pool.query("UPDATE previous_period_data_staffwise SET deleted_at = NOW() WHERE period = ? AND branch_id = ? AND kpi IN (?) AND deleted_at IS NULL", [period, branchId, kpisToSplit], (e, r) => e ? rej(e) : res(r)));
 
@@ -46,7 +46,7 @@ export const autoDistributeTargets = async (period, branchId, callback) => {
     if (allocations.length > 0) {
       await new Promise((res, rej) => pool.query("INSERT INTO allocations (period, branch_id, user_id, kpi, amount, state) VALUES ?", [allocations], (e, r) => e ? rej(e) : res(r)));
     }
-    
+
     if (staffwiseBaselines.length > 0) {
       await new Promise((res, rej) => pool.query("INSERT INTO previous_period_data_staffwise (employee_id, period, branch_id, kpi, amount) VALUES ?", [staffwiseBaselines], (e, r) => e ? rej(e) : res(r)));
     }
@@ -97,7 +97,7 @@ export const autoDistributeTargetsInTransfer = async (period, branchId, callback
     if (auditTarget && auditTarget.amount > 0) {
       staff.forEach((user) => allocations.push([period, branchId, user.id, "audit", auditTarget.amount, "published"]));
     }
-    
+
     const auditPrev = previousData.find((p) => p.kpi === "audit");
     if (auditPrev && auditPrev.amount > 0) {
       staff.forEach((user) => staffwiseBaselines.push([user.id, period, branchId, "audit", auditPrev.amount]));
@@ -180,7 +180,7 @@ export const autoDistributeTargetsResign = async (
     const users = await new Promise((resolve, reject) => {
       pool.query(
         "SELECT id AS user_id, resign, resign_date FROM users WHERE branch_id = ? AND period = ? AND role = 'CLERK'",
-        [branchId , period],
+        [branchId, period],
         (err, rows) => (err ? reject(err) : resolve(rows)),
       );
     });
@@ -201,7 +201,7 @@ export const autoDistributeTargetsResign = async (
         (err, rows) => (err ? reject(err) : resolve(rows)),
       );
     });
-    
+
     const previousData = await new Promise((resolve, reject) => {
       pool.query(
         "SELECT employee_id AS user_id, kpi, amount AS annual_target FROM previous_period_data_staffwise WHERE period = ? AND employee_id IN (?) AND branch_id = ? AND kpi ='insurance' AND deleted_at IS NULL",
@@ -467,11 +467,12 @@ function monthDiff(d1, d2) {
 //get Actual Months Worked According this transfer
 async function getActualMonthsWorked(pool, staffId, userAddDate, transferDate, branchId, period, fyStart) {
   return new Promise((resolve) => {
+    const currentTransferDate = transferDate ? new Date(transferDate) : new Date();
     pool.query(
       `SELECT transfer_date FROM employee_transfer 
-       WHERE staff_id = ? AND new_branch_id = ? AND period = ? 
+       WHERE staff_id = ? AND new_branch_id = ? AND period = ? AND transfer_date < ?
        ORDER BY transfer_date DESC LIMIT 1`,
-      [staffId, branchId, period],
+      [staffId, branchId, period, currentTransferDate],
       (err, rows) => {
         let arrivalDate = (rows && rows.length > 0) ? new Date(rows[0].transfer_date) : null;
         if (!arrivalDate && userAddDate) {
@@ -482,7 +483,7 @@ async function getActualMonthsWorked(pool, staffId, userAddDate, transferDate, b
         }
 
         const activeStart = arrivalDate > new Date(fyStart) ? arrivalDate : new Date(fyStart);
-        const departure = transferDate ? new Date(transferDate) : new Date();
+        const departure = currentTransferDate;
 
         resolve(monthDiff(activeStart, departure));
       }
@@ -527,14 +528,37 @@ export const autoDistributeTargetsOldBranch = async (period, branchId, role, cal
     const newjoinerStaff = [];
     const currentDate = new Date();
 
+    const transferredOutRows = await new Promise((res, rej) => pool.query(
+      "SELECT staff_id FROM employee_transfer WHERE old_branch_id = ? AND period = ?",
+      [branchId, period],
+      (e, r) => e ? rej(e) : res(r)
+    ));
+    const transferredOutIds = new Set((transferredOutRows || []).map((x) => x.staff_id));
+
+    const transferredInRows = await new Promise((res, rej) => pool.query(
+      "SELECT staff_id, transfer_date FROM employee_transfer WHERE new_branch_id = ? AND period = ?",
+      [branchId, period],
+      (e, r) => e ? rej(e) : res(r)
+    ));
+    const todayStr = currentDate.toISOString().split("T")[0];
+    const transferredInTodayIds = new Set();
+    (transferredInRows || []).forEach((x) => {
+      if (x.transfer_date) {
+        const d = new Date(x.transfer_date).toISOString().split("T")[0];
+        if (d === todayStr) {
+          transferredInTodayIds.add(x.staff_id);
+        }
+      }
+    });
+
     staff.forEach((s) => {
       const td = s.transfer_date ? new Date(s.transfer_date) : null;
       const jd = s.user_add_date ? new Date(s.user_add_date) : null;
-      const today = currentDate.toISOString().split("T")[0];
       const transferDay = td ? td.toISOString().split("T")[0] : null;
+      const isTransferredOut = transferredOutIds.has(s.id) || (transferDay === todayStr && !transferredInTodayIds.has(s.id));
 
-      if (td) {
-        if (transferDay === today) {
+      if (td && isTransferredOut) {
+        if (transferDay === todayStr) {
           resignedStaff.push(s);
         } else if (td < currentDate) {
           resignPrevoius.push(s);
@@ -641,7 +665,7 @@ export const autoDistributeTargetsOldBranch = async (period, branchId, role, cal
     if (updates.length > 0) {
       await new Promise((res, rej) => pool.query("INSERT INTO allocations (amount, state, period, branch_id, user_id, kpi) VALUES ? ON DUPLICATE KEY UPDATE amount = VALUES(amount), state = VALUES(state)", [updates], (e) => e ? rej(e) : res()));
     }
-    
+
     if (baselineUpdates.length > 0) {
       const cleanBaselines = baselineUpdates.map(u => [u[4], u[2], u[3], u[5], u[0]]); // employee_id, period, branch_id, kpi, amount
       await new Promise((res, rej) => pool.query("INSERT INTO previous_period_data_staffwise (employee_id, period, branch_id, kpi, amount) VALUES ? ON DUPLICATE KEY UPDATE amount = VALUES(amount)", [cleanBaselines], (e) => e ? rej(e) : res()));
@@ -756,7 +780,7 @@ export const autoDistributeTargetsNewBranch = async (period, branchId, callback)
     if (updates.length > 0) {
       await new Promise((res, rej) => pool.query("INSERT INTO allocations (amount, state, period, branch_id, user_id, kpi) VALUES ? ON DUPLICATE KEY UPDATE amount = VALUES(amount), state = VALUES(state)", [updates], (e) => e ? rej(e) : res()));
     }
-    
+
     if (baselineUpdates.length > 0) {
       const cleanBaselines = baselineUpdates.map(u => [u[4], u[2], u[3], u[5], u[0]]); // employee_id, period, branch_id, kpi, amount
       await new Promise((res, rej) => pool.query("INSERT INTO previous_period_data_staffwise (employee_id, period, branch_id, kpi, amount) VALUES ? ON DUPLICATE KEY UPDATE amount = VALUES(amount)", [cleanBaselines], (e) => e ? rej(e) : res()));
@@ -793,14 +817,14 @@ export const autoAdjustBMTransferTargets = (
     return Math.max(0, Math.min(months, 12));
   }
 
- 
+
   pool.query(
     `SELECT id, resign, resign_date
      FROM users
      WHERE branch_id = ? AND period = ?
   AND role = 'BM'
   AND resign_date IS NOT NULL`,
-    [branchId,period],
+    [branchId, period],
     (err, userRows) => {
       if (err) return callback(err);
       if (userRows.length === 0)
@@ -808,8 +832,8 @@ export const autoAdjustBMTransferTargets = (
 
       const bm = userRows[0];
       const userId = bm.id;
-      
-     
+
+
       pool.query(
         `SELECT kpi, amount
          FROM targets
@@ -835,14 +859,14 @@ export const autoAdjustBMTransferTargets = (
               let annualTarget = Number(row.amount);
 
               const monthsWorked = getMonthsWorked(bm.resign_date, periodEnd);
-              
-              
+
+
               const monthlyTarget = annualTarget / 12;
               let finalAmount = monthlyTarget * monthsWorked;
 
               finalAmount = Number(finalAmount.toFixed(2));
-              
-              
+
+
               updateData[mapping[row.kpi]] = finalAmount;
             }
           });
@@ -874,7 +898,7 @@ export const autoAdjustBMTransferTargets = (
 
                   pool.query(
                     "UPDATE users SET branch_id = '' WHERE id = ? AND period = ?",
-                    [userId,period],
+                    [userId, period],
                     (err) => {
                       if (err) return callback(err);
 
@@ -1057,9 +1081,9 @@ allocationsRouter.get("/", (req, res) => {
           (errP, personalTargets) => {
             if (errP) return res.status(500).json({ error: errP.message });
 
-            
-          
-const branchTargetsQuery = `
+
+
+            const branchTargetsQuery = `
  SELECT 
     k.kpi,
 
@@ -1164,10 +1188,10 @@ AND prev.kpi COLLATE utf8mb4_unicode_ci = k.kpi COLLATE utf8mb4_unicode_ci
 
 GROUP BY k.kpi
 ORDER BY k.kpi;
-`;    
-const startYear = parseInt(period.split('-')[0]);
-const fyStart = `${startYear}-04-01`;
-const fyEnd   = `${startYear + 1}-03-31`;
+`;
+            const startYear = parseInt(period.split('-')[0]);
+            const fyStart = `${startYear}-04-01`;
+            const fyEnd = `${startYear + 1}-03-31`;
             pool.query(
               branchTargetsQuery,
 
@@ -1185,7 +1209,7 @@ const fyEnd   = `${startYear + 1}-03-31`;
 
                 period, // 9 (allocations)
                 period, // 10 (targets)
-                
+
                 period, // 11 (entries - period)
                 branchId, // 12 (entries - branchId)
 
@@ -1194,7 +1218,7 @@ const fyEnd   = `${startYear + 1}-03-31`;
                 fyEnd, // 14,15
                 fyStart,
                 fyEnd, // 16,17
-                
+
                 period, // 18 (prev - period)
                 branchId, // 19 (prev - branchId)
               ],
@@ -1326,7 +1350,7 @@ allocationsRouter.post("/update-prorated-targets", (req, res) => {
     return Math.max(
       0,
       (d2.getFullYear() - d1.getFullYear()) * 12 +
-        (d2.getMonth() - d1.getMonth()),
+      (d2.getMonth() - d1.getMonth()),
     );
   }
 
@@ -1334,8 +1358,8 @@ allocationsRouter.post("/update-prorated-targets", (req, res) => {
     return Math.max(
       0,
       (d2.getFullYear() - d1.getFullYear()) * 12 +
-        (d2.getMonth() - d1.getMonth()) +
-        1,
+      (d2.getMonth() - d1.getMonth()) +
+      1,
     );
   }
 
@@ -1350,7 +1374,7 @@ allocationsRouter.post("/update-prorated-targets", (req, res) => {
       //  Get USER transfer date
       conn.query(
         "SELECT transfer_date FROM users WHERE id=? AND period = ?",
-        [staff_id,period],
+        [staff_id, period],
         (err, staffRows) => {
           if (err) return rollback(err);
           if (staffRows.length === 0)
@@ -1366,260 +1390,283 @@ allocationsRouter.post("/update-prorated-targets", (req, res) => {
               if (err) return rollback(err);
 
               if (bmRows.length === 0) {
-                // CASE A: No BM transfer found
-                return handleCase_UpdateAndInsert("A_NoUserTransfer", userTd);
+                // CASE A: No BM transfer found -> tenure started at FY start
+                const empMonths = Math.max(1, monthDiffstart(fy.start, userTd));
+                const bmMonths = Math.max(0, monthDiffend(userTd, fy.end));
+                const bmRatio = bmMonths / 12;
+                return handleOldBranchAndNewBranch("A_NoUserTransfer", userTd, fy.start, empMonths, bmRatio);
               }
 
               const bmTd = new Date(bmRows[0].transfer_date);
 
-              // CASE B1: Inside FY
+              // CASE B1: Inside FY -> tenure started at previous transfer bmTd
               if (userTd >= fy.start && userTd <= fy.end) {
-                return handleCase_InsideFY(userTd, bmTd);
+                const empMonths = Math.max(1, monthDiffstart(bmTd, userTd));
+                const bmMonths = Math.max(0, monthDiffend(userTd, fy.end));
+                const bmRatio = bmMonths / 12;
+                return handleOldBranchAndNewBranch("B1_InsideFY", userTd, bmTd, empMonths, bmRatio);
               }
 
               // CASE B2: Outside FY
-              return handleCase_UpdateAndInsert("B2_OutsideFY", userTd);
+              const empMonths = Math.max(1, monthDiffstart(fy.start, userTd));
+              const bmMonths = Math.max(0, monthDiffend(userTd, fy.end));
+              const bmRatio = bmMonths / 12;
+              return handleOldBranchAndNewBranch("B2_OutsideFY", userTd, fy.start, empMonths, bmRatio);
             },
           );
         },
       );
 
-      // update employee_transfer + Insert BM target
-
-      function handleCase_UpdateAndInsert(caseType, userTd) {
+      function handleOldBranchAndNewBranch(caseType, userTd, startDate, empMonths, bmRatio) {
+        // 1. Fetch employee_transfer record for this staff and old branch
         const empSql = `
           SELECT * FROM employee_transfer 
-          WHERE staff_id=? AND period=? 
-          ORDER BY transfer_date DESC LIMIT 1
+          WHERE staff_id=? AND period=? AND old_branch_id=?
+          ORDER BY id DESC LIMIT 1
         `;
 
-        conn.query(empSql, [staff_id, period], (err, empRows) => {
+        conn.query(empSql, [staff_id, period, old_branchId], (err, empRows) => {
           if (err) return rollback(err);
-          if (!empRows.length) return rollback("No employee_transfer found");
 
-          const emp = empRows[0];
-          const empTd = new Date(emp.transfer_date);
+          const proceedWithEmp = (emp) => {
+            // 2. Fetch targets for old branch
+            conn.query(
+              "SELECT * FROM targets WHERE period=? AND branch_id=?",
+              [period, old_branchId],
+              (err, oldTargetRows) => {
+                if (err) return rollback(err);
 
-          // Correct months = user.transfer_date → fy.end
-          const empMonths = monthDiffstart(fy.start, empTd);
+                const oldT = (oldTargetRows || []).reduce((acc, curr) => {
+                  acc[curr.kpi] = Number(curr.amount || 0);
+                  return acc;
+                }, {});
 
-          const updatedEmp = {
-            deposit_target: (emp.deposit_target / 12) * empMonths,
-            loan_gen_target: (emp.loan_gen_target / 12) * empMonths,
-            loan_amulya_target: (emp.loan_amulya_target / 12) * empMonths,
-            audit_target: (emp.audit_target / 12) * empMonths,
-            recovery_target: (emp.recovery_target / 12) * empMonths,
-            insurance_target: (emp.insurance_target / 12) * empMonths,
-          };
-
-          conn.query(
-            "UPDATE employee_transfer SET ? WHERE id=?",
-            [updatedEmp, emp.id],
-            (err) => {
-              if (err) return rollback(err);
-
-              // Get branch targets
-              conn.query(
-                "SELECT * FROM targets WHERE period=? AND branch_id=?",
-                [period, new_branchId],
-                (err, targets) => {
-                  if (err) return rollback(err);
-                  if (!targets.length)
-                    return rollback("No target master found");
-
-                  // Convert rows to object
-                  const t = targets.reduce((acc, curr) => {
-                    acc[curr.kpi] = curr.amount;
-                    return acc;
-                  }, {});
-
-                  // BM months = FY START to FY END
-                  const bmMonths = monthDiffend(empTd, fy.end);
-                  const bmRatio = bmMonths / 12;
-
-                  const insertBm = `
-                    INSERT INTO bm_transfer_target
-                    (staff_id, branch_id, transfer_date, deposit_target, loan_gen_target, loan_amulya_target,
-                     audit_target, recovery_target, insurance_target, period)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                  `;
-
-                  const bmValues = [
-                    staff_id,
-                    new_branchId,
-                    userTd,
-                    (t.deposit || 0) * bmRatio,
-                    (t.loan_gen || 0) * bmRatio,
-                    (t.loan_amulya || 0) * bmRatio,
-                    (t.audit || 0) * bmRatio,
-                    (t.recovery || 0) * bmRatio,
-                    (t.insurance || 0) * bmRatio,
-                    period,
-                  ];
-
-                  conn.query(insertBm, bmValues, (err, result) => {
+                // 3. Fetch baselines for old branch
+                conn.query(
+                  "SELECT kpi, amount FROM previous_period_data WHERE period=? AND branch_id=?",
+                  [period, old_branchId],
+                  (err, oldPrevRows) => {
                     if (err) return rollback(err);
 
-                    commit({
-                      case: caseType,
-                      message:
-                        "employee_transfer updated + bm_transfer_target inserted",
-                      empMonths,
-                      inserted_id: result.insertId,
+                    const oldB = {};
+                    (oldPrevRows || []).forEach((p) => {
+                      oldB[p.kpi] = Number(p.amount || 0);
                     });
-                  });
-                },
-              );
-            },
-          );
-        });
-      }
 
-      // update employee_transfer + Insert BM target
+                    // 4. Fetch branch entries during old tenure [startDate, userTd]
+                    const entriesSql = `
+                      SELECT kpi, SUM(value) AS achieved 
+                      FROM entries 
+                      WHERE branch_id=? AND period=? AND status='Verified'
+                      AND date >= ? AND date < ?
+                      GROUP BY kpi
+                    `;
 
-      function handleCase_InsideFY(userTd, bmTd) {
-        const bmSql =
-          "SELECT * FROM bm_transfer_target WHERE staff_id=? AND period=? ORDER BY id DESC LIMIT 1";
-
-        conn.query(bmSql, [staff_id, period], (err, bmRows) => {
-          if (err) return rollback(err);
-          if (!bmRows.length) return rollback("No BM record found");
-
-          const bm = bmRows[0];
-
-          // Correct months = user.transfer_date → bm.transfer_date
-          const months = monthDiffstart(userTd, bmTd);
-
-          //  Fetch branch entries
-          const entriesSql = `
-            SELECT * FROM entries 
-            WHERE branch_id=? AND period=? AND status='Verified'
-            AND date >= ? AND date < ?
-          `;
-
-          conn.query(
-            entriesSql,
-            [old_branchId, period, bmTd, userTd],
-            (err, entryRows) => {
-              if (err) return rollback(err);
-
-              //  Fetch insurance
-              const insSql = `
-                SELECT * FROM entries 
-                WHERE employee_id=? AND period=? AND status='Verified'
-                AND kpi='insurance'
-              `;
-
-              conn.query(
-                insSql,
-                [staff_id, period, bmTd, userTd],
-                (err, insRows) => {
-                  if (err) return rollback(err);
-
-                  const updatedEmp = {
-                    deposit_target: (bm.deposit_target / 12) * months,
-                    loan_gen_target: (bm.loan_gen_target / 12) * months,
-                    loan_amulya_target: (bm.loan_amulya_target / 12) * months,
-                    audit_target: (bm.audit_target / 12) * months,
-                    recovery_target: (bm.recovery_target / 12) * months,
-                    insurance_target: (bm.insurance_target / 12) * months,
-
-                    deposit_achieved: entryRows
-                      .filter((e) => e.kpi === "deposit")
-                      .reduce((sum, e) => sum + e.value, 0),
-
-                    loan_gen_achieved: entryRows
-                      .filter((e) => e.kpi === "loan_gen")
-                      .reduce((sum, e) => sum + e.value, 0),
-
-                    loan_amulya_achieved: entryRows
-                      .filter((e) => e.kpi === "loan_amulya")
-                      .reduce((sum, e) => sum + e.value, 0),
-
-                    audit_achieved: entryRows
-                      .filter((e) => e.kpi === "audit")
-                      .reduce((sum, e) => sum + e.value, 0),
-
-                    recovery_achieved: entryRows
-                      .filter((e) => e.kpi === "recovery")
-                      .reduce((sum, e) => sum + e.value, 0),
-
-                    insurance_achieved: insRows.reduce(
-                      (sum, e) => sum + e.value,
-                      0,
-                    ),
-                  };
-
-                  // Update employee_transfer
-                  const updateSql = `
-                    UPDATE employee_transfer SET
-                    deposit_target=?, loan_gen_target=?, loan_amulya_target=?,
-                    audit_target=?, recovery_target=?, insurance_target=?,
-                    deposit_achieved=?, loan_gen_achieved=?, loan_amulya_achieved=?,
-                    audit_achieved=?, recovery_achieved=?, insurance_achieved=?
-                    WHERE staff_id=? AND period=?
-                  `;
-
-                  conn.query(
-                    updateSql,
-                    [
-                      updatedEmp.deposit_target,
-                      updatedEmp.loan_gen_target,
-                      updatedEmp.loan_amulya_target,
-                      updatedEmp.audit_target,
-                      updatedEmp.recovery_target,
-                      updatedEmp.insurance_target,
-                      updatedEmp.deposit_achieved,
-                      updatedEmp.loan_gen_achieved,
-                      updatedEmp.loan_amulya_achieved,
-                      updatedEmp.audit_achieved,
-                      updatedEmp.recovery_achieved,
-                      updatedEmp.insurance_achieved,
-                      staff_id,
-                      period,
-                    ],
-                    (err) => {
-                      if (err) return rollback(err);
-                      const Months = monthDiffend(bmTd, fy.end);
-                      const Ratio = Months / 12;
-                      // Insert BM transfer
-                      const insertBm = `
-                        INSERT INTO bm_transfer_target
-                        (staff_id, branch_id, transfer_date, deposit_target, loan_gen_target, loan_amulya_target,
-                         audit_target, recovery_target, insurance_target, period)
-                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                      `;
-
-                      const bmVals = [
-                        staff_id,
-                        new_branchId,
-                        userTd,
-                        updatedEmp.deposit_target || 0 * Ratio,
-                        updatedEmp.loan_gen_target || 0 * Ratio,
-                        updatedEmp.loan_amulya_target || 0 * Ratio,
-                        updatedEmp.audit_target || 0 * Ratio,
-                        updatedEmp.recovery_target || 0 * Ratio,
-                        updatedEmp.insurance_target || 0 * Ratio,
-                        period,
-                      ];
-
-                      conn.query(insertBm, bmVals, (err, result) => {
+                    conn.query(
+                      entriesSql,
+                      [old_branchId, period, startDate, userTd],
+                      (err, entryRows) => {
                         if (err) return rollback(err);
 
-                        commit({
-                          case: "B1_InsideFY",
-                          message:
-                            "employee_transfer updated + bm_transfer_target inserted",
-                          monthsBetween: months,
-                          inserted_id: result.insertId,
+                        const achievedMap = {};
+                        (entryRows || []).forEach((e) => {
+                          achievedMap[e.kpi] = Number(e.achieved || 0);
                         });
-                      });
-                    },
-                  );
-                },
-              );
-            },
-          );
+
+                        // 5. Fetch insurance for staff during old tenure
+                        const insSql = `
+                          SELECT SUM(value) AS achieved 
+                          FROM entries 
+                          WHERE employee_id=? AND period=? AND status='Verified'
+                          AND kpi='insurance'
+                          AND date >= ? AND date < ?
+                        `;
+
+                        conn.query(
+                          insSql,
+                          [staff_id, period, startDate, userTd],
+                          (err, insRows) => {
+                            if (err) return rollback(err);
+
+                            achievedMap["insurance"] = Number(insRows?.[0]?.achieved || 0);
+
+                            // Calculate prorated targets & baselines for old branch
+                            const oldDepositTarget = oldT.deposit !== undefined ? (oldT.deposit / 12) * empMonths : ((emp?.deposit_target || 0) / 12) * empMonths;
+                            const oldLoanGenTarget = oldT.loan_gen !== undefined ? (oldT.loan_gen / 12) * empMonths : ((emp?.loan_gen_target || 0) / 12) * empMonths;
+                            const oldLoanAmulyaTarget = oldT.loan_amulya !== undefined ? (oldT.loan_amulya / 12) * empMonths : ((emp?.loan_amulya_target || 0) / 12) * empMonths;
+                            const oldAuditTarget = oldT.audit !== undefined ? (oldT.audit / 12) * empMonths : ((emp?.audit_target || 0) / 12) * empMonths;
+                            const oldRecoveryTarget = oldT.recovery !== undefined ? (oldT.recovery / 12) * empMonths : ((emp?.recovery_target || 0) / 12) * empMonths;
+                            const oldInsuranceTarget = oldT.insurance !== undefined ? (oldT.insurance / 12) * empMonths : ((emp?.insurance_target || 0) / 12) * empMonths;
+
+                            const oldDepositBaseline = (Number(oldB.deposit || emp?.deposit_baseline || 0) / 12) * empMonths;
+                            const oldLoanGenBaseline = (Number(oldB.loan_gen || emp?.loan_gen_baseline || 0) / 12) * empMonths;
+                            const oldLoanAmulyaBaseline = (Number(oldB.loan_amulya || emp?.loan_amulya_baseline || 0) / 12) * empMonths;
+                            const oldAuditBaseline = (Number(oldB.audit || emp?.audit_baseline || 0) / 12) * empMonths;
+                            const oldRecoveryBaseline = (Number(oldB.recovery || emp?.recovery_baseline || 0) / 12) * empMonths;
+
+                            const updateEmpSql = `
+                              UPDATE employee_transfer SET
+                                deposit_target=?, loan_gen_target=?, loan_amulya_target=?,
+                                audit_target=?, recovery_target=?, insurance_target=?,
+                                deposit_baseline=?, loan_gen_baseline=?, loan_amulya_baseline=?,
+                                audit_baseline=?, recovery_baseline=?,
+                                deposit_achieved=?, loan_gen_achieved=?, loan_amulya_achieved=?,
+                                audit_achieved=?, recovery_achieved=?, insurance_achieved=?,
+                                transfer_date=?
+                              WHERE id=?
+                            `;
+
+                            const updateEmpVals = [
+                              oldDepositTarget,
+                              oldLoanGenTarget,
+                              oldLoanAmulyaTarget,
+                              oldAuditTarget,
+                              oldRecoveryTarget,
+                              oldInsuranceTarget,
+                              oldDepositBaseline,
+                              oldLoanGenBaseline,
+                              oldLoanAmulyaBaseline,
+                              oldAuditBaseline,
+                              oldRecoveryBaseline,
+                              achievedMap["deposit"] || 0,
+                              achievedMap["loan_gen"] || 0,
+                              achievedMap["loan_amulya"] || 0,
+                              achievedMap["audit"] || 0,
+                              achievedMap["recovery"] || 0,
+                              achievedMap["insurance"] || 0,
+                              userTd,
+                              emp?.id,
+                            ];
+
+                            const executeEmpUpdate = (cb) => {
+                              if (emp?.id) {
+                                conn.query(updateEmpSql, updateEmpVals, (err) => {
+                                  if (err) return rollback(err);
+                                  cb();
+                                });
+                              } else {
+                                cb();
+                              }
+                            };
+
+                            executeEmpUpdate(() => {
+                              // 6. Process New Branch targets & baselines
+                              conn.query(
+                                "SELECT * FROM targets WHERE period=? AND branch_id=?",
+                                [period, new_branchId],
+                                (err, newTargets) => {
+                                  if (err) return rollback(err);
+                                  if (!newTargets.length)
+                                    return rollback("No target master found for new branch");
+
+                                  const t = newTargets.reduce((acc, curr) => {
+                                    acc[curr.kpi] = Number(curr.amount || 0);
+                                    return acc;
+                                  }, {});
+
+                                  // Query baseline from previous_period_data for new branch
+                                  const prevSql = `SELECT kpi, amount FROM previous_period_data WHERE period=? AND branch_id=?`;
+                                  conn.query(prevSql, [period, new_branchId], (err, prevRows) => {
+                                    if (err) return rollback(err);
+
+                                    let deposit_baseline = 0;
+                                    let loan_gen_baseline = 0;
+                                    let loan_amulya_baseline = 0;
+                                    let audit_baseline = 0;
+                                    let recovery_baseline = 0;
+
+                                    if (prevRows && prevRows.length > 0) {
+                                      prevRows.forEach((p) => {
+                                        if (p.kpi === "deposit") deposit_baseline = Number(p.amount || 0);
+                                        if (p.kpi === "loan_gen") loan_gen_baseline = Number(p.amount || 0);
+                                        if (p.kpi === "loan_amulya") loan_amulya_baseline = Number(p.amount || 0);
+                                        if (p.kpi === "audit") audit_baseline = Number(p.amount || 0);
+                                        if (p.kpi === "recovery") recovery_baseline = Number(p.amount || 0);
+                                      });
+                                    }
+
+                                    const doInsertBm = (dBase, lgBase, laBase, auBase, recBase) => {
+                                      const insertBm = `
+                                        INSERT INTO bm_transfer_target
+                                        (staff_id, branch_id, transfer_date, deposit_target, loan_gen_target, loan_amulya_target,
+                                         audit_target, recovery_target, insurance_target, period,
+                                         deposit_baseline, loan_gen_baseline, loan_amulya_baseline, audit_baseline, recovery_baseline)
+                                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                                      `;
+
+                                      const bmValues = [
+                                        staff_id,
+                                        new_branchId,
+                                        userTd,
+                                        (t.deposit || 0) * bmRatio,
+                                        (t.loan_gen || 0) * bmRatio,
+                                        (t.loan_amulya || 0) * bmRatio,
+                                        (t.audit || 0) * bmRatio,
+                                        (t.recovery || 0) * bmRatio,
+                                        (t.insurance || 0) * bmRatio,
+                                        period,
+                                        (dBase || 0) * bmRatio,
+                                        (lgBase || 0) * bmRatio,
+                                        (laBase || 0) * bmRatio,
+                                        (auBase || 0) * bmRatio,
+                                        (recBase || 0) * bmRatio,
+                                      ];
+
+                                      conn.query(insertBm, bmValues, (err, result) => {
+                                        if (err) return rollback(err);
+
+                                        commit({
+                                          case: caseType,
+                                          message:
+                                            "employee_transfer updated + bm_transfer_target inserted",
+                                          oldBranchMonths: empMonths,
+                                          inserted_id: result.insertId,
+                                        });
+                                      });
+                                    };
+
+                                    if (!deposit_baseline && !loan_gen_baseline && !loan_amulya_baseline) {
+                                      const empSql2 = `SELECT deposit_baseline, loan_gen_baseline, loan_amulya_baseline, audit_baseline, recovery_baseline FROM employee_transfer WHERE staff_id=? AND period=? ORDER BY id DESC LIMIT 1`;
+                                      conn.query(empSql2, [staff_id, period], (err, empBRows) => {
+                                        if (err) return rollback(err);
+                                        if (empBRows && empBRows.length > 0) {
+                                          deposit_baseline = Number(empBRows[0].deposit_baseline || 0);
+                                          loan_gen_baseline = Number(empBRows[0].loan_gen_baseline || 0);
+                                          loan_amulya_baseline = Number(empBRows[0].loan_amulya_baseline || 0);
+                                          audit_baseline = Number(empBRows[0].audit_baseline || 0);
+                                          recovery_baseline = Number(empBRows[0].recovery_baseline || 0);
+                                        }
+                                        doInsertBm(deposit_baseline, loan_gen_baseline, loan_amulya_baseline, audit_baseline, recovery_baseline);
+                                      });
+                                    } else {
+                                      doInsertBm(deposit_baseline, loan_gen_baseline, loan_amulya_baseline, audit_baseline, recovery_baseline);
+                                    }
+                                  });
+                                },
+                              );
+                            });
+                          },
+                        );
+                      },
+                    );
+                  },
+                );
+              },
+            );
+          };
+
+          if (empRows && empRows.length > 0) {
+            proceedWithEmp(empRows[0]);
+          } else {
+            conn.query(
+              "SELECT * FROM employee_transfer WHERE staff_id=? AND period=? ORDER BY id DESC LIMIT 1",
+              [staff_id, period],
+              (err, fallbackRows) => {
+                if (err) return rollback(err);
+                proceedWithEmp(fallbackRows?.[0] || null);
+              },
+            );
+          }
         });
       }
 
@@ -1647,8 +1694,8 @@ allocationsRouter.post("/update-prorated-targets", (req, res) => {
 allocationsRouter.post("/CLEARK-TO-BM-Target", (req, res) => {
   const { period, branchId, staff_id } = req.body || {};
 
-  if (!period || !branchId)
-    return res.status(400).json({ error: "period and branchId required" });
+  if (!period || !branchId || !staff_id)
+    return res.status(400).json({ error: "period, branchId, and staff_id required" });
 
   function getFY(period) {
     const [startStr, endStr] = period.split("-");
@@ -1663,8 +1710,8 @@ allocationsRouter.post("/CLEARK-TO-BM-Target", (req, res) => {
     return Math.max(
       0,
       (d2.getFullYear() - d1.getFullYear()) * 12 +
-        (d2.getMonth() - d1.getMonth()) +
-        1,
+      (d2.getMonth() - d1.getMonth()) +
+      1,
     );
   }
   const fy = getFY(period);
@@ -1682,7 +1729,7 @@ allocationsRouter.post("/CLEARK-TO-BM-Target", (req, res) => {
 
     // Get USER transfer date
     const userTdQuery = `SELECT transfer_date FROM users WHERE id=? AND period = ?`;
-    pool.query(userTdQuery, [staff_id,period], (err, staffRows) => {
+    pool.query(userTdQuery, [staff_id, period], (err, staffRows) => {
       if (err) return res.status(500).json({ error: "Internal server error" });
       if (staffRows.length === 0)
         return res
@@ -1694,29 +1741,80 @@ allocationsRouter.post("/CLEARK-TO-BM-Target", (req, res) => {
       const bmMonths = monthDiffend(userTd, fy.end);
       const bmRatio = bmMonths / 12;
 
-      const insertBm = `
-                    INSERT INTO bm_transfer_target
-                    (staff_id, branch_id, transfer_date, deposit_target, loan_gen_target, loan_amulya_target,
-                     audit_target, recovery_target, insurance_target, period)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                  `;
+      // Query baseline from previous_period_data by branch_id and period
+      const prevSql = `SELECT kpi, amount FROM previous_period_data WHERE period=? AND branch_id=?`;
+      pool.query(prevSql, [period, branchId], (err, prevRows) => {
+        if (err) return res.status(500).json({ error: "Internal server error" });
 
-      const bmValues = [
-        staff_id,
-        branchId,
-        userTd,
-        (t.deposit || 0) * bmRatio,
-        (t.loan_gen || 0) * bmRatio,
-        (t.loan_amulya || 0) * bmRatio,
-        (t.audit || 0) * bmRatio,
-        (t.recovery || 0) * bmRatio,
-        (t.insurance || 0) * bmRatio,
-        period,
-      ];
-      pool.query(insertBm, bmValues, (err, result) => {
-        if (err)
-          return res.status(500).json({ error: "Internal server error" });
-        res.json({ ok: true, inserted_id: result.insertId });
+        let deposit_baseline = 0;
+        let loan_gen_baseline = 0;
+        let loan_amulya_baseline = 0;
+        let audit_baseline = 0;
+        let recovery_baseline = 0;
+
+        if (prevRows && prevRows.length > 0) {
+          prevRows.forEach((p) => {
+            if (p.kpi === "deposit") deposit_baseline = Number(p.amount || 0);
+            if (p.kpi === "loan_gen") loan_gen_baseline = Number(p.amount || 0);
+            if (p.kpi === "loan_amulya") loan_amulya_baseline = Number(p.amount || 0);
+            if (p.kpi === "audit") audit_baseline = Number(p.amount || 0);
+            if (p.kpi === "recovery") recovery_baseline = Number(p.amount || 0);
+          });
+        }
+
+        const doInsert = (dBase, lgBase, laBase, auBase, recBase) => {
+          const insertBm = `
+            INSERT INTO bm_transfer_target
+            (staff_id, branch_id, transfer_date, deposit_target, loan_gen_target, loan_amulya_target,
+             audit_target, recovery_target, insurance_target, period,
+             deposit_baseline, loan_gen_baseline, loan_amulya_baseline, audit_baseline, recovery_baseline)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          `;
+
+          const bmValues = [
+            staff_id,
+            branchId,
+            userTd,
+            (t.deposit || 0) * bmRatio,
+            (t.loan_gen || 0) * bmRatio,
+            (t.loan_amulya || 0) * bmRatio,
+            (t.audit || 0) * bmRatio,
+            (t.recovery || 0) * bmRatio,
+            (t.insurance || 0) * bmRatio,
+            period,
+            (dBase || 0) * bmRatio,
+            (lgBase || 0) * bmRatio,
+            (laBase || 0) * bmRatio,
+            (auBase || 0) * bmRatio,
+            (recBase || 0) * bmRatio,
+          ];
+
+          pool.query(insertBm, bmValues, (err, result) => {
+            if (err) {
+              console.error("Error inserting bm_transfer_target:", err);
+              return res.status(500).json({ error: "Internal server error" });
+            }
+            res.json({ ok: true, inserted_id: result.insertId });
+          });
+        };
+
+        if (!deposit_baseline && !loan_gen_baseline && !loan_amulya_baseline) {
+          // Fallback to employee_transfer or previous_period_data_staffwise
+          const empSql = `SELECT deposit_baseline, loan_gen_baseline, loan_amulya_baseline, audit_baseline, recovery_baseline FROM employee_transfer WHERE staff_id=? AND period=? ORDER BY id DESC LIMIT 1`;
+          pool.query(empSql, [staff_id, period], (err, empRows) => {
+            if (err) return res.status(500).json({ error: "Internal server error" });
+            if (empRows && empRows.length > 0) {
+              deposit_baseline = Number(empRows[0].deposit_baseline || 0);
+              loan_gen_baseline = Number(empRows[0].loan_gen_baseline || 0);
+              loan_amulya_baseline = Number(empRows[0].loan_amulya_baseline || 0);
+              audit_baseline = Number(empRows[0].audit_baseline || 0);
+              recovery_baseline = Number(empRows[0].recovery_baseline || 0);
+            }
+            doInsert(deposit_baseline, loan_gen_baseline, loan_amulya_baseline, audit_baseline, recovery_baseline);
+          });
+        } else {
+          doInsert(deposit_baseline, loan_gen_baseline, loan_amulya_baseline, audit_baseline, recovery_baseline);
+        }
       });
     });
   });

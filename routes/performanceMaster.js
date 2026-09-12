@@ -3647,11 +3647,13 @@ function getTransferBmScores(pool, period, branchId, callback) {
   }
 
   function monthDiffStart(d1, d2) {
+    const y1 = d1.getUTCFullYear();
+    const m1 = d1.getUTCMonth();
+    const y2 = d2.getUTCFullYear();
+    const m2 = d2.getUTCMonth();
     return Math.max(
-      0,
-      (d2.getFullYear() - d1.getFullYear()) * 12 +
-      (d2.getMonth() - d1.getMonth()) +
       1,
+      Math.min(12, (y2 - y1) * 12 + (m2 - m1) + 1)
     );
   }
 
@@ -3875,47 +3877,45 @@ function getTransferBmScores(pool, period, branchId, callback) {
                                     (t) => t.total_weightage_score,
                                   ) || [];
 
-                                 getTransferKpiHistory(pool, period, BMID)
-                                   .then((transferHistory) => {
-                                     const previousHoTransfers = hoHistory?.[0]?.transfers || [];
-                                     const previousAttTransfers = attHistory?.[0]?.transfers || [];
-                                     const previousClerkTransfers = transferHistory?.transfers || [];
+                                getTransferKpiHistory(pool, period, BMID)
+                                  .then((transferHistory) => {
+                                    const previousHoTransfers = hoHistory?.[0]?.transfers || [];
+                                    const previousAttTransfers = attHistory?.[0]?.transfers || [];
+                                    const previousClerkTransfers = transferHistory?.transfers || [];
+                                    const previousTransferScores = transferHistory?.all_scores || [];
 
-                                     const allTransfers = [
-                                       ...previousHoTransfers,
-                                       ...previousAttTransfers,
-                                       ...previousClerkTransfers,
-                                     ];
+                                    const allTransfers = [
+                                      ...previousHoTransfers,
+                                      ...previousAttTransfers,
+                                      ...previousClerkTransfers,
+                                    ];
 
-                                     let isTransferClerkOrBm = allTransfers.length > 0;
-                                     let finalAvg = 0;
+                                    let isTransferClerkOrBm = allTransfers.length > 0;
+                                    let finalAvg = 0;
 
-                                     if (isTransferClerkOrBm) {
-                                       let sumOfPrevious = 0;
+                                    if (isTransferClerkOrBm) {
+                                      let sumOfPrevious = 0;
 
-                                       allTransfers.forEach((t) => {
-                                         const rawScore = Number(t.total_weightage_score || 0);
-                                         const months = Number(t.months || 0);
-                                         const proportionateScore = months > 0 ? (rawScore / 12) * months : rawScore;
-                                         sumOfPrevious += proportionateScore;
-                                       });
+                                      allTransfers.forEach((t) => {
+                                        const rawScore = Number(t.total_weightage_score || 0);
+                                        const months = Number(t.months || 0);
+                                        const proportionateScore = months > 0 ? (rawScore / 12) * months : rawScore;
+                                        sumOfPrevious += proportionateScore;
+                                      });
 
-                                       const currentScoreExcludingInsurance =
-                                         Number(finalScores.deposit?.weightageScore || 0) +
-                                         Number(finalScores.loan_gen?.weightageScore || 0) +
-                                         Number(finalScores.loan_amulya?.weightageScore || 0) +
-                                         Number(finalScores.recovery?.weightageScore || 0) +
-                                         Number(finalScores.audit?.weightageScore || 0);
+                                      const currentScoreExcludingInsurance =
+                                        Number(finalScores.deposit?.weightageScore || 0) +
+                                        Number(finalScores.loan_gen?.weightageScore || 0) +
+                                        Number(finalScores.loan_amulya?.weightageScore || 0) +
+                                        Number(finalScores.recovery?.weightageScore || 0) +
+                                        Number(finalScores.audit?.weightageScore || 0);
 
-                                        const averageExcludingInsurance = sumOfPrevious + currentScoreExcludingInsurance;
-                                       const insuranceScore = Number(finalScores.insurance?.weightageScore || 0);
-                                       finalAvg = averageExcludingInsurance + insuranceScore;
+                                      const averageExcludingInsurance = sumOfPrevious + currentScoreExcludingInsurance;
+                                      const insuranceScore = Number(finalScores.insurance?.weightageScore || 0);
+                                      finalAvg = averageExcludingInsurance + insuranceScore;
 
-                                       finalScores.originalTotal = Number((currentScoreExcludingInsurance + insuranceScore).toFixed(2));
-                                     } else {
-                                      const previousTransferScores =
-                                        transferHistory?.all_scores || [];
-
+                                      finalScores.originalTotal = Number((currentScoreExcludingInsurance + insuranceScore).toFixed(2));
+                                    } else {
                                       const allScores = [
                                         ...previousHoScores,
                                         ...previousAttenderScores,
@@ -4835,6 +4835,21 @@ export function getHoStaffTransferHistory(pool, period, ho_staff_id, callback) {
           let totalMonths = 0;
           let counter = {};
 
+          const getFinancialYearStart = (p) => {
+            const startYear = parseInt(p.split("-")[0], 10);
+            return new Date(startYear, 3, 1); // April 1
+          };
+          const monthDiffstart = (d1, d2) => {
+            return Math.max(
+              0,
+              (d2.getFullYear() - d1.getFullYear()) * 12 +
+              (d2.getMonth() - d1.getMonth())
+            );
+          };
+
+          const fyStart = getFinancialYearStart(period);
+          let lastDate = fyStart;
+
           let allTotals = [];
 
           rows.forEach((t) => {
@@ -4873,17 +4888,21 @@ export function getHoStaffTransferHistory(pool, period, ho_staff_id, callback) {
               };
             });
 
-            const branch = t.old_hod_name || "UNKNOWN";
+            const transferDate = new Date(t.transfer_date);
+            const months = Math.max(1, monthDiffstart(lastDate, transferDate));
+            lastDate = transferDate;
+
+            const branch = t.old_hod_name || t.old_designation || "HO_STAFF";
 
             counter[branch] = (counter[branch] || 0) + 1;
             const uniqueKey = `${branch}_${counter[branch]}`;
 
             branch_avg_kpi[uniqueKey] = {
               avg_kpi: Number(total.toFixed(2)),
-              months: 1,
+              months: months,
             };
 
-            totalMonths += 1;
+            totalMonths += months;
             allTotals.push(total);
 
             transfers.push({
@@ -4892,6 +4911,9 @@ export function getHoStaffTransferHistory(pool, period, ho_staff_id, callback) {
               transfer_date: t.transfer_date,
               hod_name: t.hod_name,
               old_hod_name: t.old_hod_name,
+              old_designation: t.old_designation,
+              new_designation: t.new_designation,
+              months: months,
             });
           });
 
@@ -4993,6 +5015,21 @@ ORDER BY ho.transfer_date ASC
           let totalMonths = 0;
           let counter = {};
 
+          const getFinancialYearStart = (p) => {
+            const startYear = parseInt(p.split("-")[0], 10);
+            return new Date(startYear, 3, 1); // April 1
+          };
+          const monthDiffstart = (d1, d2) => {
+            return Math.max(
+              0,
+              (d2.getFullYear() - d1.getFullYear()) * 12 +
+              (d2.getMonth() - d1.getMonth())
+            );
+          };
+
+          const fyStart = getFinancialYearStart(period);
+          let lastDate = fyStart;
+
           let allTotals = [];
 
           rows.forEach((t) => {
@@ -5010,6 +5047,7 @@ ORDER BY ho.transfer_date ASC
               if (kpi_name === "Insurance Target") return;
 
               const achieved = achievedMap[kpi_name] || 0;
+
               const ratio = achieved / weightage;
 
               let score = 0;
@@ -5028,6 +5066,10 @@ ORDER BY ho.transfer_date ASC
               };
             });
 
+            const transferDate = new Date(t.transfer_date);
+            const months = Math.max(1, monthDiffstart(lastDate, transferDate));
+            lastDate = transferDate;
+
             const branch = t.old_hod_name || t.old_branch || "UNKNOWN";
 
             counter[branch] = (counter[branch] || 0) + 1;
@@ -5035,10 +5077,10 @@ ORDER BY ho.transfer_date ASC
 
             branch_avg_kpi[uniqueKey] = {
               avg_kpi: Number(total.toFixed(2)),
-              months: 1,
+              months: months,
             };
 
-            totalMonths += 1;
+            totalMonths += months;
             allTotals.push(total);
 
             transfers.push({
@@ -5051,6 +5093,7 @@ ORDER BY ho.transfer_date ASC
               old_branch_name: t.old_branch,
               old_designation: t.old_designation,
               new_designation: t.new_designation,
+              months: months,
             });
           });
 
@@ -5145,6 +5188,21 @@ ORDER BY ho.transfer_date ASC
           let totalMonths = 0;
           let counter = {};
 
+          const getFinancialYearStart = (p) => {
+            const startYear = parseInt(p.split("-")[0], 10);
+            return new Date(startYear, 3, 1); // April 1
+          };
+          const monthDiffstart = (d1, d2) => {
+            return Math.max(
+              0,
+              (d2.getFullYear() - d1.getFullYear()) * 12 +
+              (d2.getMonth() - d1.getMonth())
+            );
+          };
+
+          const fyStart = getFinancialYearStart(period);
+          let lastDate = fyStart;
+
           rows.forEach((t) => {
             const achievedMap = {
               "Alloted Work": Number(t.Alloted_Work) || 0,
@@ -5181,17 +5239,21 @@ ORDER BY ho.transfer_date ASC
               };
             });
 
-            const branch = t.old_hod_name || "UNKNOWN";
+            const transferDate = new Date(t.transfer_date);
+            const months = Math.max(1, monthDiffstart(lastDate, transferDate));
+            lastDate = transferDate;
+
+            const branch = t.old_hod_name || t.old_designation || "HO_STAFF";
 
             counter[branch] = (counter[branch] || 0) + 1;
             const uniqueKey = `${branch}_${counter[branch]}`;
 
             branch_avg_kpi[uniqueKey] = {
               avg_kpi: Number(total.toFixed(2)),
-              months: 1,
+              months: months,
             };
 
-            totalMonths += 1;
+            totalMonths += months;
 
             transfers.push({
               ...scores,
@@ -5199,6 +5261,9 @@ ORDER BY ho.transfer_date ASC
               transfer_date: t.transfer_date,
               hod_name: t.hod_name,
               old_hod_name: t.old_hod_name,
+              old_designation: t.old_designation,
+              new_designation: t.new_designation,
+              months: months,
             });
           });
 
@@ -5463,6 +5528,21 @@ ORDER BY ho.transfer_date ASC
           let totalMonths = 0;
           let counter = {};
 
+          const getFinancialYearStart = (p) => {
+            const startYear = parseInt(p.split("-")[0], 10);
+            return new Date(startYear, 3, 1); // April 1
+          };
+          const monthDiffstart = (d1, d2) => {
+            return Math.max(
+              0,
+              (d2.getFullYear() - d1.getFullYear()) * 12 +
+              (d2.getMonth() - d1.getMonth())
+            );
+          };
+
+          const fyStart = getFinancialYearStart(period);
+          let lastDate = fyStart;
+
           rows.forEach((t) => {
             const achievedMap = {
               Cleanliness: Number(t.Cleanliness) || 0,
@@ -5497,6 +5577,10 @@ ORDER BY ho.transfer_date ASC
               };
             });
 
+            const transferDate = new Date(t.transfer_date);
+            const months = Math.max(1, monthDiffstart(lastDate, transferDate));
+            lastDate = transferDate;
+
             const branch = t.old_hod_name || t.old_branch || "UNKNOWN";
 
             counter[branch] = (counter[branch] || 0) + 1;
@@ -5504,10 +5588,10 @@ ORDER BY ho.transfer_date ASC
 
             branch_avg_kpi[uniqueKey] = {
               avg_kpi: Number(total.toFixed(2)),
-              months: 1,
+              months: months,
             };
 
-            totalMonths += 1;
+            totalMonths += months;
 
             transfers.push({
               ...scores,
@@ -5519,6 +5603,7 @@ ORDER BY ho.transfer_date ASC
               old_branch_name: t.old_branch,
               old_designation: t.old_designation,
               new_designation: t.new_designation,
+              months: months,
             });
           });
 

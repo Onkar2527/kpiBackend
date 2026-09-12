@@ -2203,11 +2203,13 @@ summaryRouter.get("/transfer-bm-scores", (req, res) => {
           const transferDate = new Date(bm.transfer_date);
 
           function monthDiffstart(d1, d2) {
+            const y1 = d1.getUTCFullYear();
+            const m1 = d1.getUTCMonth();
+            const y2 = d2.getUTCFullYear();
+            const m2 = d2.getUTCMonth();
             return Math.max(
-              0,
-              (d2.getFullYear() - d1.getFullYear()) * 12 +
-              (d2.getMonth() - d1.getMonth()) +
               1,
+              Math.min(12, (y2 - y1) * 12 + (m2 - m1) + 1)
             );
           }
 
@@ -2242,136 +2244,139 @@ summaryRouter.get("/transfer-bm-scores", (req, res) => {
                 return res.status(500).json({ error: "Internal server error" });
 
               const achievedMap = {};
-              entryRows.forEach((r) => (achievedMap[r.kpi] = r.achieved || 0));
+              entryRows.forEach((r) => (achievedMap[r.kpi] = Number(r.achieved || 0)));
 
               achievedMap["audit"] =
-                (achievedMap["audit"] || 0) + (bm.audit_achieved || 0);
+                Number(achievedMap["audit"] || 0) + Number(bm.audit_achieved || 0);
               achievedMap["recovery"] =
-                (achievedMap["recovery"] || 0) + (bm.recovery_achieved || 0);
+                Number(achievedMap["recovery"] || 0) + Number(bm.recovery_achieved || 0);
+
+              const baselineMap = {
+                deposit: Number(bm.deposit_baseline || 0),
+                loan_gen: Number(bm.loan_gen_baseline || 0),
+                loan_amulya: Number(bm.loan_amulya_baseline || 0),
+                audit: Number(bm.audit_baseline || 0),
+                recovery: Number(bm.recovery_baseline || 0),
+                insurance: 0,
+              };
+
+              // Add prorated transfer baseline to achieved for deposit, loan_gen, loan_amulya
+              ["deposit", "loan_gen", "loan_amulya"].forEach((kpi) => {
+                achievedMap[kpi] = Number(achievedMap[kpi] || 0) + Number(baselineMap[kpi] || 0);
+              });
 
               pool.query(
-                `SELECT kpi, amount FROM previous_period_data WHERE period = ? AND branch_id = ?`,
-                [period, branchId],
-                (errPrev, prevRows) => {
-                  if (errPrev)
-                    return res.status(500).json({ error: "Internal server error" });
+                `
+                SELECT SUM(value) AS achieved
+                FROM entries
+                WHERE period=? AND employee_id=? 
+                AND kpi='insurance'
+                AND status='Verified'
+              `,
+                [period, BMID],
+                (errIns, insRows) => {
+                  if (errIns)
+                    return res
+                      .status(500)
+                      .json({ error: "Internal server error" });
 
-                  const baselineMap = {};
-                  prevRows.forEach((r) => (baselineMap[r.kpi] = r.amount || 0));
+                  achievedMap["insurance"] = Number(insRows?.[0]?.achieved || 0);
 
-                  // Add previous period data to achieved for deposit, loan_gen, loan_amulya
-                  ["deposit", "loan_gen", "loan_amulya"].forEach((kpi) => {
-                    achievedMap[kpi] = (achievedMap[kpi] || 0) + (baselineMap[kpi] || 0);
-                  });
+                  pool.query(`SELECT * FROM weightage`, (errW, wRows) => {
+                    if (errW)
+                      return res
+                        .status(500)
+                        .json({ error: "Internal server error" });
 
-                  pool.query(
-                    `
-                    SELECT SUM(value) AS achieved
-                    FROM entries
-                    WHERE period=? AND employee_id=? 
-                    AND kpi='insurance'
-                    AND status='Verified'
-                  `,
-                    [period, BMID],
-                    (errIns, insRows) => {
-                      if (errIns)
-                        return res
-                          .status(500)
-                          .json({ error: "Internal server error" });
+                    const weightageMap = {};
+                    wRows.forEach((w) => (weightageMap[w.kpi] = w.weightage));
 
-                      achievedMap["insurance"] = insRows?.[0]?.achieved || 0;
+                    const bmKpis = [
+                      "deposit",
+                      "loan_gen",
+                      "loan_amulya",
+                      "recovery",
+                      "audit",
+                      "insurance",
+                    ];
 
-                      pool.query(`SELECT * FROM weightage`, (errW, wRows) => {
-                        if (errW)
-                          return res
-                            .status(500)
-                            .json({ error: "Internal server error" });
+                    const calculateScores = (cap) => {
+                      const scores = {};
+                      let total = 0;
 
-                        const weightageMap = {};
-                        wRows.forEach((w) => (weightageMap[w.kpi] = w.weightage));
+                      bmKpis.forEach((kpi) => {
+                        const previousBalance = Number(bm[`${kpi}_baseline`] || 0);
+                        const newTarget = Number(bm[`${kpi}_target`] || 0);
+                        const totalTarget = previousBalance + newTarget;
+                        const achieved = achievedMap[kpi] || 0;
+                        const weight = weightageMap[kpi] || 0;
+                        const baseline = baselineMap[kpi] || 0;
 
-                        const bmKpis = [
-                          "deposit",
-                          "loan_gen",
-                          "loan_amulya",
-                          "recovery",
-                          "audit",
-                          "insurance",
-                        ];
+                        const isBaselineOnly =
+                          ["deposit", "loan_gen", "loan_amulya"].includes(kpi) &&
+                          baseline > 0 &&
+                          Number(achieved) <= Number(baseline);
 
-                        const calculateScores = (cap) => {
-                          const scores = {};
-                          let total = 0;
+                        let outOf10 = 0;
+                        const targetForRatio = totalTarget > 0 ? totalTarget : newTarget;
 
-                          bmKpis.forEach((kpi) => {
-                            const target = bmTargets[kpi] || 0;
-                            const achieved = achievedMap[kpi] || 0;
-                            const weight = weightageMap[kpi] || 0;
-                            const baseline = baselineMap[kpi] || 0;
+                        if (targetForRatio > 0 && !isBaselineOnly) {
+                          const ratio = achieved / targetForRatio;
+                          const auditRatio = kpi === "audit" ? ratio : 0;
+                          const recoveryRatio = kpi === "recovery" ? ratio : 0;
 
-                            const isBaselineOnly =
-                              ["deposit", "loan_gen", "loan_amulya"].includes(kpi) &&
-                              baseline > 0 &&
-                              Number(achieved) <= Number(baseline);
+                          switch (kpi) {
+                            case "deposit":
+                            case "loan_gen":
+                            case "loan_amulya":
+                              if (ratio <= 1) outOf10 = ratio * 10;
+                              else if (ratio < 1.25) outOf10 = 10;
+                              else if (
+                                auditRatio >= 0.75 &&
+                                recoveryRatio >= 0.75
+                              )
+                                outOf10 = 12.5;
+                              else outOf10 = 10;
+                              break;
 
-                            let outOf10 = 0;
+                            case "recovery":
+                            case "audit":
+                              if (ratio <= 1) outOf10 = ratio * 10;
+                              else outOf10 = 12.5;
+                              break;
 
-                            if (target === 0) {
-                              outOf10 = 0;
-                            } else if (!isBaselineOnly) {
-                              const ratio = achieved / target;
-                              const auditRatio = kpi === "audit" ? ratio : 0;
-                              const recoveryRatio = kpi === "recovery" ? ratio : 0;
+                            case "insurance":
+                              if (ratio === 0) outOf10 = 0;
+                              else if (ratio <= 1) outOf10 = ratio * 10;
+                              else if (ratio < 1.25) outOf10 = 10;
+                              else outOf10 = 12.5;
+                              break;
+                          }
+                        }
 
-                              switch (kpi) {
-                                case "deposit":
-                                case "loan_gen":
-                                case "loan_amulya":
-                                  if (ratio <= 1) outOf10 = ratio * 10;
-                                  else if (ratio < 1.25) outOf10 = 10;
-                                  else if (
-                                    auditRatio >= 0.75 &&
-                                    recoveryRatio >= 0.75
-                                  )
-                                    outOf10 = 12.5;
-                                  else outOf10 = 10;
-                                  break;
+                        outOf10 = Math.max(0, Math.min(cap, outOf10));
 
-                                case "recovery":
-                                case "audit":
-                                  if (ratio <= 1) outOf10 = ratio * 10;
-                                  else outOf10 = 12.5;
-                                  break;
+                        let weightScore = isBaselineOnly
+                          ? 0
+                          : (outOf10 * weight) / 100;
 
-                                case "insurance":
-                                  if (ratio === 0) outOf10 = 0;
-                                  else if (ratio <= 1) outOf10 = ratio * 10;
-                                  else if (ratio < 1.25) outOf10 = 10;
-                                  else outOf10 = 12.5;
-                                  break;
-                              }
-                            }
-
-                            outOf10 = Math.max(0, Math.min(cap, outOf10));
-
-                            let weightScore = isBaselineOnly
-                              ? 0
-                              : (outOf10 * weight) / 100;
-
-                            scores[kpi] = {
-                              score: outOf10,
-                              target,
-                              achieved,
-                              weightage: weight,
-                              weightageScore: weightScore,
-                            };
-
-                            total += weightScore;
-                          });
-
-                          scores["total"] = total;
-                          return scores;
+                        scores[kpi] = {
+                          score: outOf10,
+                          target: newTarget,
+                          previousBalance,
+                          newTarget,
+                          totalTarget,
+                          achieved,
+                          weightage: weight,
+                          weightageScore: weightScore,
                         };
+
+                        total += weightScore;
+                      });
+
+                      scores["total"] = total;
+                      return scores;
+                    };
 
                         const prelim = calculateScores(12.5);
 
@@ -2398,7 +2403,6 @@ summaryRouter.get("/transfer-bm-scores", (req, res) => {
         },
       );
     });
-});
 
 // all branch or gm  all attender api and also for get specific attender score /// this old api not existing transfer history //21-02-2026
 summaryRouter.get("/branch-attenders", async (req, res) => {
