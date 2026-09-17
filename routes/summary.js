@@ -1887,6 +1887,105 @@ ORDER BY u.id, k.kpi;
       };
     });
 
+    const weightRows = await new Promise((resolve) => {
+      pool.query("SELECT kpi, weightage FROM weightage", (err, rows) => resolve(rows || []));
+    });
+    const weightMap = {};
+    weightRows.forEach((w) => {
+      weightMap[w.kpi] = Number(w.weightage) || 0;
+    });
+
+    const historicalTransfers = await new Promise((resolve) => {
+      pool.query(
+        `SELECT 
+           e.*, 
+           u.name AS staff_name,
+           u.resign AS user_resign,
+           u.resign_date,
+           b_new.name AS new_branch_name
+         FROM employee_transfer e
+         JOIN users u 
+           ON u.id = e.staff_id 
+           AND u.period COLLATE utf8mb4_unicode_ci = e.period COLLATE utf8mb4_unicode_ci
+         LEFT JOIN branches b_new 
+           ON b_new.code COLLATE utf8mb4_unicode_ci = e.new_branch_id COLLATE utf8mb4_unicode_ci 
+           AND b_new.period COLLATE utf8mb4_unicode_ci = e.period COLLATE utf8mb4_unicode_ci
+         WHERE e.old_branch_id COLLATE utf8mb4_unicode_ci = ? 
+           AND e.period COLLATE utf8mb4_unicode_ci = ? 
+           AND (e.old_designation IS NULL OR LOWER(e.old_designation) = 'clerk' OR e.old_designation = '')`,
+        [branchId, period],
+        (err, rows) => resolve(rows || [])
+      );
+    });
+
+    historicalTransfers.forEach((t) => {
+      const id = t.staff_id;
+      if (!staffScores[id]) {
+        const isResigned = Number(t.user_resign) === 1 || Number(t.resiged) === 1 || !t.new_branch_id;
+
+        staffScores[id] = {
+          staffId: id,
+          staffName: t.staff_name,
+          transferStatus: isResigned ? "RESIGNED" : "TRANSFERRED",
+          transferDate: t.transfer_date || t.resign_date,
+          newBranchName: t.new_branch_name || null,
+          isHistorical: true,
+        };
+
+        // 1. Audit and recovery first
+        ["audit", "recovery"].forEach((kpi) => {
+          const baseline = Number(t[`${kpi}_baseline`]) || 0;
+          const target = Number(t[`${kpi}_target`]) || 0;
+          const totalTarget = baseline + target;
+          const achieved = Number(t[`${kpi}_achieved`]) || 0;
+          const isBaselineOnly = baseline > 0 && achieved <= baseline;
+          const score = isBaselineOnly ? 0 : calculateScore(kpi, baseline > 0 ? achieved - baseline : achieved, target);
+          const weightage = weightMap[kpi] || 0;
+          const weightageScore = isBaselineOnly ? 0 : (score * weightage) / 100;
+
+          staffScores[id][kpi] = {
+            score,
+            previousBalance: baseline,
+            newTarget: target,
+            totalTarget,
+            target: totalTarget,
+            achieved: isBaselineOnly ? 0 : achieved,
+            weightage,
+            weightageScore: isNaN(weightageScore) ? 0 : weightageScore,
+          };
+        });
+
+        // 2. Remaining KPIs
+        ["deposit", "loan_gen", "loan_amulya", "insurance"].forEach((kpi) => {
+          const baseline = Number(t[`${kpi}_baseline`]) || 0;
+          const target = Number(t[`${kpi}_target`]) || 0;
+          const totalTarget = baseline + target;
+          const achieved = Number(t[`${kpi}_achieved`]) || 0;
+          const isBaselineOnly = baseline > 0 && achieved <= baseline;
+          const score = isBaselineOnly ? 0 : calculateScore(
+            kpi,
+            baseline > 0 ? achieved - baseline : achieved,
+            target,
+            staffScores[id]?.audit?.score || 0,
+            staffScores[id]?.recovery?.score || 0
+          );
+          const weightage = weightMap[kpi] || 0;
+          const weightageScore = isBaselineOnly ? 0 : (score * weightage) / 100;
+
+          staffScores[id][kpi] = {
+            score,
+            previousBalance: baseline,
+            newTarget: target,
+            totalTarget,
+            target: totalTarget,
+            achieved: isBaselineOnly ? 0 : achieved,
+            weightage,
+            weightageScore: isNaN(weightageScore) ? 0 : weightageScore,
+          };
+        });
+      }
+    });
+
     const staffArray = Object.values(staffScores);
 
     for (const staff of staffArray) {
