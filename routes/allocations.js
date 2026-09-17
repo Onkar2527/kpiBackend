@@ -196,7 +196,7 @@ export const autoDistributeTargetsResign = async (
 
     const allocations = await new Promise((resolve, reject) => {
       pool.query(
-        "SELECT user_id, kpi, amount AS annual_target FROM allocations WHERE period = ? AND user_id IN (?) AND branch_id = ? AND kpi ='insurance'",
+        "SELECT user_id, kpi, amount AS annual_target FROM allocations WHERE period = ? AND user_id IN (?) AND branch_id = ? AND kpi <> 'insurance'",
         [period, userIds, branchId],
         (err, rows) => (err ? reject(err) : resolve(rows)),
       );
@@ -204,7 +204,7 @@ export const autoDistributeTargetsResign = async (
 
     const previousData = await new Promise((resolve, reject) => {
       pool.query(
-        "SELECT employee_id AS user_id, kpi, amount AS annual_target FROM previous_period_data_staffwise WHERE period = ? AND employee_id IN (?) AND branch_id = ? AND kpi ='insurance' AND deleted_at IS NULL",
+        "SELECT employee_id AS user_id, kpi, amount AS annual_target FROM previous_period_data_staffwise WHERE period = ? AND employee_id IN (?) AND branch_id = ? AND kpi <> 'insurance' AND deleted_at IS NULL",
         [period, userIds, branchId],
         (err, rows) => (err ? reject(err) : resolve(rows)),
       );
@@ -395,6 +395,7 @@ export const autoDistributeTargetsNewUsers = async (period, branchId, callback) 
           updatesArray.push([Math.round(target), isBaseline ? undefined : "published", period, branchId, nj.id, kpi]);
         });
 
+        const remainingTarget = totalTarget - totalTransferGiven - totalNewJoinGiven - (isBaseline ? 0 : (transferTargetMap[kpi] || 0));
         const base = Math.floor(activeStaff.length ? remainingTarget / activeStaff.length : 0);
         const rem = activeStaff.length ? remainingTarget % activeStaff.length : 0;
 
@@ -423,7 +424,7 @@ export const autoDistributeTargetsNewUsers = async (period, branchId, callback) 
       const cleanBaselineUpdates = baselineUpdates.map(u => [u[4], u[2], u[3], u[5], u[0]]); // employee_id, period, branch_id, kpi, amount
       await new Promise((res, rej) => {
         pool.query(
-          `INSERT INTO previous_period_data_staffwise (employee_id, period, branch_id, kpi, amount) VALUES ? ON DUPLICATE KEY UPDATE amount = VALUES(amount)`,
+          `INSERT INTO previous_period_data_staffwise (employee_id, period, branch_id, kpi, amount) VALUES ? ON DUPLICATE KEY UPDATE amount = VALUES(amount), deleted_at = NULL`,
           [cleanBaselineUpdates],
           (e) => e ? rej(e) : res()
         );
@@ -668,7 +669,7 @@ export const autoDistributeTargetsOldBranch = async (period, branchId, role, cal
 
     if (baselineUpdates.length > 0) {
       const cleanBaselines = baselineUpdates.map(u => [u[4], u[2], u[3], u[5], u[0]]); // employee_id, period, branch_id, kpi, amount
-      await new Promise((res, rej) => pool.query("INSERT INTO previous_period_data_staffwise (employee_id, period, branch_id, kpi, amount) VALUES ? ON DUPLICATE KEY UPDATE amount = VALUES(amount)", [cleanBaselines], (e) => e ? rej(e) : res()));
+      await new Promise((res, rej) => pool.query("INSERT INTO previous_period_data_staffwise (employee_id, period, branch_id, kpi, amount) VALUES ? ON DUPLICATE KEY UPDATE amount = VALUES(amount), deleted_at = NULL", [cleanBaselines], (e) => e ? rej(e) : res()));
     }
 
     callback(null, { message: "Target Update Successful" });
@@ -783,7 +784,7 @@ export const autoDistributeTargetsNewBranch = async (period, branchId, callback)
 
     if (baselineUpdates.length > 0) {
       const cleanBaselines = baselineUpdates.map(u => [u[4], u[2], u[3], u[5], u[0]]); // employee_id, period, branch_id, kpi, amount
-      await new Promise((res, rej) => pool.query("INSERT INTO previous_period_data_staffwise (employee_id, period, branch_id, kpi, amount) VALUES ? ON DUPLICATE KEY UPDATE amount = VALUES(amount)", [cleanBaselines], (e) => e ? rej(e) : res()));
+      await new Promise((res, rej) => pool.query("INSERT INTO previous_period_data_staffwise (employee_id, period, branch_id, kpi, amount) VALUES ? ON DUPLICATE KEY UPDATE amount = VALUES(amount), deleted_at = NULL", [cleanBaselines], (e) => e ? rej(e) : res()));
     }
 
     callback(null, { message: "Target Update Successful" });

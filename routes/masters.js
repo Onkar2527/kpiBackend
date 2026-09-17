@@ -115,7 +115,7 @@ mastersRouter.post("/users", (req, res, next) => {
   }
   const { period } = req.body;
   pool.query(
-    "SELECT u.id, u.username, u.name, u.role, b.name as branch_name, u.PF_NO, d.name as department_name,u.branch_id,u.hod_id,u.transfer_date,u1.name as hod_name FROM users u left join branches b on u.branch_id=b.code AND b.period = ? left join departments d on d.id=u.department_id left join users u1 on u.hod_id = u1.id WHERE u.resign=0 AND u.period = ? ",
+    "SELECT u.id, u.username, u.name, u.role, b.name as branch_name, u.PF_NO, d.name as department_name,u.branch_id,u.department_id,u.hod_id,u.transfer_date,u1.name as hod_name FROM users u left join branches b on u.branch_id=b.code AND b.period = ? left join departments d on d.id=u.department_id left join users u1 on u.hod_id = u1.id WHERE u.resign=0 AND u.period = ? ",
     [period, period], (error, results) => {
       if (error)
         return res.status(500).json({ error: "Internal server error" });
@@ -324,8 +324,8 @@ mastersRouter.delete("/branches/:id", (req, res) => {
   );
 });
 
-//staff Transfers
-mastersRouter.post("/transfers", (req, res) => {
+//staff Transfers List
+mastersRouter.post("/transfers-list", (req, res) => {
   const { period } = req.body;
   pool.query(
     `SELECT 
@@ -412,16 +412,22 @@ mastersRouter.post("/transfers", (req, res) => {
     period,
     deposit_target,
     deposit_achieved,
+    deposit_baseline,
     loan_gen_target,
     loan_gen_achieved,
+    loan_gen_baseline,
     loan_amulya_target,
     loan_amulya_achieved,
+    loan_amulya_baseline,
     audit_target,
     audit_achieved,
+    audit_baseline,
     recovery_target,
     recovery_achieved,
+    recovery_baseline,
     insurance_target,
     insurance_achieved,
+    insurance_baseline,
     old_designation,
     new_designation,
   } = req.body;
@@ -434,16 +440,22 @@ mastersRouter.post("/transfers", (req, res) => {
     period,
     deposit_target,
     deposit_achieved,
+    deposit_baseline: deposit_baseline || 0,
     loan_gen_target,
     loan_gen_achieved,
+    loan_gen_baseline: loan_gen_baseline || 0,
     loan_amulya_target,
     loan_amulya_achieved,
+    loan_amulya_baseline: loan_amulya_baseline || 0,
     audit_target,
     audit_achieved,
+    audit_baseline: audit_baseline || 0,
     recovery_target,
     recovery_achieved,
+    recovery_baseline: recovery_baseline || 0,
     insurance_target,
     insurance_achieved,
+    insurance_baseline: insurance_baseline || 0,
     old_designation,
     new_designation,
   };
@@ -640,7 +652,7 @@ mastersRouter.post("/revert-transfer/:id", (req, res) => {
             if (empRows.length > 0) {
               const tr = empRows[0];
               connection.query(
-                "UPDATE users SET branch_id = ?, role = ?, transfered = 0, transfer_date = NULL WHERE id = ? AND period = ?",
+                "UPDATE users SET branch_id = ?, role = ?, resign = 0, resign_date = NULL, transfered = 0, transfer_date = NULL WHERE id = ? AND period = ?",
                 [tr.old_branch_id, tr.old_designation, tr.staff_id, tr.period],
                 (errUpdate) => {
                   if (errUpdate) return rollbackTx(errUpdate.message);
@@ -690,7 +702,7 @@ mastersRouter.post("/revert-transfer/:id", (req, res) => {
             if (attRows.length > 0) {
               const tr = attRows[0];
               connection.query(
-                "UPDATE users SET branch_id = ?, role = ?, hod_id = ?, transfered = 0, transfer_date = NULL WHERE id = ? AND period = ?",
+                "UPDATE users SET branch_id = ?, role = ?, hod_id = ?, resign = 0, resign_date = NULL, transfered = 0, transfer_date = NULL WHERE id = ? AND period = ?",
                 [tr.old_branch_id, tr.old_designation, tr.old_hod_id, tr.staff_id, tr.period],
                 (errUpdate) => {
                   if (errUpdate) return rollbackTx(errUpdate.message);
@@ -739,7 +751,7 @@ mastersRouter.post("/revert-transfer/:id", (req, res) => {
                   const currentBranchId = userRows[0]?.branch_id || null;
 
                   connection.query(
-                    "UPDATE users SET branch_id = NULL, role = ?, hod_id = ?, transfered = 0, transfer_date = NULL WHERE id = ? AND period = ?",
+                    "UPDATE users SET branch_id = NULL, role = ?, hod_id = ?, resign = 0, resign_date = NULL, transfered = 0, transfer_date = NULL WHERE id = ? AND period = ?",
                     [tr.old_designation, tr.old_hod_id, tr.staff_id, tr.period],
                     (errUpdate) => {
                       if (errUpdate) return rollbackTx(errUpdate.message);
@@ -1274,6 +1286,7 @@ mastersRouter.post("/update_employee_transfer", (req, res) => {
         loan_amulya: "loan_amulya_target",
         recovery: "recovery_target",
         audit: "audit_target",
+        insurance: "insurance_target",
       };
 
       const updateData = {};
@@ -1283,57 +1296,84 @@ mastersRouter.post("/update_employee_transfer", (req, res) => {
         }
       });
 
-      if (Object.keys(updateData).length === 0) {
-        return res.status(400).json({ error: "No valid KPI data to update" });
-      }
-
-      // 2. Check entry in employee_transfer table
+      // 1b. Fetch baseline data from previous_period_data_staffwise
       pool.query(
-        "SELECT id FROM employee_transfer WHERE period = ? AND old_branch_id = ? AND staff_id = ?",
+        "SELECT kpi, amount FROM previous_period_data_staffwise WHERE period = ? AND branch_id = ? AND employee_id = ? AND deleted_at IS NULL",
         [period, branchId, userId],
-        (err, result) => {
-          if (err)
+        (errBaseline, baselineRows) => {
+          if (errBaseline)
             return res
               .status(500)
-              .json({ error: "Database error 2", details: err });
+              .json({ error: "Database error baseline", details: errBaseline });
 
-          if (result.length === 0) {
-            return res.status(404).json({
-              error:
-                "No employee_transfer record found for this user. Update not possible.",
-            });
+          const baselineMapping = {
+            deposit: "deposit_baseline",
+            loan_gen: "loan_gen_baseline",
+            loan_amulya: "loan_amulya_baseline",
+            recovery: "recovery_baseline",
+            audit: "audit_baseline",
+            insurance: "insurance_baseline",
+          };
+
+          (baselineRows || []).forEach((row) => {
+            if (baselineMapping[row.kpi]) {
+              updateData[baselineMapping[row.kpi]] = row.amount;
+            }
+          });
+
+          if (Object.keys(updateData).length === 0) {
+            return res.status(400).json({ error: "No valid KPI data to update" });
           }
 
-          const transferId = result[0].id;
-
-          // 3. Update employee_transfer
+          // 2. Check entry in employee_transfer table
           pool.query(
-            "UPDATE employee_transfer SET ? WHERE id = ?",
-            [updateData, transferId],
-            (err) => {
+            "SELECT id FROM employee_transfer WHERE period = ? AND old_branch_id = ? AND staff_id = ?",
+            [period, branchId, userId],
+            (err, result) => {
               if (err)
                 return res
                   .status(500)
-                  .json({ error: "Database error 3", details: err });
+                  .json({ error: "Database error 2", details: err });
 
-              // 4. After employee_transfer update → update users.branch_id=''
-              const userUpdate = { branch_id: "" };
+              if (result.length === 0) {
+                return res.status(404).json({
+                  error:
+                    "No employee_transfer record found for this user. Update not possible.",
+                });
+              }
 
+              const transferId = result[0].id;
+
+              // 3. Update employee_transfer
               pool.query(
-                "UPDATE users SET ? WHERE id = ? AND period = ?",
-                [userUpdate, userId, period],
+                "UPDATE employee_transfer SET ? WHERE id = ?",
+                [updateData, transferId],
                 (err) => {
                   if (err)
                     return res
                       .status(500)
-                      .json({ error: "Database error 4", details: err });
+                      .json({ error: "Database error 3", details: err });
 
-                  return res.json({
-                    success: true,
-                    message:
-                      "Transfer updated and user branch cleared successfully",
-                    updatedFields: updateData,
-                  });
+                  // 4. After employee_transfer update → update users.branch_id=''
+                  const userUpdate = { branch_id: "" };
+
+                  pool.query(
+                    "UPDATE users SET ? WHERE id = ? AND period = ?",
+                    [userUpdate, userId, period],
+                    (err) => {
+                      if (err)
+                        return res
+                          .status(500)
+                          .json({ error: "Database error 4", details: err });
+
+                      return res.json({
+                        success: true,
+                        message:
+                          "Transfer updated and user branch cleared successfully",
+                        updatedFields: updateData,
+                      });
+                    },
+                  );
                 },
               );
             },
@@ -1373,6 +1413,7 @@ mastersRouter.post("/update_employee_transfer_Transfered", (req, res) => {
         loan_amulya: "loan_amulya_target",
         recovery: "recovery_target",
         audit: "audit_target",
+        insurance: "insurance_target",
       };
 
       const updateData = {};
@@ -1382,56 +1423,83 @@ mastersRouter.post("/update_employee_transfer_Transfered", (req, res) => {
         }
       });
 
-      if (Object.keys(updateData).length === 0) {
-        return res.status(400).json({ error: "No valid KPI data to update" });
-      }
-
-      // 2. Check entry in employee_transfer table
+      // 1b. Fetch baseline data from previous_period_data_staffwise
       pool.query(
-        "SELECT id FROM employee_transfer WHERE period = ? AND old_branch_id = ? AND staff_id = ?",
+        "SELECT kpi, amount FROM previous_period_data_staffwise WHERE period = ? AND branch_id = ? AND employee_id = ? AND deleted_at IS NULL",
         [period, branchId, userId],
-        (err, result) => {
-          if (err)
+        (errBaseline, baselineRows) => {
+          if (errBaseline)
             return res
               .status(500)
-              .json({ error: "Database error 2", details: err });
+              .json({ error: "Database error baseline", details: errBaseline });
 
-          if (result.length === 0) {
-            return res.status(404).json({
-              error:
-                "No employee_transfer record found for this user. Update not possible.",
-            });
+          const baselineMapping = {
+            deposit: "deposit_baseline",
+            loan_gen: "loan_gen_baseline",
+            loan_amulya: "loan_amulya_baseline",
+            recovery: "recovery_baseline",
+            audit: "audit_baseline",
+            insurance: "insurance_baseline",
+          };
+
+          (baselineRows || []).forEach((row) => {
+            if (baselineMapping[row.kpi]) {
+              updateData[baselineMapping[row.kpi]] = row.amount;
+            }
+          });
+
+          if (Object.keys(updateData).length === 0) {
+            return res.status(400).json({ error: "No valid KPI data to update" });
           }
 
-          const transferId = result[0].id;
-
-          // 3. Update employee_transfer
+          // 2. Check entry in employee_transfer table
           pool.query(
-            "UPDATE employee_transfer SET ? WHERE id = ?",
-            [updateData, transferId],
-            (err) => {
+            "SELECT id FROM employee_transfer WHERE period = ? AND old_branch_id = ? AND staff_id = ?",
+            [period, branchId, userId],
+            (err, result) => {
               if (err)
                 return res
                   .status(500)
-                  .json({ error: "Database error 3", details: err });
+                  .json({ error: "Database error 2", details: err });
 
-              const userUpdate = { branch_id: "" };
+              if (result.length === 0) {
+                return res.status(404).json({
+                  error:
+                    "No employee_transfer record found for this user. Update not possible.",
+                });
+              }
 
+              const transferId = result[0].id;
+
+              // 3. Update employee_transfer
               pool.query(
-                "UPDATE users SET ? WHERE id = ? AND period = ?",
-                [userUpdate, userId, period],
+                "UPDATE employee_transfer SET ? WHERE id = ?",
+                [updateData, transferId],
                 (err) => {
                   if (err)
                     return res
                       .status(500)
-                      .json({ error: "Database error 4", details: err });
+                      .json({ error: "Database error 3", details: err });
 
-                  return res.json({
-                    success: true,
-                    message:
-                      "Transfer updated and user branch cleared successfully",
-                    updatedFields: updateData,
-                  });
+                  const userUpdate = { branch_id: "" };
+
+                  pool.query(
+                    "UPDATE users SET ? WHERE id = ? AND period = ?",
+                    [userUpdate, userId, period],
+                    (err) => {
+                      if (err)
+                        return res
+                          .status(500)
+                          .json({ error: "Database error 4", details: err });
+
+                      return res.json({
+                        success: true,
+                        message:
+                          "Transfer updated and user branch cleared successfully",
+                        updatedFields: updateData,
+                      });
+                    },
+                  );
                 },
               );
             },
