@@ -95,7 +95,7 @@ function updateProratedTargetsFn(req, res) {
     return Math.max(
       0,
       (d2.getFullYear() - d1.getFullYear()) * 12 +
-        (d2.getMonth() - d1.getMonth()),
+      (d2.getMonth() - d1.getMonth()),
     );
   }
 
@@ -103,8 +103,8 @@ function updateProratedTargetsFn(req, res) {
     return Math.max(
       0,
       (d2.getFullYear() - d1.getFullYear()) * 12 +
-        (d2.getMonth() - d1.getMonth()) +
-        1,
+      (d2.getMonth() - d1.getMonth()) +
+      1,
     );
   }
 
@@ -118,7 +118,7 @@ function updateProratedTargetsFn(req, res) {
 
       conn.query(
         "SELECT transfer_date FROM users WHERE id=? AND period = ?",
-        [staff_id ,period],
+        [staff_id, period],
         (err, staffRows) => {
           if (err) return rollback(err);
           if (!staffRows.length)
@@ -454,16 +454,12 @@ transferRouter.post("/transfer-staff-master", (req, res) => {
     transferData,
   } = req.body;
 
+  const isNoBranchRole = ["HO_STAFF", "Attender", "AGM", "DGM", "GM"].includes(selectedRole);
+
   if (
     !staff_id ||
     !period ||
-    (selectedRole === "Clerk" && !new_branchId) ||
-    (selectedRole !== "HO_STAFF" &&
-      selectedRole !== "Clerk" &&
-      (!old_branchId || !new_branchId)) ||
-    (selectedRole !== "Attender" &&
-      selectedRole !== "Clerk" &&
-      (!old_branchId || !new_branchId))
+    (!isNoBranchRole && (!old_branchId || !new_branchId))
   ) {
     return res.status(400).json({ error: "Missing required fields" });
   }
@@ -471,7 +467,7 @@ transferRouter.post("/transfer-staff-master", (req, res) => {
   if (role === "HO_STAFF" || role === "Attender") {
     pool.query(
       "UPDATE users SET transfer_date = NOW() WHERE id=? AND period = ?",
-      [staff_id ,period],
+      [staff_id, period],
       (err) => {
         if (err) {
           return res.status(500).json({
@@ -517,7 +513,7 @@ transferRouter.post("/transfer-staff-master", (req, res) => {
 
   pool.query(
     "UPDATE users SET transfer_date = NOW() WHERE id=? AND period = ?",
-    [staff_id,period],
+    [staff_id, period],
     (err) => {
       if (err) {
         return res
@@ -639,12 +635,12 @@ transferRouter.post("/transfer-staff-master-update", (req, res) => {
     transferData,
   } = req.body;
 
+  const isNoBranchRole = ["HO_STAFF", "Attender", "AGM", "DGM", "GM"].includes(selectedRole);
+
   if (
     !staff_id ||
     !period ||
-    (selectedRole === "Clerk" && !new_branchId) ||
-    (selectedRole !== "HO_STAFF" && (!old_branchId || !new_branchId)) ||
-    (selectedRole !== "Attender" && (!old_branchId || !new_branchId))
+    (!isNoBranchRole && (!old_branchId || !new_branchId))
   ) {
     return res.status(400).json({ error: "Missing required fields" });
   }
@@ -652,7 +648,7 @@ transferRouter.post("/transfer-staff-master-update", (req, res) => {
   if (role === "HO_STAFF" || role === "Attender") {
     pool.query(
       "UPDATE users SET transfer_date = NOW() WHERE id=? AND period = ?",
-      [staff_id ,period],
+      [staff_id, period],
       (err) => {
         if (err) {
           return res.status(500).json({
@@ -698,7 +694,7 @@ transferRouter.post("/transfer-staff-master-update", (req, res) => {
 
   pool.query(
     "UPDATE users SET transfer_date = NOW() WHERE id=? AND period = ?",
-    [staff_id , period],
+    [staff_id, period],
     (err) => {
       if (err) {
         return res

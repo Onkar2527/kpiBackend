@@ -246,14 +246,11 @@ mastersRouter.get("/users/branch/:branchId/role/:role", (req, res) => {
   );
 });
 
-// Branches
-mastersRouter.post("/branches", (req, res, next) => {
-  if (req.body.code || req.body.name) {
-    return next();
-  }
+// Get Branches
+mastersRouter.post("/get-branches", (req, res) => {
   const { period } = req.body;
   pool.query(
-    "SELECT b.*, u.name AS incharge_name FROM branches b left join users u on b.incharge_id=u.id WHERE u.period = ? and b.period = ?",
+    "SELECT b.*, u.name AS incharge_name FROM branches b left join users u on b.incharge_id=u.id and u.period = ? WHERE  b.period = ?",
     [period, period],
     (error, results) => {
       if (error)
