@@ -467,7 +467,7 @@ summaryRouter.get("/bm-scores", async (req, res) => {
         AND p.branch_id = ?
 
     LEFT JOIN allocations a
-        ON k.kpi = 'insurance'
+        ON a.kpi = 'insurance'
         AND a.user_id = bm.id
         AND a.period = ?
 

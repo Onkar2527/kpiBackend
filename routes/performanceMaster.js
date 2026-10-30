@@ -9,7 +9,7 @@ const insuranceCache = new Map();
 setInterval(() => {
   bmCalculationCache.clear();
   insuranceCache.clear();
-}, 600000);
+}, 30000);
 
 export const performanceMasterRouter = express.Router();
 //get kpi role wise
@@ -624,7 +624,7 @@ async function calculateBMScores(period, branchId = null) {
             AND p.branch_id COLLATE utf8mb4_unicode_ci = bm.branch_id COLLATE utf8mb4_unicode_ci
 
         LEFT JOIN allocations a
-            ON k.kpi COLLATE utf8mb4_unicode_ci = 'insurance' COLLATE utf8mb4_unicode_ci
+            ON a.kpi COLLATE utf8mb4_unicode_ci = 'insurance' COLLATE utf8mb4_unicode_ci
             AND a.user_id COLLATE utf8mb4_unicode_ci = bm.id COLLATE utf8mb4_unicode_ci
             AND a.period = ?
 
@@ -918,7 +918,7 @@ async function calculateBMScoresFortrasfer(period, branchId) {
         AND p.period = ?
         AND p.branch_id = ?
       LEFT JOIN allocations a
-        ON k.kpi = 'insurance'
+        ON a.kpi = 'insurance'
         AND a.user_id = bm.id
         AND a.period = ?
       LEFT JOIN weightage w
@@ -1144,8 +1144,6 @@ async function calculateBMScoresFortrasfer(period, branchId) {
   }
 }
 // function to get all hod scores
-const scoreCache = new Map();
-const branchScoreCache = new Map();
 performanceMasterRouter.get("/ho-Allhod-scores", async (req, res) => {
   const { period, hod_id, role } = req.query;
 
@@ -1240,75 +1238,28 @@ performanceMasterRouter.get("/ho-Allhod-scores", async (req, res) => {
 
     const branchCodes = branchCodesRows.map((r) => r.code);
 
-    const batchSize = 5;
-
-    const staffScores = [];
-
-    for (let i = 0; i < staffIds.length; i += batchSize) {
-      const batch = staffIds.slice(i, i + batchSize);
-
-      for (const id of batch) {
-        try {
-          const cacheKey = `${period}_${id}`;
-
-          if (scoreCache.has(cacheKey)) {
-            staffScores.push(scoreCache.get(cacheKey));
-
-            continue;
-          }
-
-          const score = await calculateStaffScores(period, id, "HO_STAFF");
-
-          scoreCache.set(cacheKey, score);
-
-          staffScores.push(score);
-        } catch {
-          staffScores.push({
-            total: 0,
-          });
-        }
-      }
-    }
+    const staffScoresBatchMap = await calculateStaffScoresBatch(
+      period,
+      staffIds,
+      "HO_STAFF",
+    );
 
     let fixedAvgTotal = 0;
 
-    for (const v of staffScores) {
-      fixedAvgTotal += v.total || 0;
+    for (const id of staffIds) {
+      const v = staffScoresBatchMap[id];
+      fixedAvgTotal += v?.total || 0;
     }
 
     const fixedAvg = Number(
-      (fixedAvgTotal / (staffScores.length || 1)).toFixed(2),
+      (fixedAvgTotal / (staffIds.length || 1)).toFixed(2),
     );
 
     const allBranchScores = await calculateBMScores(period);
 
-    const branchTotals = [];
-
-    for (let i = 0; i < branchCodes.length; i += batchSize) {
-      const batch = branchCodes.slice(i, i + batchSize);
-
-      for (const code of batch) {
-        try {
-          const cacheKey = `${period}_${code}`;
-
-          if (branchScoreCache.has(cacheKey)) {
-            branchTotals.push(branchScoreCache.get(cacheKey));
-
-            continue;
-          }
-
-          const total = Number(
-            (allBranchScores?.[code]?.total || 0).toFixed(2),
-          );
-
-          branchScoreCache.set(cacheKey, total);
-
-          branchTotals.push(total);
-        } catch {
-          branchTotals.push(0);
-        }
-      }
-    }
+    const branchTotals = branchCodes.map((code) =>
+      Number((allBranchScores?.[code]?.total || 0).toFixed(2)),
+    );
 
     let branchTotalValue = 0;
 
@@ -1902,7 +1853,6 @@ performanceMasterRouter.post("/save-or-update-ho-staff-kpi", (req, res) => {
 });
 
 //get Dashboard Data
-const bmScoreCache = new Map();
 performanceMasterRouter.post(
   "/get-Total-Ho_staff-details",
   async (req, res) => {
@@ -2008,35 +1958,10 @@ performanceMasterRouter.post(
 
       const allBranchScores = await calculateBMScores(period);
 
-      const branchesWithScore = branches.map((branch) => {
-        try {
-          const cacheKey = `${period}_${branch.code}`;
-
-          if (bmScoreCache.has(cacheKey)) {
-            return {
-              ...branch,
-
-              bmTotalScore: bmScoreCache.get(cacheKey),
-            };
-          }
-
-          const total = allBranchScores?.[branch.code]?.total || 0;
-
-          bmScoreCache.set(cacheKey, total);
-
-          return {
-            ...branch,
-
-            bmTotalScore: total,
-          };
-        } catch {
-          return {
-            ...branch,
-
-            bmTotalScore: 0,
-          };
-        }
-      });
+      const branchesWithScore = branches.map((branch) => ({
+        ...branch,
+        bmTotalScore: allBranchScores?.[branch.code]?.total || 0,
+      }));
 
       dashboardResult.totalBranches = branchesWithScore;
 
@@ -2058,8 +1983,6 @@ performanceMasterRouter.post(
 );
 
 //function to calculate hod calculation
-const hodScoreCache = new Map();
-const bmScoreCache1 = new Map();
 const calculateHodAllScores = async (
   pool,
   period,
@@ -2160,72 +2083,32 @@ const calculateHodAllScores = async (
 
     const branchCodes = branchRows.map((r) => r.code);
 
-    const limit = pLimit(10);
-
-    const staffPromises = staffIds.map((id) =>
-      limit(async () => {
-        try {
-          const cacheKey = `${period}_${id}`;
-
-          if (hodScoreCache.has(cacheKey)) {
-            return hodScoreCache.get(cacheKey);
-          }
-
-          const score = await calculateStaffScores(period, id, "HO_STAFF");
-
-          hodScoreCache.set(cacheKey, score);
-
-          return score;
-        } catch {
-          return {
-            total: 0,
-          };
-        }
-      }),
+    const staffScoresBatchMap = await calculateStaffScoresBatch(
+      period,
+      staffIds,
+      "HO_STAFF",
     );
-
-    const staffScores = await Promise.all(staffPromises);
 
     let staffTotal = 0;
 
-    for (const v of staffScores) {
-      staffTotal += v.total || 0;
+    for (const id of staffIds) {
+      const v = staffScoresBatchMap[id];
+      staffTotal += v?.total || 0;
     }
 
     const staffAvgScore = Number(
-      (staffTotal / (staffScores.length || 1)).toFixed(2),
+      (staffTotal / (staffIds.length || 1)).toFixed(2),
     );
 
     const allBranchScores = await calculateBMScores(period);
 
-    const bmPromises = branchCodes.map(async (code) => {
-      try {
-        const cacheKey = `${period}_${code}`;
-
-        if (bmScoreCache1.has(cacheKey)) {
-          return bmScoreCache1.get(cacheKey);
-        }
-
-        const total = Number((allBranchScores?.[code]?.total || 0).toFixed(2));
-
-        bmScoreCache1.set(cacheKey, total);
-
-        return total;
-      } catch {
-        return 0;
-      }
-    });
-
-    const bmTotals = await Promise.all(bmPromises);
-
     let bmTotal = 0;
-
-    for (const v of bmTotals) {
-      bmTotal += v;
+    for (const code of branchCodes) {
+      bmTotal += Number((allBranchScores?.[code]?.total || 0).toFixed(2));
     }
 
     const branchAvgScore = Number(
-      (bmTotal / (bmTotals.length || 1)).toFixed(2),
+      (bmTotal / (branchCodes.length || 1)).toFixed(2),
     );
 
     const [userKpiValues, insuranceValue] = await Promise.all([
@@ -2413,7 +2296,6 @@ const calculateHodAllScores = async (
 };
 
 //calculate AGM-DGM Score
-const agmScoreCache = new Map();
 performanceMasterRouter.get("/AGM-DGM-Scores", async (req, res) => {
   const { period } = req.query;
 
@@ -2456,51 +2338,12 @@ performanceMasterRouter.get("/AGM-DGM-Scores", async (req, res) => {
     // 1. Pre-calculate and cache BM scores
     await calculateBMScores(period);
 
-    // 2. Pre-calculate and cache staff scores
-    if (agmList.length > 0) {
-      const agmIds = agmList.map((u) => u.hod_id);
-      const staffRows = await new Promise((resolve, reject) => {
-        pool.query(
-          `
-          SELECT id FROM users
-          WHERE hod_id IN (?)
-          AND period = ?
-          `,
-          [agmIds, period],
-          (err, rows) => (err ? reject(err) : resolve(rows)),
-        );
-      });
-      const staffIds = staffRows.map((r) => r.id);
 
-      if (staffIds.length > 0) {
-        const staffScoresBatchMap = await calculateStaffScoresBatch(
-          period,
-          staffIds,
-          "HO_STAFF",
-        );
-        for (const [id, score] of Object.entries(staffScoresBatchMap)) {
-          hodScoreCache.set(`${period}_${id}`, score);
-        }
-      }
-    }
 
     // 3. Process all HOD users in parallel
     const results = await Promise.all(
       agmList.map(async (agm) => {
         try {
-          const cacheKey = `${period}_${agm.hod_id}_${agm.role}`;
-
-          // CACHE HIT
-          if (agmScoreCache.has(cacheKey)) {
-            return {
-              hod_id: agm.hod_id,
-              name: agm.name,
-              role: agm.role,
-              ...agmScoreCache.get(cacheKey),
-            };
-          }
-
-          // HEAVY FUNCTION
           const scoreData = await calculateHodAllScores(
             pool,
             period,
@@ -2509,9 +2352,6 @@ performanceMasterRouter.get("/AGM-DGM-Scores", async (req, res) => {
             calculateStaffScores,
             calculateBMScores,
           );
-
-          // SAVE CACHE
-          agmScoreCache.set(cacheKey, scoreData);
 
           return {
             hod_id: agm.hod_id,
@@ -2579,8 +2419,6 @@ performanceMasterRouter.post("/deputation-report", (req, res) => {
     res.json(rows);
   });
 });
-
-const branchScoreCache1 = new Map();
 
 performanceMasterRouter.post("/getAllBranchesScore", async (req, res) => {
   const { period } = req.body;
@@ -2650,63 +2488,16 @@ performanceMasterRouter.post("/getAllBranchesScore", async (req, res) => {
       bmMap[bm.branch_id] = bm;
     });
 
-    const batchSize = 5;
-
-    const branchesWithScore = [];
-
-    for (let i = 0; i < branches.length; i += batchSize) {
-      const batch = branches.slice(i, i + batchSize);
-
-      const batchResults = await Promise.all(
-        batch.map(async (branch) => {
-          try {
-            const cacheKey = `${period}_${branch.code}`;
-
-            if (branchScoreCache1.has(cacheKey)) {
-              return {
-                ...branch,
-
-                ...branchScoreCache1.get(cacheKey),
-              };
-            }
-
-            const bm = bmMap[branch.code];
-
-            const total = allBranchScores?.[branch.code]?.total || 0;
-
-            const result = {
-              bmId: bm?.PF_NO ?? null,
-
-              bmName: bm?.name ?? null,
-
-              bmTotalScore: total,
-            };
-
-            branchScoreCache1.set(cacheKey, result);
-
-            return {
-              ...branch,
-
-              ...result,
-            };
-          } catch (err) {
-            console.error(`BM score failed for branch ${branch.code}`, err);
-
-            return {
-              ...branch,
-
-              bmId: null,
-
-              bmName: null,
-
-              bmTotalScore: 0,
-            };
-          }
-        }),
-      );
-
-      branchesWithScore.push(...batchResults);
-    }
+    const branchesWithScore = branches.map((branch) => {
+      const bm = bmMap[branch.code];
+      const total = allBranchScores?.[branch.code]?.total || 0;
+      return {
+        ...branch,
+        bmId: bm?.PF_NO ?? null,
+        bmName: bm?.name ?? null,
+        bmTotalScore: total,
+      };
+    });
 
     branchReportData.totalBranches = branchesWithScore;
 
@@ -4174,7 +3965,6 @@ async function getBranchAttendersScores(period) {
   return response;
 }
 //helper function for get all users
-const bmUserScoreCache = new Map();
 
 function getAllUser(pool, period, cb) {
   const startYear = parseInt(period.substring(0, 4));
@@ -4685,37 +4475,12 @@ performanceMasterRouter.post("/usersAgmGm", async (req, res) => {
         // 1. Pre-calculate and cache BM scores
         await calculateBMScores(period);
 
-        // 2. Pre-calculate and cache staff scores
-        const agmUserIds = agmUsers.map((u) => u.id);
-        const staffIds = users
-          .filter((u) => u.hod_id && agmUserIds.includes(u.hod_id))
-          .map((u) => u.id);
 
-        if (staffIds.length > 0) {
-          const staffScoresBatchMap = await calculateStaffScoresBatch(
-            period,
-            staffIds,
-            "HO_STAFF",
-          );
-          for (const [id, score] of Object.entries(staffScoresBatchMap)) {
-            hodScoreCache.set(`${period}_${id}`, score);
-          }
-        }
 
         // 3. Process all HOD users in parallel
         const agmResults = await Promise.all(
           agmUsers.map(async (agm) => {
             try {
-              const cacheKey = `${period}_${agm.id}_${agm.role}`;
-
-              if (agmScoreCache.has(cacheKey)) {
-                const cached = agmScoreCache.get(cacheKey);
-                return {
-                  ...agm,
-                  bmTotalScore: cached?.total || 0,
-                };
-              }
-
               const scoreData = await calculateHodAllScores(
                 pool,
                 period,
@@ -4724,8 +4489,6 @@ performanceMasterRouter.post("/usersAgmGm", async (req, res) => {
                 calculateStaffScores,
                 calculateBMScores,
               );
-
-              agmScoreCache.set(cacheKey, scoreData);
 
               return {
                 ...agm,
@@ -5375,57 +5138,21 @@ performanceMasterRouter.post(
 
         const batchResults = await Promise.all(
           batch.map(async (branch) => {
-            try {
-              const cacheKey = `${period}_${branch.code}_${deptKey}`;
-
-              if (branchScoreCache1.has(cacheKey)) {
-                return {
-                  ...branch,
-
-                  ...branchScoreCache1.get(cacheKey),
-                };
-              }
-
-              const bm = bmMap[branch.code];
-
-              const branchScore = allBranchScores?.[branch.code] || {};
-
-              const matchedKey = Object.keys(branchScore).find(
-                (key) => key.toLowerCase() === deptKey,
-              );
-
-              const result = {
-                bmId: bm?.PF_NO ?? null,
-
-                bmName: bm?.name ?? null,
-
-                department: formattedDepartment,
-
-                departmentData: matchedKey ? branchScore[matchedKey] : null,
-              };
-
-              branchScoreCache1.set(cacheKey, result);
-
-              return {
-                ...branch,
-
-                ...result,
-              };
-            } catch (err) {
-              console.error(`BM score failed for branch ${branch.code}`, err);
-
-              return {
-                ...branch,
-
-                bmId: null,
-
-                bmName: null,
-
-                department: formattedDepartment,
-
-                departmentData: null,
-              };
-            }
+            const bm = bmMap[branch.code];
+            const branchScore = allBranchScores?.[branch.code] || {};
+            const matchedKey = Object.keys(branchScore).find(
+              (key) => key.toLowerCase() === deptKey,
+            );
+            const result = {
+              bmId: bm?.PF_NO ?? null,
+              bmName: bm?.name ?? null,
+              department: formattedDepartment,
+              departmentData: matchedKey ? branchScore[matchedKey] : null,
+            };
+            return {
+              ...branch,
+              ...result,
+            };
           }),
         );
 
