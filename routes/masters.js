@@ -795,8 +795,9 @@ mastersRouter.post("/revert-transfer/:id", (req, res) => {
 });
 
 mastersRouter.put("/Transfers_user/:id", (req, res) => {
-  const { branch_id, role, hod_id, period } = req.body;
+  const { branch_id, role, hod_id, period, transfer_date } = req.body;
   const user = { branch_id, role, transfered: 1, hod_id };
+  if (transfer_date) user.transfer_date = new Date(transfer_date);
 
   pool.query(
     "UPDATE users SET ? WHERE id = ? AND period = ?",

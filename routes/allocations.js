@@ -493,11 +493,18 @@ async function getActualMonthsWorked(pool, staffId, userAddDate, transferDate, b
 }
 
 // This function help us to calculate target distribution in case Old branch
-export const autoDistributeTargetsOldBranch = async (period, branchId, role, callback) => {
+export const autoDistributeTargetsOldBranch = async (period, branchId, role, transferringStaffId, callback) => {
   if (typeof role === "function") {
     callback = role;
     role = undefined;
+    transferringStaffId = undefined;
+  } else if (typeof transferringStaffId === "function") {
+    callback = transferringStaffId;
+    transferringStaffId = undefined;
   }
+
+
+
 
   const periodEnd = getFinancialYearEnd(period);
   const fy = getFinancialYearRange(period);
@@ -556,10 +563,11 @@ export const autoDistributeTargetsOldBranch = async (period, branchId, role, cal
       const td = s.transfer_date ? new Date(s.transfer_date) : null;
       const jd = s.user_add_date ? new Date(s.user_add_date) : null;
       const transferDay = td ? td.toISOString().split("T")[0] : null;
-      const isTransferredOut = transferredOutIds.has(s.id) || (transferDay === todayStr && !transferredInTodayIds.has(s.id));
+      const isCurrentTransfer = transferringStaffId ? String(s.id) === String(transferringStaffId) : (transferDay === todayStr && !transferredInTodayIds.has(s.id));
+      const isTransferredOut = transferredOutIds.has(s.id) || isCurrentTransfer;
 
       if (td && isTransferredOut) {
-        if (transferDay === todayStr) {
+        if (isCurrentTransfer) {
           resignedStaff.push(s);
         } else if (td < currentDate) {
           resignPrevoius.push(s);

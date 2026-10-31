@@ -59,14 +59,33 @@ function updateEmployeeTransferFromAllocations(conn, period, branchId, userId) {
             }
           });
 
-          conn.query(
-            "UPDATE employee_transfer SET ? WHERE period=? AND old_branch_id=? AND staff_id=?",
-            [updateData, period, branchId, userId],
-            (err) => {
-              if (err) return reject(err);
-              resolve(updateData);
-            },
-          );
+          const entrySql = `
+            SELECT kpi, SUM(value) AS achieved
+            FROM entries
+            WHERE employee_id = ? AND branch_id = ? AND period = ? AND status = 'Verified'
+              AND date <= (SELECT COALESCE(transfer_date, NOW()) FROM users WHERE id = ? AND period = ?)
+            GROUP BY kpi
+          `;
+          conn.query(entrySql, [userId, branchId, period, userId, period], (errEntry, entryRows) => {
+            if (!errEntry && entryRows && entryRows.length > 0) {
+              entryRows.forEach((r) => {
+                if (r.kpi === "deposit") updateData.deposit_achieved = r.achieved || 0;
+                if (r.kpi === "loan_gen") updateData.loan_gen_achieved = r.achieved || 0;
+                if (r.kpi === "loan_amulya") updateData.loan_amulya_achieved = r.achieved || 0;
+                if (r.kpi === "recovery") updateData.recovery_achieved = r.achieved || 0;
+                if (r.kpi === "audit") updateData.audit_achieved = r.achieved || 0;
+                if (r.kpi === "insurance") updateData.insurance_achieved = r.achieved || 0;
+              });
+            }
+            conn.query(
+              "UPDATE employee_transfer SET ? WHERE period=? AND old_branch_id=? AND staff_id=?",
+              [updateData, period, branchId, userId],
+              (err) => {
+                if (err) return reject(err);
+                resolve(updateData);
+              },
+            );
+          });
         });
       },
     );
@@ -454,6 +473,7 @@ transferRouter.post("/transfer-staff-master", (req, res) => {
     transferData,
   } = req.body;
 
+  const targetTransferDate = (transferData?.transfer_date || req.body?.transfer_date) ? new Date(transferData?.transfer_date || req.body?.transfer_date) : new Date();
   const isNoBranchRole = ["HO_STAFF", "Attender", "AGM", "DGM", "GM"].includes(selectedRole);
 
   if (
@@ -466,8 +486,8 @@ transferRouter.post("/transfer-staff-master", (req, res) => {
 
   if (role === "HO_STAFF" || role === "Attender") {
     pool.query(
-      "UPDATE users SET transfer_date = NOW() WHERE id=? AND period = ?",
-      [staff_id, period],
+      "UPDATE users SET transfer_date = ? WHERE id=? AND period = ?",
+      [targetTransferDate, staff_id, period],
       (err) => {
         if (err) {
           return res.status(500).json({
@@ -512,8 +532,8 @@ transferRouter.post("/transfer-staff-master", (req, res) => {
   }
 
   pool.query(
-    "UPDATE users SET transfer_date = NOW() WHERE id=? AND period = ?",
-    [staff_id, period],
+      "UPDATE users SET transfer_date = ? WHERE id=? AND period = ?",
+      [targetTransferDate, staff_id, period],
     (err) => {
       if (err) {
         return res
@@ -521,7 +541,7 @@ transferRouter.post("/transfer-staff-master", (req, res) => {
           .json({ error: "Failed to update transfer date" });
       }
 
-      autoDistributeTargetsOldBranch(period, old_branchId, role, (err) => {
+      autoDistributeTargetsOldBranch(period, old_branchId, role, staff_id, (err) => {
         if (err) {
           return res
             .status(500)
@@ -582,7 +602,7 @@ transferRouter.post("/transfer-staff-master", (req, res) => {
           insurance_baseline: insurance_baseline || 0,
           old_designation,
           new_designation,
-          transfer_date: new Date(),
+          transfer_date: targetTransferDate,
         };
 
         pool.query("INSERT INTO employee_transfer SET ?", transfer, (err) => {
@@ -635,6 +655,7 @@ transferRouter.post("/transfer-staff-master-update", (req, res) => {
     transferData,
   } = req.body;
 
+  const targetTransferDate = (transferData?.transfer_date || req.body?.transfer_date) ? new Date(transferData?.transfer_date || req.body?.transfer_date) : new Date();
   const isNoBranchRole = ["HO_STAFF", "Attender", "AGM", "DGM", "GM"].includes(selectedRole);
 
   if (
@@ -647,8 +668,8 @@ transferRouter.post("/transfer-staff-master-update", (req, res) => {
 
   if (role === "HO_STAFF" || role === "Attender") {
     pool.query(
-      "UPDATE users SET transfer_date = NOW() WHERE id=? AND period = ?",
-      [staff_id, period],
+      "UPDATE users SET transfer_date = ? WHERE id=? AND period = ?",
+      [targetTransferDate, staff_id, period],
       (err) => {
         if (err) {
           return res.status(500).json({
@@ -693,8 +714,8 @@ transferRouter.post("/transfer-staff-master-update", (req, res) => {
   }
 
   pool.query(
-    "UPDATE users SET transfer_date = NOW() WHERE id=? AND period = ?",
-    [staff_id, period],
+      "UPDATE users SET transfer_date = ? WHERE id=? AND period = ?",
+      [targetTransferDate, staff_id, period],
     (err) => {
       if (err) {
         return res
@@ -702,7 +723,7 @@ transferRouter.post("/transfer-staff-master-update", (req, res) => {
           .json({ error: "Failed to update transfer date" });
       }
 
-      autoDistributeTargetsOldBranch(period, old_branchId, (err) => {
+      autoDistributeTargetsOldBranch(period, old_branchId, role, staff_id, (err) => {
         if (err) {
           return res
             .status(500)
@@ -764,7 +785,7 @@ transferRouter.post("/transfer-staff-master-update", (req, res) => {
           insurance_baseline: insurance_baseline || 0,
           old_designation,
           new_designation,
-          transfer_date: new Date(),
+          transfer_date: targetTransferDate,
         };
 
         pool.query(
@@ -810,7 +831,8 @@ transferRouter.post("/transfer-staff-master-update", (req, res) => {
 });
 
 function saveHoTransfer(pool, body, callback) {
-  const { staff_id, hod_id, old_hod_id, period } = body;
+  const { staff_id, hod_id, old_hod_id, period, transfer_date } = body;
+  const targetTransferDate = transfer_date ? new Date(transfer_date) : new Date();
 
   if (!staff_id || !period) {
     return callback(new Error("Missing required HO transfer fields"));
@@ -818,6 +840,7 @@ function saveHoTransfer(pool, body, callback) {
 
   const values = [
     staff_id,
+    targetTransferDate,
     body.kpi_total || 0,
     body.deposit_achieved || 0,
     body.loan_gen_achieved || 0,
@@ -847,7 +870,7 @@ function saveHoTransfer(pool, body, callback) {
       period,
       resiged
     )
-    VALUES (?, NOW(), ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `;
 
   pool.query(sql, values, callback);
@@ -878,8 +901,10 @@ transferRouter.post("/ho_transfer", (req, res) => {
 });
 
 function saveAttenderTransfer(pool, body, callback) {
-  const { staff_id, hod_id, old_hod_id, new_branch_id, old_branch_id, period } =
-    body;
+  const { staff_id, hod_id, old_hod_id, new_branch_id, old_branch_id, period, transfer_date } =
+  body;
+  const targetTransferDate = transfer_date ? new Date(transfer_date) : new Date();
+
 
   if (!staff_id || !period) {
     return callback(new Error("Missing required Attender transfer fields"));
@@ -887,6 +912,7 @@ function saveAttenderTransfer(pool, body, callback) {
 
   const values = [
     staff_id,
+    targetTransferDate,
     body.kpi_total || 0,
     body.deposit_achieved || 0,
     body.loan_gen_achieved || 0,
@@ -916,7 +942,7 @@ function saveAttenderTransfer(pool, body, callback) {
       period,
       resiged
     )
-    VALUES (?, NOW(), ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `;
 
   pool.query(sql, values, callback);
