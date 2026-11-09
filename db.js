@@ -17,9 +17,9 @@ const pool = mysql.createPool({
   enableKeepAlive: true,
   keepAliveInitialDelay: 0,
 
-  host: 'localhost',
+  host: '3.110.60.145',
   user: 'root',
-  password: 'root',
+  password: 'Kred@Pool450',
   database: 'kpi_system_prod',
 
   timezone: "+05:30",
