@@ -960,183 +960,284 @@ ORDER BY
             baselineMap[`${row.branch_id}_${row.kpi}`] = row.amount || 0;
           });
 
-          const calculateScore = (kpi, achieved, target) => {
-            let outOf10;
-            if (!target || Number(target) === 0) return 0;
+          const oldBranchCodes = transfers.map((t) => t.old_branch_id).filter(Boolean);
+          const branchParams = oldBranchCodes.length > 0 ? oldBranchCodes : [""];
 
-            const ratio = achieved / target;
-            const auditRatio = kpi === "audit" ? ratio : 0;
-            const recoveryRatio = kpi === "recovery" ? ratio : 0;
+          const entriesQuery = `
+            SELECT branch_id, employee_id, kpi, value, date
+            FROM entries
+            WHERE period = ? AND status = 'Verified'
+              AND (
+                employee_id = ?
+                OR (
+                  branch_id IN (?)
+                  AND kpi IN ('audit', 'recovery')
+                )
+              )
+          `;
 
-            switch (kpi) {
-              case "deposit":
-              case "loan_gen":
-              case "loan_amulya":
-                if (ratio <= 1) {
-                  outOf10 = ratio * 10;
-                } else if (ratio > 1 && ratio < 1.25) {
-                  outOf10 = 10;
-                } else if (
-                  ratio >= 1.25 &&
-                  auditRatio >= 0.75 &&
-                  recoveryRatio >= 0.75
-                ) {
-                  outOf10 = 12.5;
-                } else {
-                  outOf10 = 10;
-                }
-                break;
-
-              case "recovery":
-              case "audit":
-                outOf10 = ratio <= 1 ? ratio * 10 : 12.5;
-                break;
-
-              default:
-                outOf10 = 0;
+          pool.query(entriesQuery, [period, staff_id, branchParams], (errEntries, entryRows) => {
+            if (errEntries) {
+              console.error("Error fetching entries for transfer history:", errEntries);
+              entryRows = [];
             }
 
-            return Math.max(0, Math.min(12.5, isNaN(outOf10) ? 0 : outOf10));
-          };
-
-          const monthDiffstart = (d1, d2) => {
-            return Math.max(
-              0,
-              (d2.getFullYear() - d1.getFullYear()) * 12 +
-              (d2.getMonth() - d1.getMonth())
-            );
-          };
-
-          const staffResult = {
-            staff_id: transfers[0].staff_id,
-            name: transfers[0].staff_name,
-            period: transfers[0].period,
-            resigned: transfers[0].resigned,
-            resign_date: transfers[0].resign_date,
-            transfers: [],
-            branch_avg_kpi: {},
-            total_months: 0,
-          };
-
-          const fyStart = getFinancialYearStart(period);
-          const branchTransferDates = {};
-          const branchWiseKpi = {};
-          let lastDate = fyStart;
-
-          transfers.forEach((t) => {
-            const branchScores = {};
-            let totalWeightageScore = 0;
-
-            const transferDate = new Date(t.transfer_date);
-            const months = Math.max(1, monthDiffstart(lastDate, transferDate));
-            lastDate = transferDate;
-
-            const kpis = [
-              {
-                key: "deposit",
-                achieved: t.deposit_achieved,
-                target: t.deposit_target,
-              },
-              {
-                key: "loan_gen",
-                achieved: t.loan_gen_achieved,
-                target: t.loan_gen_target,
-              },
-              {
-                key: "loan_amulya",
-                achieved: t.loan_amulya_achieved,
-                target: t.loan_amulya_target,
-              },
-              {
-                key: "recovery",
-                achieved: t.recovery_achieved,
-                target: t.recovery_target,
-              },
-              { key: "audit", achieved: t.audit_achieved, target: t.audit_target },
-            ];
-
-            kpis.forEach((row) => {
-              if (row.target == null) return;
-
-              const baseline = ["deposit", "loan_gen", "loan_amulya"].includes(row.key)
-                ? (Number(t[`${row.key}_baseline`]) || baselineMap[`${t.old_branch_id}_${row.key}`] || 0)
-                : 0;
-
-              // Read baseline and target directly without month factor scaling
-              const scaledBaseline = Number(baseline);
-              const scaledTarget = Number(row.target || 0);
-
-              // Read achievement directly
-              const achievedValue = Number(row.achieved || 0);
-
-              const isBaselineOnly =
-                ["deposit", "loan_gen", "loan_amulya"].includes(row.key) &&
-                Number(baseline) > 0 &&
-                achievedValue <= scaledBaseline;
-
-              const score = isBaselineOnly
-                ? 0
-                : calculateScore(row.key, achievedValue, scaledTarget);
-
-              const weightage = weightageMap[row.key] || 0;
-              const weightageScore = isBaselineOnly ? 0 : (score * weightage) / 100;
-
-              branchScores[row.key] = {
-                achieved: isBaselineOnly ? 0 : Number(achievedValue.toFixed(2)),
-                previousBalance: Number(scaledBaseline.toFixed(2)),
-                newTarget: Number(scaledTarget.toFixed(2)),
-                totalTarget: Number((scaledTarget + scaledBaseline).toFixed(2)),
-                target: Number(scaledTarget.toFixed(2)),
-                score,
-                weightage,
-                weightageScore: isNaN(weightageScore) ? 0 : weightageScore,
-              };
-
-              totalWeightageScore += branchScores[row.key].weightageScore;
-            });
-
-            const branch = t.branch_name;
-            if (!branchTransferDates[branch]) branchTransferDates[branch] = [];
-            branchTransferDates[branch].push(new Date(t.transfer_date));
-
-            if (!branchWiseKpi[branch])
-              branchWiseKpi[branch] = { total: 0, count: 0 };
-            branchWiseKpi[branch].total += totalWeightageScore;
-            branchWiseKpi[branch].count += 1;
-
-            staffResult.transfers.push({
-              transfer_date: t.transfer_date,
-              old_designation: t.old_designation,
-              new_designation: t.new_designation,
-              old_branch_name: t.branch_name,
-              new_branch_name: t.new_branch_name,
-              total_weightage_score: totalWeightageScore,
-              months: months,
-              ...branchScores,
-            });
-          });
-
-          let totalMonthsWorked = 0;
-          let branchCounter = {};
-
-          staffResult.transfers.forEach((t) => {
-            const branch = t.old_branch_name || "UNKNOWN";
-
-            branchCounter[branch] = (branchCounter[branch] || 0) + 1;
-            const key = `${branch}#${branchCounter[branch]}`;
-
-            staffResult.branch_avg_kpi[key] = {
-              avg_kpi: t.total_weightage_score,
-              months: t.months,
-              new_branch_name: t.new_branch_name,
+            const formatDateKey = (d) => {
+              if (!d) return "";
+              if (typeof d === "string") return d.slice(0, 10);
+              const year = d.getFullYear();
+              const month = String(d.getMonth() + 1).padStart(2, "0");
+              const day = String(d.getDate()).padStart(2, "0");
+              return `${year}-${month}-${day}`;
             };
 
-            totalMonthsWorked += t.months;
+            const calculateScore = (kpi, achieved, target, auditRatio = 0, recoveryRatio = 0) => {
+              let outOf10;
+              if (!target || Number(target) === 0) return 0;
+
+              const ratio = achieved / target;
+
+              switch (kpi) {
+                case "deposit":
+                case "loan_gen":
+                case "loan_amulya":
+                  if (ratio <= 1) {
+                    outOf10 = ratio * 10;
+                  } else if (ratio > 1 && ratio < 1.25) {
+                    outOf10 = 10;
+                  } else if (
+                    ratio >= 1.25 &&
+                    auditRatio >= 0.75 &&
+                    recoveryRatio >= 0.75
+                  ) {
+                    outOf10 = 12.5;
+                  } else {
+                    outOf10 = 10;
+                  }
+                  break;
+
+                case "insurance":
+                  if (ratio === 0 || isNaN(ratio)) {
+                    outOf10 = 0;
+                  } else if (ratio <= 1) {
+                    outOf10 = ratio * 10;
+                  } else if (ratio < 1.25) {
+                    outOf10 = 10;
+                  } else {
+                    outOf10 = 12.5;
+                  }
+                  break;
+
+                case "recovery":
+                case "audit":
+                  outOf10 = ratio <= 1 ? ratio * 10 : 12.5;
+                  break;
+
+                default:
+                  outOf10 = 0;
+              }
+
+              return Math.max(0, Math.min(12.5, isNaN(outOf10) ? 0 : outOf10));
+            };
+
+            const monthDiffstart = (d1, d2) => {
+              return Math.max(
+                0,
+                (d2.getFullYear() - d1.getFullYear()) * 12 +
+                (d2.getMonth() - d1.getMonth())
+              );
+            };
+
+            const staffResult = {
+              staff_id: transfers[0].staff_id,
+              name: transfers[0].staff_name,
+              period: transfers[0].period,
+              resigned: transfers[0].resigned,
+              resign_date: transfers[0].resign_date,
+              transfers: [],
+              branch_avg_kpi: {},
+              total_months: 0,
+            };
+
+            const fyStart = getFinancialYearStart(period);
+            const branchTransferDates = {};
+            const branchWiseKpi = {};
+            let lastDate = fyStart;
+
+            transfers.forEach((t, tIdx) => {
+              const branchScores = {};
+              let totalWeightageScore = 0;
+
+              const transferDate = new Date(t.transfer_date);
+              const months = Math.max(1, monthDiffstart(lastDate, transferDate));
+              const startStr = tIdx === 0 ? "" : formatDateKey(lastDate);
+              const endStr = formatDateKey(transferDate);
+              lastDate = transferDate;
+
+              // Filter verified entries for this transfer tenure and branch
+              const tenureEntries = (entryRows || []).filter((e) => {
+                const eDateStr = formatDateKey(e.date);
+                const branchMatch = String(e.branch_id || "").trim() === String(t.old_branch_id || "").trim();
+                const dateMatch = (!startStr || eDateStr >= startStr) && (!endStr || eDateStr <= endStr);
+                if (!branchMatch || !dateMatch) return false;
+
+                if (e.employee_id && String(e.employee_id) === String(staff_id)) return true;
+                if (["audit", "recovery"].includes(e.kpi)) return true;
+                return false;
+              });
+
+              const liveAchieved = {};
+              tenureEntries.forEach((e) => {
+                liveAchieved[e.kpi] = (liveAchieved[e.kpi] || 0) + Number(e.value || 0);
+              });
+
+              const getAchievedValue = (key) => {
+                const liveVal = liveAchieved[key];
+                const storedVal = Number(t[`${key}_achieved`] || 0);
+                if (liveVal !== undefined && liveVal > 0) {
+                  return Math.max(liveVal, storedVal);
+                }
+                return storedVal;
+              };
+
+              const kpis = [
+                {
+                  key: "deposit",
+                  achieved: getAchievedValue("deposit"),
+                  target: t.deposit_target,
+                },
+                {
+                  key: "loan_gen",
+                  achieved: getAchievedValue("loan_gen"),
+                  target: t.loan_gen_target,
+                },
+                {
+                  key: "loan_amulya",
+                  achieved: getAchievedValue("loan_amulya"),
+                  target: t.loan_amulya_target,
+                },
+                {
+                  key: "recovery",
+                  achieved: getAchievedValue("recovery"),
+                  target: t.recovery_target,
+                },
+                {
+                  key: "audit",
+                  achieved: getAchievedValue("audit"),
+                  target: t.audit_target,
+                },
+                {
+                  key: "insurance",
+                  achieved: getAchievedValue("insurance"),
+                  target: t.insurance_target,
+                },
+              ];
+
+              // Pre-calculate audit and recovery ratios for bonus calculation
+              const auditTarget = Number(t.audit_target || 0);
+              const auditAch = getAchievedValue("audit");
+              const aRatio = auditTarget > 0 ? auditAch / auditTarget : 0;
+
+              const recoveryTarget = Number(t.recovery_target || 0);
+              const recAch = getAchievedValue("recovery");
+              const rRatio = recoveryTarget > 0 ? recAch / recoveryTarget : 0;
+
+              kpis.forEach((row) => {
+                if (row.target == null) return;
+
+                const baseline = ["deposit", "loan_gen", "loan_amulya", "insurance"].includes(row.key)
+                  ? (Number(t[`${row.key}_baseline`]) || baselineMap[`${t.old_branch_id}_${row.key}`] || 0)
+                  : 0;
+
+                const scaledBaseline = Number(baseline);
+                const scaledTarget = Number(row.target || 0);
+                const achievedValue = Number(row.achieved || 0);
+
+                // isBaselineOnly is only true if baseline exists and 0 (or less) was achieved
+                const isBaselineOnly =
+                  ["deposit", "loan_gen", "loan_amulya"].includes(row.key) &&
+                  Number(baseline) > 0 &&
+                  achievedValue <= 0;
+
+                const score = isBaselineOnly
+                  ? 0
+                  : calculateScore(row.key, achievedValue, scaledTarget, aRatio, rRatio);
+
+                const weightage = weightageMap[row.key] || 0;
+                const weightageScore = isBaselineOnly ? 0 : (score * weightage) / 100;
+
+                branchScores[row.key] = {
+                  achieved: isBaselineOnly ? 0 : Number(achievedValue.toFixed(2)),
+                  previousBalance: Number(scaledBaseline.toFixed(2)),
+                  newTarget: Number(scaledTarget.toFixed(2)),
+                  totalTarget: Number((scaledTarget + scaledBaseline).toFixed(2)),
+                  target: Number(scaledTarget.toFixed(2)),
+                  score,
+                  weightage,
+                  weightageScore: isNaN(weightageScore) ? 0 : weightageScore,
+                };
+
+                totalWeightageScore += branchScores[row.key].weightageScore;
+              });
+
+              // Also asynchronously sync back live achieved values into employee_transfer if available
+              if (t.id && Object.keys(liveAchieved).length > 0) {
+                const updateTransferAchieved = {};
+                if (liveAchieved["deposit"] !== undefined) updateTransferAchieved.deposit_achieved = liveAchieved["deposit"];
+                if (liveAchieved["loan_gen"] !== undefined) updateTransferAchieved.loan_gen_achieved = liveAchieved["loan_gen"];
+                if (liveAchieved["loan_amulya"] !== undefined) updateTransferAchieved.loan_amulya_achieved = liveAchieved["loan_amulya"];
+                if (liveAchieved["recovery"] !== undefined) updateTransferAchieved.recovery_achieved = liveAchieved["recovery"];
+                if (liveAchieved["audit"] !== undefined) updateTransferAchieved.audit_achieved = liveAchieved["audit"];
+                if (liveAchieved["insurance"] !== undefined) updateTransferAchieved.insurance_achieved = liveAchieved["insurance"];
+
+                pool.query("UPDATE employee_transfer SET ? WHERE id = ?", [updateTransferAchieved, t.id], (upErr) => {
+                  if (upErr) console.error("Error updating employee_transfer achievements:", upErr);
+                });
+              }
+
+              const branch = t.branch_name;
+              if (!branchTransferDates[branch]) branchTransferDates[branch] = [];
+              branchTransferDates[branch].push(new Date(t.transfer_date));
+
+              if (!branchWiseKpi[branch])
+                branchWiseKpi[branch] = { total: 0, count: 0 };
+              branchWiseKpi[branch].total += totalWeightageScore;
+              branchWiseKpi[branch].count += 1;
+
+              staffResult.transfers.push({
+                transfer_date: t.transfer_date,
+                old_designation: t.old_designation,
+                new_designation: t.new_designation,
+                old_branch_name: t.branch_name,
+                new_branch_name: t.new_branch_name,
+                total_weightage_score: totalWeightageScore,
+                months: months,
+                ...branchScores,
+              });
+            });
+
+            let totalMonthsWorked = 0;
+            let branchCounter = {};
+
+            staffResult.transfers.forEach((t) => {
+              const branch = t.old_branch_name || "UNKNOWN";
+
+              branchCounter[branch] = (branchCounter[branch] || 0) + 1;
+              const key = `${branch}#${branchCounter[branch]}`;
+
+              staffResult.branch_avg_kpi[key] = {
+                avg_kpi: t.total_weightage_score,
+                months: t.months,
+                new_branch_name: t.new_branch_name,
+              };
+
+              totalMonthsWorked += t.months;
+            });
+
+            staffResult.total_months = totalMonthsWorked;
+
+            res.json([staffResult]);
           });
-
-          staffResult.total_months = totalMonthsWorked;
-
-          res.json([staffResult]);
         }
       );
     });
