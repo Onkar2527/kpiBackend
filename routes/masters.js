@@ -115,7 +115,7 @@ mastersRouter.post("/users", (req, res, next) => {
   }
   const { period } = req.body;
   pool.query(
-    "SELECT u.id, u.username, u.name, u.role, b.name as branch_name, u.PF_NO, d.name as department_name,u.branch_id,u.department_id,u.hod_id,u.transfer_date,u1.name as hod_name FROM users u left join branches b on u.branch_id=b.code AND b.period = ? left join departments d on d.id=u.department_id left join users u1 on u.hod_id = u1.id WHERE u.resign=0 AND u.period = ? ",
+    "SELECT u.id, u.username, u.name, u.role, b.name as branch_name, u.PF_NO, d.name as department_name,u.branch_id,u.department_id,u.hod_id,u.transfer_date,u.user_add_date,u1.name as hod_name FROM users u left join branches b on u.branch_id=b.code AND b.period = ? left join departments d on d.id=u.department_id left join users u1 on u.hod_id = u1.id WHERE u.resign=0 AND u.period = ? ",
     [period, period], (error, results) => {
       if (error)
         return res.status(500).json({ error: "Internal server error" });
@@ -134,7 +134,8 @@ mastersRouter.post("/users", (req, res) => {
     department_id,
     PF_NO,
     hod_id,
-    period
+    period,
+    user_add_date
   } = req.body;
   const password_hash = bcrypt.hashSync(password, 10);
 
@@ -147,7 +148,8 @@ mastersRouter.post("/users", (req, res) => {
     department_id,
     PF_NO,
     hod_id,
-    period
+    period,
+    ...(user_add_date ? { user_add_date } : {})
   };
   pool.getConnection((err, connection) => {
     if (err) return res.status(500).json({ error: "Internal server error" });
@@ -187,7 +189,7 @@ mastersRouter.put("/users/:id", (req, res) => {
     department_id,
     PF_NO,
     password,
-    hod_id, period
+    hod_id, period , user_add_date
   } = req.body;
   const user = {
     username,
@@ -198,6 +200,9 @@ mastersRouter.put("/users/:id", (req, res) => {
     PF_NO,
     hod_id, period
   };
+  if (user_add_date) {
+  user.user_add_date = user_add_date;
+}
   if (password) {
     user.password_hash = bcrypt.hashSync(password, 10);
   }
